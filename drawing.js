@@ -10,9 +10,12 @@
 const PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
 const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const TESSERACT_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+const PDFLIB_CDN = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js';
+const WEEKDAYS_KO = ['일', '월', '화', '수', '목', '금', '토'];
 
 let pdfjsLoaded = null;
 let tesseractLoaded = null;
+let pdflibLoaded = null;
 
 function loadScriptOnce(src) {
   return new Promise((resolve, reject) => {
@@ -39,10 +42,27 @@ async function ensureTesseract() {
   return tesseractLoaded;
 }
 
+async function ensurePdfLib() {
+  if (window.PDFLib) return window.PDFLib;
+  pdflibLoaded ??= loadScriptOnce(PDFLIB_CDN).then(() => window.PDFLib);
+  return pdflibLoaded;
+}
+
+// 원본 파일명에서 확장자(.pdf)와 기존 날짜 꼬리표(_YYYY-MM-DD(요) 또는 _YYYYMMDD(요))를 떼고
+// '원본이름_YYYY-MM-DD(요일한글자).pdf' 형태의 새 파일명을 만든다.
+function buildSavedDrawingFileName(originalName, now = new Date()) {
+  const withoutExt = String(originalName || '도면').replace(/\.pdf$/i, '').trim();
+  const baseName = withoutExt.replace(/_\d{4}-?\d{2}-?\d{2}\([일월화수목금토]\)$/, '').trim() || '도면';
+  const ymdStr = now.toLocaleDateString('sv-SE');
+  const dayChar = WEEKDAYS_KO[now.getDay()];
+  return `${baseName}_${ymdStr}(${dayChar}).pdf`;
+}
+
 const drawingState = {
   site: '',
   files: [],
   currentFile: null,
+  rawPdfBytes: null,
   pdfDoc: null,
   pageNum: 1,
   pageCount: 1,
@@ -214,6 +234,7 @@ async function openPdfFieldbook(file) {
     const bin = atob(base64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    drawingState.rawPdfBytes = bytes.slice();
 
     // 저장된 야장 데이터(동그란 원 메모 + 자유 필기) 불러오기
     try {
@@ -714,38 +735,164 @@ function redrawPageInk() {
   }
 }
 
-// ---------- 야장 저장 ----------
+// ---------- 야장 저장 (원본이름_수정날짜(요일한글자).pdf 로 다른 이름 저장) ----------
+
+function uint8ToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+// 특정 페이지의 동그라미 마커 + OCR 텍스트 태그 + 자유 펜 필기를 투명 PNG 데이터로 그린다
+function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx) {
+  const pagePins = (drawingState.notes.pins || []).filter((p) => p.page === pageIndex1Based);
+  const pageStrokes = drawingState.notes.strokes?.[String(pageIndex1Based)] || [];
+  if (!pagePins.length && !pageStrokes.length) return null;
+
+  const c = document.createElement('canvas');
+  c.width = Math.round(widthPx * 2);
+  c.height = Math.round(heightPx * 2);
+  const ctx = c.getContext('2d');
+  ctx.scale(2, 2);
+
+  // 1) 자유 펜 필기 그리기
+  ctx.strokeStyle = '#E53935';
+  ctx.lineWidth = 3.0;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const s of pageStrokes) {
+    if (!s.length) continue;
+    ctx.beginPath();
+    ctx.moveTo(s[0].x * widthPx, s[0].y * heightPx);
+    for (let i = 1; i < s.length; i += 1) {
+      ctx.lineTo(s[i].x * widthPx, s[i].y * heightPx);
+    }
+    ctx.stroke();
+  }
+
+  // 2) 동그란 원 마커 및 OCR 텍스트 라벨 그리기
+  pagePins.forEach((pin, idx) => {
+    const cx = pin.x * widthPx;
+    const cy = pin.y * heightPx;
+    const r = 13;
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(229, 57, 53, 0.94)';
+    ctx.fill();
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.stroke();
+
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 12px "Noto Sans KR", "Malgun Gothic", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(idx + 1), cx, cy);
+
+    if (pin.text) {
+      ctx.font = 'bold 12px "Noto Sans KR", "Malgun Gothic", sans-serif';
+      const padX = 7;
+      const boxH = 22;
+      const textW = ctx.measureText(pin.text).width;
+      const boxW = textW + padX * 2;
+      const bx = Math.max(4, Math.min(widthPx - boxW - 4, cx - boxW / 2));
+      const by = Math.min(heightPx - boxH - 4, cy + r + 4);
+
+      ctx.fillStyle = 'rgba(27, 42, 87, 0.94)';
+      ctx.beginPath();
+      ctx.roundRect(bx, by, boxW, boxH, 5);
+      ctx.fill();
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(pin.text, bx + padX, by + boxH / 2);
+    }
+  });
+
+  return c.toDataURL('image/png');
+}
+
+// 원본 PDF 바이트 위에 모든 페이지의 야장 메모/필기를 합성한 새 PDF base64 생성
+async function buildAnnotatedPdfBase64() {
+  const PDFLib = await ensurePdfLib();
+  const pdfDoc = await PDFLib.PDFDocument.load(drawingState.rawPdfBytes);
+  const pages = pdfDoc.getPages();
+
+  for (let i = 0; i < pages.length; i += 1) {
+    const p = pages[i];
+    const { width, height } = p.getSize();
+    const pngUrl = renderPageAnnotationsPng(i + 1, width, height);
+    if (!pngUrl) continue;
+    const pngImage = await pdfDoc.embedPng(pngUrl);
+    p.drawImage(pngImage, { x: 0, y: 0, width, height });
+  }
+
+  const outBytes = await pdfDoc.save();
+  return uint8ToBase64(outBytes);
+}
 
 let saveNotesTimer = null;
 function saveDrawingNotesQuiet() {
   if (!drawingState.currentFile) return;
   store.set(`pdf_notes_${drawingState.currentFile.id}`, JSON.stringify(drawingState.notes));
-  clearTimeout(saveNotesTimer);
-  saveNotesTimer = setTimeout(() => {
-    saveDrawingNotesToServer(false);
-  }, 1200);
 }
 
 async function saveDrawingNotesToServer(showAlert = true) {
   const file = drawingState.currentFile;
   if (!file) return;
   const btn = $('pdfSaveNotes');
+  btn.disabled = true;
   btn.textContent = '저장중..';
   store.set(`pdf_notes_${file.id}`, JSON.stringify(drawingState.notes));
+
+  const newFileName = buildSavedDrawingFileName(file.name, new Date());
+
   try {
-    await api('drawing_notes_save', {
-      fileId: file.id,
+    // 1) 원본 파일에도 야장 메모 JSON은 보존해 두고,
+    // 2) '원본이름_수정날짜(요일한글자).pdf' 로 야장 메모가 합쳐진 새 PDF를 다른 이름으로 저장!
+    let pdfBase64 = store.get(`pdf_b64_${file.id}`);
+    if (drawingState.rawPdfBytes) {
+      try {
+        pdfBase64 = await buildAnnotatedPdfBase64();
+      } catch {
+        pdfBase64 = uint8ToBase64(drawingState.rawPdfBytes);
+      }
+    }
+
+    const res = await api('drawing_upload', {
       site: drawingState.site,
-      fileName: file.name,
-      user: $('user')?.value || '',
-      data: drawingState.notes,
+      file: {
+        name: newFileName,
+        base64: pdfBase64,
+        replaceSameName: true,
+        user: $('user')?.value || '',
+        notes: drawingState.notes,
+      },
     });
+
+    if (res.file) {
+      // 도면 폴더 목록에 새 파일 반영 (이미 같은 이름의 오늘자 파일이 있으면 교체)
+      drawingState.files = [res.file, ...drawingState.files.filter((f) => f.name !== res.file.name && f.id !== res.file.id)];
+      store.set(`drawings_${drawingState.site}`, JSON.stringify(drawingState.files));
+      store.set(`pdf_notes_${res.file.id}`, JSON.stringify(drawingState.notes));
+      $('pdfTitle').textContent = res.file.name;
+      renderDrawingFiles();
+    }
+
     drawingState.dirty = false;
     btn.textContent = '저장됨✓';
-    setTimeout(() => { btn.textContent = '저장'; }, 2000);
+    if (showAlert) alert(`'${newFileName}' 이름으로 도면 폴더에 새로 저장되었습니다!`);
+    setTimeout(() => { btn.textContent = '다른이름 저장'; }, 2200);
   } catch (err) {
     btn.textContent = '폰보관✓';
-    if (showAlert) alert('신호가 약해 이 휴대폰에 야장 메모를 보관했습니다.');
+    if (showAlert) alert(`신호가 약해 이 휴대폰에 먼저 보관했습니다: ${errorText(err)}`);
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -814,3 +961,5 @@ function initDrawingModule() {
   initOcrPadEvents();
   initInkCanvasEvents();
 }
+
+if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName };
