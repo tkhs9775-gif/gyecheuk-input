@@ -378,94 +378,262 @@ function deleteActivePin() {
   saveDrawingNotesQuiet();
 }
 
-// ---------- 5단계: 메모 박스 한 번 더 터치 → 손글씨 펜 필기 & OCR 자동 텍스트 변환 ----------
+// ---------- 5단계: 메모 박스 한 번 더 터치 → 손글씨 펜 필기 & 최상급 AI 필체 인식(획 궤적 딥러닝 + OCR) ----------
+
+const GOOGLE_HANDWRITING_URL = 'https://inputtools.google.com/request?ime=handwriting&app=mobilesearch&cs=1&oe=UTF-8';
 
 let ocrDrawing = false;
 let ocrHasInk = false;
+let ocrStrokes = [];       // 각 획의 [{ x, y, t }] 배열
+let currentOcrStroke = null;
+let livePreviewTimer = null;
 
 function openHandwritingOcrPad() {
   if (!drawingState.activePinId) return;
   clearOcrPad();
-  $('ocrStatus').textContent = '펜이나 손가락으로 글씨·숫자를 쓴 뒤 [필체 판독하여 텍스트로 넣기]를 누르세요.';
+  $('ocrStatus').textContent = '펜이나 손가락으로 글씨·숫자를 쓰면 실시간으로 판독 후보가 나타나고, [필체 판독하여 넣기]를 누르면 바로 입력됩니다.';
   $('ocrPadDialog').showModal();
 }
 
-function clearOcrPad() {
+function redrawOcrPad() {
   const c = $('ocrPadCanvas');
   const ctx = c.getContext('2d');
   ctx.fillStyle = '#FFFFFF';
   ctx.fillRect(0, 0, c.width, c.height);
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#111827';
+  for (const s of ocrStrokes) {
+    if (!s.length) continue;
+    ctx.beginPath();
+    ctx.moveTo(s[0].x, s[0].y);
+    for (let i = 1; i < s.length; i += 1) ctx.lineTo(s[i].x, s[i].y);
+    ctx.stroke();
+  }
+}
+
+function clearOcrPad() {
+  ocrStrokes = [];
+  currentOcrStroke = null;
   ocrHasInk = false;
+  clearTimeout(livePreviewTimer);
+  redrawOcrPad();
+  show($('ocrCandidates'), false);
+  $('ocrCandidates').replaceChildren();
+}
+
+function undoOcrStroke() {
+  if (!ocrStrokes.length) return;
+  ocrStrokes.pop();
+  ocrHasInk = ocrStrokes.length > 0;
+  redrawOcrPad();
+  if (ocrHasInk) scheduleLiveHandwritingPreview();
+  else {
+    show($('ocrCandidates'), false);
+    $('ocrCandidates').replaceChildren();
+    $('ocrStatus').textContent = '지워졌습니다. 다시 적어주세요.';
+  }
 }
 
 function initOcrPadEvents() {
   const c = $('ocrPadCanvas');
   const ctx = c.getContext('2d');
+  let padStartMs = 0;
 
   const pt = (e) => {
     const r = c.getBoundingClientRect();
     return {
-      x: ((e.clientX - r.left) / r.width) * c.width,
-      y: ((e.clientY - r.top) / r.height) * c.height,
+      x: Math.round(((e.clientX - r.left) / r.width) * c.width),
+      y: Math.round(((e.clientY - r.top) / r.height) * c.height),
+      t: Math.max(0, Date.now() - padStartMs),
     };
   };
 
   c.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     c.setPointerCapture(e.pointerId);
+    if (!ocrStrokes.length) padStartMs = Date.now();
     ocrDrawing = true;
     ocrHasInk = true;
     const p = pt(e);
+    currentOcrStroke = [p];
+    ocrStrokes.push(currentOcrStroke);
     ctx.beginPath();
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#111827';
     ctx.moveTo(p.x, p.y);
   });
 
   c.addEventListener('pointermove', (e) => {
-    if (!ocrDrawing) return;
+    if (!ocrDrawing || !currentOcrStroke) return;
     const p = pt(e);
-    ctx.lineWidth = 5;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#000000';
+    currentOcrStroke.push(p);
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
   });
 
-  const stop = () => { ocrDrawing = false; };
+  const stop = () => {
+    if (!ocrDrawing) return;
+    ocrDrawing = false;
+    currentOcrStroke = null;
+    scheduleLiveHandwritingPreview();
+  };
   c.addEventListener('pointerup', stop);
   c.addEventListener('pointercancel', stop);
 }
 
+// 1순위: Google Input Tools Handwriting 딥러닝 엔진 (획 순서·방향·시간차 기반 한글+영문+숫자+기호 최상급 인식)
+async function recognizeWithGoogleInk(strokes, width, height) {
+  const ink = strokes.map((s) => [
+    s.map((p) => p.x),
+    s.map((p) => p.y),
+    s.map((p) => p.t),
+  ]);
+  const payload = {
+    options: 'enable_pre_space',
+    requests: [{
+      writing_guide: { writing_area_width: width, writing_area_height: height },
+      ink,
+      language: 'ko',
+    }],
+  };
+  const res = await fetch(GOOGLE_HANDWRITING_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json();
+  if (json && json[0] === 'SUCCESS' && Array.isArray(json[1]?.[0]?.[1])) {
+    return json[1][0][1].map((s) => String(s).trim()).filter(Boolean);
+  }
+  return [];
+}
+
+// 3순위 오프라인 대비: 글씨 영역만 자동으로 잘라내고(Bounding-Box Crop) 고해상도 대비 강화를 거친 정밀 OCR
+function buildCroppedHighContrastImage(strokes, srcCanvas) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const s of strokes) {
+    for (const p of s) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  if (!Number.isFinite(minX)) return srcCanvas.toDataURL('image/png');
+  const pad = 28;
+  const x0 = Math.max(0, minX - pad);
+  const y0 = Math.max(0, minY - pad);
+  const w = Math.max(80, Math.min(srcCanvas.width - x0, (maxX - minX) + pad * 2));
+  const h = Math.max(60, Math.min(srcCanvas.height - y0, (maxY - minY) + pad * 2));
+
+  const out = document.createElement('canvas');
+  out.width = w * 2;
+  out.height = h * 2;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.scale(2, 2);
+  ctx.lineWidth = 7;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#000000';
+  for (const s of strokes) {
+    if (!s.length) continue;
+    ctx.beginPath();
+    ctx.moveTo(s[0].x - x0, s[0].y - y0);
+    for (let i = 1; i < s.length; i += 1) ctx.lineTo(s[i].x - x0, s[i].y - y0);
+    ctx.stroke();
+  }
+  return out.toDataURL('image/png');
+}
+
+function applyOcrTextAndClose(text) {
+  const clean = String(text || '').trim();
+  if (!clean) return;
+  const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
+  const merged = pin && pin.text ? `${pin.text} ${clean}` : clean;
+  updateActivePinText(merged);
+  $('ocrPadDialog').close();
+}
+
+function renderOcrCandidates(candidates) {
+  const box = $('ocrCandidates');
+  if (!candidates || !candidates.length) {
+    show(box, false);
+    box.replaceChildren();
+    return;
+  }
+  show(box, true);
+  box.replaceChildren(...candidates.slice(0, 5).map((word, idx) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    if (idx === 0) b.setAttribute('aria-pressed', 'true');
+    b.textContent = idx === 0 ? `✓ ${word}` : word;
+    b.addEventListener('click', () => applyOcrTextAndClose(word));
+    return b;
+  }));
+}
+
+function scheduleLiveHandwritingPreview() {
+  clearTimeout(livePreviewTimer);
+  if (!ocrStrokes.length || navigator.onLine === false) return;
+  livePreviewTimer = setTimeout(async () => {
+    try {
+      const c = $('ocrPadCanvas');
+      const list = await recognizeWithGoogleInk(ocrStrokes, c.width, c.height);
+      if (list.length > 0) {
+        renderOcrCandidates(list);
+        $('ocrStatus').textContent = `실시간 판독: 「${list[0]}」 — 위 후보를 바로 터치하거나 아래 확인 버튼을 누르세요.`;
+      }
+    } catch { /* ignore live preview errors */ }
+  }, 320);
+}
+
 async function recognizeHandwritingToText() {
-  if (!ocrHasInk) {
+  if (!ocrHasInk || !ocrStrokes.length) {
     $('ocrStatus').textContent = '먼저 흰 칸에 글씨나 숫자를 써 주세요!';
     return;
   }
   const btn = $('ocrPadRecognize');
   btn.disabled = true;
-  $('ocrStatus').textContent = '🔍 필체를 OCR로 판독하여 텍스트로 변환하는 중입니다...';
+  $('ocrStatus').textContent = '🔍 AI 필기 엔진으로 판독 중입니다...';
 
   try {
     const c = $('ocrPadCanvas');
-    const dataUrl = c.toDataURL('image/png');
-    const base64 = dataUrl.split(',')[1];
     let recognized = '';
 
-    // 1순위: 서버(Google Drive OCR) 시도
+    // 1순위: Google Input Tools Handwriting 딥러닝 엔진 (획 순서 + 방향 분석)
     if (navigator.onLine !== false) {
       try {
-        const srv = await api('ocr_handwriting', { base64 });
-        if (srv && srv.text) recognized = srv.text.trim();
-      } catch { /* 클라이언트 OCR로 진행 */ }
+        const list = await recognizeWithGoogleInk(ocrStrokes, c.width, c.height);
+        if (list.length > 0) {
+          recognized = list[0];
+          renderOcrCandidates(list);
+        }
+      } catch { /* 2순위로 이동 */ }
     }
 
-    // 2순위: 브라우저 내장 Tesseract.js 한국어+영어+숫자 OCR 엔진 실행
+    // 2순위: 서버(Google Drive OCR) 시도
+    if (!recognized && navigator.onLine !== false) {
+      try {
+        const croppedUrl = buildCroppedHighContrastImage(ocrStrokes, c);
+        const srv = await api('ocr_handwriting', { base64: croppedUrl.split(',')[1] });
+        if (srv && srv.text) recognized = srv.text.trim();
+      } catch { /* 3순위로 이동 */ }
+    }
+
+    // 3순위: 글씨 영역 자동 크롭 + 2배 확대 고대비 전처리 후 Tesseract OCR
     if (!recognized) {
+      const croppedUrl = buildCroppedHighContrastImage(ocrStrokes, c);
       const Tesseract = await ensureTesseract();
-      const { data } = await Tesseract.recognize(dataUrl, 'kor+eng', {
+      const { data } = await Tesseract.recognize(croppedUrl, 'kor+eng', {
         logger: (m) => {
           if (m.status === 'recognizing text') {
-            $('ocrStatus').textContent = `🔍 필체 판독 중... (${Math.round((m.progress || 0) * 100)}%)`;
+            $('ocrStatus').textContent = `🔍 정밀 판독 중... (${Math.round((m.progress || 0) * 100)}%)`;
           }
         },
       });
@@ -473,16 +641,13 @@ async function recognizeHandwritingToText() {
     }
 
     if (!recognized) {
-      $('ocrStatus').textContent = '글씨를 명확히 인식하지 못했습니다. 조금 더 크게 다시 써보시거나 아래 키보드 칸을 이용해 주세요.';
+      $('ocrStatus').textContent = '글씨를 인식하지 못했습니다. [다 지우기] 후 다시 적어주세요.';
       return;
     }
 
-    const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
-    const merged = pin && pin.text ? `${pin.text} ${recognized}` : recognized;
-    updateActivePinText(merged);
-    $('ocrPadDialog').close();
+    applyOcrTextAndClose(recognized);
   } catch (err) {
-    $('ocrStatus').textContent = `OCR 판독 실패: ${err.message}`;
+    $('ocrStatus').textContent = `판독 실패: ${err.message}`;
   } finally {
     btn.disabled = false;
   }
@@ -642,6 +807,7 @@ function initDrawingModule() {
   $('pinMemoKeyboard').addEventListener('input', (e) => updateActivePinText(e.target.value));
 
   $('ocrPadClose').addEventListener('click', () => $('ocrPadDialog').close());
+  $('ocrPadUndo').addEventListener('click', undoOcrStroke);
   $('ocrPadClear').addEventListener('click', clearOcrPad);
   $('ocrPadRecognize').addEventListener('click', recognizeHandwritingToText);
 

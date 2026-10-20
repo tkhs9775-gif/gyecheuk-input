@@ -372,6 +372,16 @@ a.apk-link { display: grid; place-items: center; }
     #FFFFFF;
   background-size: 100% 48px;
 }
+.ocr-candidates {
+  margin-top: 8px;
+  padding: 4px 0;
+}
+.ocr-candidates button {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+}
 
 .chart-card { padding: 12px; }
 #trendSvg { display: block; width: 100%; height: auto; touch-action: pan-y; }

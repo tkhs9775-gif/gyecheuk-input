@@ -9,7 +9,7 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=19">
+<link rel="stylesheet" href="style.css?v=20">
 <title>키움이엔씨</title>
 </head>
 <body>
@@ -348,10 +348,12 @@
     <div class="ocr-canvas-wrap">
       <canvas id="ocrPadCanvas" width="600" height="240"></canvas>
     </div>
+    <div id="ocrCandidates" class="chips ocr-candidates hidden" role="group" aria-label="판독 후보 선택"></div>
     <p id="ocrStatus" class="muted" style="min-height: 20px; margin: 6px 0;"></p>
     <div class="row">
-      <button id="ocrPadClear" type="button" class="btn outline">다시 쓰기</button>
-      <button id="ocrPadRecognize" type="button" class="btn primary grow">🔍 필체 판독하여 텍스트로 넣기</button>
+      <button id="ocrPadUndo" type="button" class="btn outline">한 획 취소</button>
+      <button id="ocrPadClear" type="button" class="btn outline">다 지우기</button>
+      <button id="ocrPadRecognize" type="button" class="btn primary grow">🔍 필체 판독하여 넣기</button>
     </div>
   </div>
 </dialog>
@@ -385,12 +387,12 @@
   </a>
 </nav>
 
-<script src="config.js?v=19"></script>
-<script src="weather.js?v=19"></script>
-<script src="entries.js?v=19"></script>
-<script src="outbox.js?v=19"></script>
-<script src="phonecopy.js?v=19"></script>
-<script src="drawing.js?v=19"></script>
-<script src="app.js?v=19"></script>
+<script src="config.js?v=20"></script>
+<script src="weather.js?v=20"></script>
+<script src="entries.js?v=20"></script>
+<script src="outbox.js?v=20"></script>
+<script src="phonecopy.js?v=20"></script>
+<script src="drawing.js?v=20"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>
