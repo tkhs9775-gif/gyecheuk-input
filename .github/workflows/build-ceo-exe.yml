@@ -1,77 +1,30 @@
-name: Build CEO Monitor EXE & Installer
+name: Build CEO Monitor EXE
 
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'ceo_monitor.py'
-      - '.github/workflows/build-ceo-exe.yml'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build-windows-exe:
+  build:
     runs-on: windows-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install PyInstaller & Pillow
-        run: pip install pyinstaller pillow
+      - name: Install PyInstaller
+        run: pip install pyinstaller
 
-      - name: Convert icon-192.png to icon.ico
-        run: |
-          python -c "from PIL import Image; img = Image.open('icon-192.png'); img.save('icon.ico', format='ICO', sizes=[(256,256), (128,128), (64,64), (32,32), (16,16)])"
+      - name: Build EXE
+        run: pyinstaller --noconfirm --onefile --windowed --name "KiwoomENC_CEO_Monitor" ceo_monitor.py
 
-      - name: Build Standalone EXE (PyInstaller)
-        run: |
-          pyinstaller --noconfirm --onefile --windowed --icon=icon.ico --name "KiwoomENC_CEO_Monitor" ceo_monitor.py
-
-      - name: Generate Inno Setup Script & Compile Setup.exe
-        run: |
-          python -c "
-          iss = '''[Setup]
-          AppName=(주)키움이엔씨 현장 계측 대표님 감독판
-          AppVersion=2.0
-          DefaultDirName={autopf}\\KiwoomENC_CEO_Monitor
-          DefaultGroupName=(주)키움이엔씨 대표님 감독판
-          OutputDir=dist
-          OutputBaseFilename=KiwoomENC_CEO_Monitor_Setup
-          SetupIconFile=icon.ico
-          Compression=lzma2
-          SolidCompression=yes
-          PrivilegesRequired=lowest
-
-          [Tasks]
-          Name: \"desktopicon\"; Description: \"바탕화면에 (주)키움이엔씨 대표님 감독판 바로가기 아이콘 생성\"; GroupDescription: \"추가 작업:\"
-
-          [Files]
-          Source: \"dist\\KiwoomENC_CEO_Monitor.exe\"; DestDir: \"{app}\"; Flags: ignoreversion
-          Source: \"icon.ico\"; DestDir: \"{app}\"; Flags: ignoreversion
-
-          [Icons]
-          Name: \"{group}\\(주)키움이엔씨 대표님 감독판\"; Filename: \"{app}\\KiwoomENC_CEO_Monitor.exe\"; IconFilename: \"{app}\\icon.ico\"
-          Name: \"{autodesktop}\\(주)키움이엔씨 대표님 감독판\"; Filename: \"{app}\\KiwoomENC_CEO_Monitor.exe\"; IconFilename: \"{app}\\icon.ico\"; Tasks: desktopicon
-
-          [Run]
-          Filename: \"{app}\\KiwoomENC_CEO_Monitor.exe\"; Description: \"설치 완료 후 대표님 감독판 즉시 실행\"; Flags: nowait postinstall skipifsilent
-          '''
-          with open('installer.iss', 'w', encoding='utf-8-sig') as f:
-              f.write(iss)
-          "
-          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
-
-      - name: Upload EXE & Setup Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CEO-Monitor-Windows-Package
-          path: |
-            dist/KiwoomENC_CEO_Monitor.exe
-            dist/KiwoomENC_CEO_Monitor_Setup.exe
+          name: CEO-Monitor-EXE
+          path: dist/KiwoomENC_CEO_Monitor.exe
