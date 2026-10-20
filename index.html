@@ -8,13 +8,17 @@
 <meta name="apple-mobile-web-app-title" content="계측 입력">
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="logo.png">
-<link rel="stylesheet" href="style.css?v=5">
+<link rel="stylesheet" href="style.css?v=7">
 <title>계측 입력</title>
 </head>
 <body>
 
 <div id="splash" role="status" aria-live="polite">
-  <img class="splash-logo" src="logo.png" alt="(주)키움이엔씨">
+  <div class="logo-wrap">
+    <img class="splash-logo" src="logo.png" alt="(주)키움이엔씨">
+    <span class="sheen" aria-hidden="true"><i></i></span>
+  </div>
+  <span class="splash-rule" aria-hidden="true"></span>
   <p class="splash-title">현장 계측 입력</p>
   <div id="splashLoading" class="splash-bar" aria-hidden="true"><span></span></div>
   <div id="splashError" class="splash-error hidden">
@@ -37,13 +41,10 @@
   <header class="top">
     <select id="site" class="pill" aria-label="현장"></select>
     <select id="user" class="pill" aria-label="측정자"></select>
+    <button id="manage" type="button" class="icon-btn gear" aria-label="현장·측정자 관리">
+      <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
   </header>
-  <div class="row adds">
-    <button id="addSite" type="button" class="btn outline small">＋ 현장 추가</button>
-    <button id="addUser" type="button" class="btn outline small">＋ 측정자 추가</button>
-    <button id="removeSite" type="button" class="btn outline small danger">－ 현재 현장 삭제</button>
-    <button id="removeUser" type="button" class="btn outline small danger">－ 현재 측정자 삭제</button>
-  </div>
 
   <div class="row between">
     <h1 class="title">오늘의 계측</h1>
@@ -143,6 +144,30 @@
   </div>
 </form>
 
+<dialog id="manageDialog">
+  <div class="dlg">
+    <h2 class="dlg-title">현장·측정자 관리</h2>
+    <p class="muted">삭제해도 이미 저장된 기록은 그대로 남습니다.</p>
+
+    <h3 class="section">현장</h3>
+    <ul id="siteList" class="list mlist"></ul>
+    <form id="siteForm" class="row addrow" novalidate>
+      <input id="siteNew" type="text" maxlength="100" placeholder="새 현장 이름" autocomplete="off">
+      <button type="submit" class="btn primary small">추가</button>
+    </form>
+
+    <h3 class="section">측정자</h3>
+    <ul id="userList" class="list mlist"></ul>
+    <form id="userForm" class="row addrow" novalidate>
+      <input id="userNew" type="text" maxlength="100" placeholder="새 측정자 이름" autocomplete="off">
+      <button type="submit" class="btn primary small">추가</button>
+    </form>
+
+    <p id="manageError" class="dlg-err" role="alert"></p>
+    <button id="manageClose" type="button" class="btn outline wide">닫기</button>
+  </div>
+</dialog>
+
 <dialog id="instDialog">
   <form id="instForm" class="dlg" novalidate>
     <h2 class="dlg-title">계측기 추가</h2>
@@ -168,7 +193,7 @@
   </form>
 </dialog>
 
-<script src="config.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="config.js?v=7"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

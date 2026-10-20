@@ -1,7 +1,7 @@
 const OTHER = '기타';
 const MAX_DECIMALS = 4;
 const STATUS_MS = 3000;
-const SPLASH_MIN_MS = 800; // keep the loading page up long enough to read as intentional, not a flash
+const SPLASH_MIN_MS = 1500; // keep the loading page up long enough to read as intentional, not a flash
 const SPLASH_FADE_MS = 300;
 const PHOTO_MAX_PX = 1280;
 const PHOTO_QUALITY = 0.8;
@@ -377,55 +377,60 @@ function changeSite(site) {
   selectType(siteTypes()[0] ?? OTHER);
 }
 
-async function addName(action, label) {
-  const name = prompt(`추가할 ${label} 이름`)?.trim();
-  if (!name) return;
-  try {
-    applyConfig(await api(action, { name }));
-  } catch (err) {
-    if (err.isAuth) { store.remove('code'); showGate(); return; }
-    alert(err.fields ? '이름은 100자 이하여야 하고, 쉼표(,)를 쓰거나 = + - @ 로 시작할 수 없습니다.' : errorText(err));
-    return;
+const PEOPLE = {
+  site: { label: '현장', list: () => state.config.sites, add: 'add_site', remove: 'remove_site', note: '이미 저장된 기록과 사진은 지워지지 않습니다.' },
+  user: { label: '측정자', list: () => state.config.names, add: 'add_user', remove: 'remove_user', note: '이미 저장된 기록은 지워지지 않습니다.' },
+};
+const NAME_RULE = '이름은 100자 이하여야 하고, 쉼표(,)를 쓰거나 = + - @ 로 시작할 수 없습니다.';
+
+function renderManage() {
+  for (const [kind, p] of Object.entries(PEOPLE)) {
+    const names = p.list();
+    $(`${kind}List`).replaceChildren(...(names.length ? names : ['']).map((name) => {
+      const li = document.createElement('li');
+      if (!name) { li.className = 'empty'; li.textContent = '아직 없습니다.'; return li; }
+      const text = document.createElement('span');
+      text.textContent = name;
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'del';
+      del.textContent = '삭제';
+      del.setAttribute('aria-label', `${name} 삭제`);
+      del.addEventListener('click', () => managePeople(kind, 'remove', name));
+      li.append(text, del);
+      return li;
+    }));
   }
-  if (action === 'add_site') {
-    changeSite(name);
-    return;
-  }
-  renderPeople();
-  $('user').value = name;
-  store.set('user', name);
-  loadRecent().catch((err) => setStatus(err.message, 'err'));
 }
 
-// Only takes the site off the list: saved records, photos and instruments stay in the sheet.
-async function removeSite() {
-  const site = state.site;
-  if (!site) return;
-  if (!confirm(`'${site}' 현장을 목록에서 삭제할까요?\n이미 저장된 기록과 사진은 지워지지 않습니다.`)) return;
+// Removing only takes the name off the list: saved records, photos and instruments stay in the sheet.
+async function managePeople(kind, op, name) {
+  const p = PEOPLE[kind];
+  if (op === 'remove' && !confirm(`${p.label} '${name}'을(를) 목록에서 삭제할까요?\n${p.note}`)) return false;
+  $('manageError').textContent = '';
   try {
-    applyConfig(await api('remove_site', { name: site }));
+    applyConfig(await api(p[op], { name }));
   } catch (err) {
-    if (err.isAuth) { store.remove('code'); showGate(); return; }
-    alert(errorText(err));
-    return;
+    if (err.isAuth) { $('manageDialog').close(); store.remove('code'); showGate(); return false; }
+    $('manageError').textContent = err.fields ? NAME_RULE : errorText(err);
+    return false;
   }
-  changeSite('');
+  if (kind === 'site') {
+    changeSite(op === 'add' ? name : state.site);
+  } else {
+    renderPeople();
+    if (op === 'add') $('user').value = name;
+    store.set('user', $('user').value);
+    loadRecent().catch((err) => setStatus(err.message, 'err'));
+  }
+  renderManage();
+  return true;
 }
 
-async function removeUser() {
-  const name = $('user').value;
-  if (!name) return;
-  if (!confirm(`'${name}' 측정자를 목록에서 삭제할까요?\n이미 저장된 기록은 지워지지 않습니다.`)) return;
-  try {
-    applyConfig(await api('remove_user', { name }));
-  } catch (err) {
-    if (err.isAuth) { store.remove('code'); showGate(); return; }
-    alert(errorText(err));
-    return;
-  }
-  store.remove('user');
-  renderPeople();
-  loadRecent().catch((err) => setStatus(err.message, 'err'));
+function openManage() {
+  $('manageError').textContent = '';
+  renderManage();
+  $('manageDialog').showModal();
 }
 
 function openInstrumentDialog() {
@@ -531,10 +536,16 @@ $('retry').addEventListener('click', start);
 window.addEventListener('hashchange', route);
 $('user').addEventListener('change', () => { store.set('user', $('user').value); loadRecent().catch((err) => setStatus(err.message, 'err')); });
 $('site').addEventListener('change', () => changeSite($('site').value));
-$('addSite').addEventListener('click', () => addName('add_site', '현장'));
-$('addUser').addEventListener('click', () => addName('add_user', '측정자'));
-$('removeSite').addEventListener('click', removeSite);
-$('removeUser').addEventListener('click', removeUser);
+$('manage').addEventListener('click', openManage);
+$('manageClose').addEventListener('click', () => $('manageDialog').close());
+for (const kind of Object.keys(PEOPLE)) {
+  $(`${kind}Form`).addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = $(`${kind}New`);
+    const name = input.value.trim();
+    if (name && await managePeople(kind, 'add', name)) input.value = '';
+  });
+}
 $('addInstrument').addEventListener('click', openInstrumentDialog);
 $('instCancel').addEventListener('click', () => $('instDialog').close());
 $('instForm').addEventListener('submit', addInstrument);
