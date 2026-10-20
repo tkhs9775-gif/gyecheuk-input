@@ -9,6 +9,7 @@ const PHOTO_MAX_BYTES = 150 * 1024;
 const PHOTO_MIN_QUALITY = 0.4;
 const PHOTO_QUALITY_STEP = 0.1;
 const PHOTO_SHRINK = 0.85;
+const MAX_PHOTOS = 10;
 const $ = (id) => document.getElementById(id);
 const openedAt = Date.now();
 
@@ -216,9 +217,7 @@ function readForm() {
 
 // Phone photos are several MB; shrink to <= PHOTO_MAX_BYTES so a weak signal can still send them.
 // Lower quality first; if still too big at the floor, shrink the pixels and start over.
-async function readPhoto(input = $('photo')) {
-  const file = input.files[0];
-  if (!file) return null;
+async function compressPhoto(file) {
   let bitmap;
   try { bitmap = await createImageBitmap(file); } catch { throw new Error('사진을 읽을 수 없습니다. 다른 사진을 고르세요.'); }
   let scale = Math.min(1, PHOTO_MAX_PX / Math.max(bitmap.width, bitmap.height));
@@ -235,8 +234,80 @@ async function readPhoto(input = $('photo')) {
   }
 }
 
+// One at a time: compressing several full-size phone photos in parallel can exhaust memory.
+async function readPhotos(files) {
+  const photos = [];
+  for (const file of files) photos.push(await compressPhoto(file));
+  return photos;
+}
+
+// Photo chooser: camera button (one shot per tap, tap again for more) + gallery/file button (many at once).
+// The browser's own picker is what asks the phone for storage/gallery access; a web page cannot request it directly.
+function makePicker(box) {
+  let files = [];
+  const thumbs = document.createElement('ul');
+  thumbs.className = 'thumbs';
+
+  const button = (text, input) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn outline small';
+    b.textContent = text;
+    b.addEventListener('click', () => input.click());
+    return b;
+  };
+  const makeInput = (extra) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.hidden = true;
+    Object.assign(input, extra);
+    input.addEventListener('change', () => {
+      add([...input.files]);
+      input.value = '';
+    });
+    return input;
+  };
+  const cam = makeInput({});
+  cam.setAttribute('capture', 'environment');
+  const gallery = makeInput({ multiple: true });
+
+  function add(picked) {
+    const room = MAX_PHOTOS - files.length;
+    if (picked.length > room) alert(`사진은 한 번에 ${MAX_PHOTOS}장까지 올릴 수 있습니다.`);
+    files = files.concat(picked.slice(0, Math.max(room, 0)));
+    render();
+  }
+
+  function render() {
+    for (const img of thumbs.querySelectorAll('img')) URL.revokeObjectURL(img.src);
+    thumbs.replaceChildren(...files.map((file, i) => {
+      const li = document.createElement('li');
+      const img = document.createElement('img');
+      img.alt = file.name;
+      img.src = URL.createObjectURL(file);
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.textContent = '✕';
+      x.setAttribute('aria-label', '사진 빼기');
+      x.addEventListener('click', () => { files = files.filter((_, j) => j !== i); render(); });
+      li.append(img, x);
+      return li;
+    }));
+  }
+
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.append(button('📷 촬영', cam), button('🖼 갤러리·파일', gallery));
+  box.append(row, cam, gallery, thumbs);
+  return { files: () => files, clear: () => { files = []; render(); } };
+}
+
+const pickers = {};
+
 function clearEntryFields() {
-  for (const id of ['value', 'memo', 'otherType', 'freeId', 'photo']) $(id).value = '';
+  for (const id of ['value', 'memo', 'otherType', 'freeId']) $(id).value = '';
+  pickers.entry.clear();
   updateValueInfo();
 }
 
@@ -326,6 +397,37 @@ async function addName(action, label) {
   loadRecent().catch((err) => setStatus(err.message, 'err'));
 }
 
+// Only takes the site off the list: saved records, photos and instruments stay in the sheet.
+async function removeSite() {
+  const site = state.site;
+  if (!site) return;
+  if (!confirm(`'${site}' 현장을 목록에서 삭제할까요?\n이미 저장된 기록과 사진은 지워지지 않습니다.`)) return;
+  try {
+    applyConfig(await api('remove_site', { name: site }));
+  } catch (err) {
+    if (err.isAuth) { store.remove('code'); showGate(); return; }
+    alert(errorText(err));
+    return;
+  }
+  changeSite('');
+}
+
+async function removeUser() {
+  const name = $('user').value;
+  if (!name) return;
+  if (!confirm(`'${name}' 측정자를 목록에서 삭제할까요?\n이미 저장된 기록은 지워지지 않습니다.`)) return;
+  try {
+    applyConfig(await api('remove_user', { name }));
+  } catch (err) {
+    if (err.isAuth) { store.remove('code'); showGate(); return; }
+    alert(errorText(err));
+    return;
+  }
+  store.remove('user');
+  renderPeople();
+  loadRecent().catch((err) => setStatus(err.message, 'err'));
+}
+
 function openInstrumentDialog() {
   $('instSite').textContent = state.site ? `${state.site} 현장에 추가됩니다.` : '';
   $('iType').value = state.type !== OTHER ? state.type : '';
@@ -362,16 +464,16 @@ async function addInstrument(e) {
 async function saveShot(e) {
   e.preventDefault();
   const status = (text, kind) => setStatus(text, kind, 'shotStatus');
-  if (!$('shotFile').files[0]) { status('사진을 먼저 찍어 주세요.', 'err'); return; }
+  if (pickers.shot.files().length === 0) { status('사진을 먼저 고르거나 찍어 주세요.', 'err'); return; }
   const button = $('shotSave');
   button.disabled = true;
   status('저장 중...', 'ok');
   try {
     const entry = { clientId: state.shotId, site: $('shotSite').value, user: $('user').value, memo: $('shotMemo').value.trim() };
-    await api('photo', { entry, photo: await readPhoto($('shotFile')) });
+    await api('photo', { entry, photos: await readPhotos(pickers.shot.files()) });
     status('저장됨 ✓', 'ok');
     state.shotId = crypto.randomUUID();
-    $('shotFile').value = '';
+    pickers.shot.clear();
     $('shotMemo').value = '';
   } catch (err) {
     if (err.isAuth) { store.remove('code'); showGate(); return; }
@@ -431,6 +533,8 @@ $('user').addEventListener('change', () => { store.set('user', $('user').value);
 $('site').addEventListener('change', () => changeSite($('site').value));
 $('addSite').addEventListener('click', () => addName('add_site', '현장'));
 $('addUser').addEventListener('click', () => addName('add_user', '측정자'));
+$('removeSite').addEventListener('click', removeSite);
+$('removeUser').addEventListener('click', removeUser);
 $('addInstrument').addEventListener('click', openInstrumentDialog);
 $('instCancel').addEventListener('click', () => $('instDialog').close());
 $('instForm').addEventListener('submit', addInstrument);
@@ -445,7 +549,7 @@ $('input').addEventListener('submit', async (e) => {
   button.disabled = true;
   setStatus('저장 중...', 'ok');
   try {
-    await api('save', { entry: readForm(), photo: await readPhoto() });
+    await api('save', { entry: readForm(), photos: await readPhotos(pickers.entry.files()) });
     setStatus('저장됨 ✓', 'ok');
     state.clientId = crypto.randomUUID();
     store.remove('draft');
@@ -463,6 +567,9 @@ $('input').addEventListener('submit', async (e) => {
     button.disabled = false;
   }
 });
+
+pickers.entry = makePicker($('photoBoxEntry'));
+pickers.shot = makePicker($('photoBoxShot'));
 
 if (state.code) {
   start();

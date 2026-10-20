@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="계측 입력">
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="logo.png">
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=5">
 <title>계측 입력</title>
 </head>
 <body>
@@ -41,6 +41,8 @@
   <div class="row adds">
     <button id="addSite" type="button" class="btn outline small">＋ 현장 추가</button>
     <button id="addUser" type="button" class="btn outline small">＋ 측정자 추가</button>
+    <button id="removeSite" type="button" class="btn outline small danger">－ 현재 현장 삭제</button>
+    <button id="removeUser" type="button" class="btn outline small danger">－ 현재 측정자 삭제</button>
   </div>
 
   <div class="row between">
@@ -100,9 +102,9 @@
   <label class="field"><span class="label">특이사항 (선택)</span>
     <input id="memo" type="text" maxlength="1000" placeholder="예: 우천 후 측정">
   </label>
-  <label class="field"><span class="label">사진 (선택)</span>
-    <input id="photo" type="file" accept="image/*" capture="environment">
-  </label>
+  <div class="field"><span class="label">사진 (선택, 여러 장 가능)</span>
+    <div id="photoBoxEntry"></div>
+  </div>
 
   <h2 class="section">내 최근 입력 5건</h2>
   <ul id="recentInput" class="list"></ul>
@@ -128,9 +130,9 @@
   <label class="field select-card"><span class="label">현장</span>
     <select id="shotSite"></select>
   </label>
-  <label class="field"><span class="label">사진</span>
-    <input id="shotFile" type="file" accept="image/*" capture="environment">
-  </label>
+  <div class="field"><span class="label">사진 (여러 장 가능)</span>
+    <div id="photoBoxShot"></div>
+  </div>
   <label class="field"><span class="label">메모 (선택)</span>
     <input id="shotMemo" type="text" maxlength="1000" placeholder="예: 가설울타리 균열">
   </label>
@@ -166,7 +168,7 @@
   </form>
 </dialog>
 
-<script src="config.js?v=3"></script>
-<script src="app.js?v=3"></script>
+<script src="config.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
