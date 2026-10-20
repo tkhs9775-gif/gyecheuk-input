@@ -22,7 +22,7 @@ const store = {
 
 const state = {
   code: store.get('code') ?? '',
-  config: { names: [], sites: [], types: [], instruments: [] },
+  config: { names: [], sites: [], types: [], instruments: [], valueCounts: {} },
   latest: {},
   site: store.get('site') ?? '',
   type: '',
@@ -133,8 +133,9 @@ function renderRecent(rows) {
       sub.textContent = `${r.type} · ${r.date}`;
       meta.append(title, sub);
       const val = document.createElement('div');
-      val.className = 'val';
-      val.textContent = String(r.value);
+      const multi = r.values?.length > 1;
+      val.className = multi ? 'val multi' : 'val';
+      val.textContent = multi ? r.values.join(' / ') : String(r.value);
       li.append(meta, val);
       return li;
     }));
@@ -178,10 +179,20 @@ function selectType(type) {
   updateValueInfo();
 }
 
+// Load cells report one value per axis: those types show several inputs, filled in order (no axis names).
+const MULTI_IDS = ['mv0', 'mv1', 'mv2'];
+const valueCount = (inst) => (inst && state.type !== OTHER ? state.config.valueCounts?.[inst.type] ?? 1 : 1);
+const signed = (n, digits) => `${n > 0 ? '+' : ''}${n.toFixed(digits)}`;
+
 function updateValueInfo() {
   const inst = selectedInstrument();
+  const count = valueCount(inst);
+  show($('singleRow'), count === 1);
+  show($('multiRow'), count > 1);
+  MULTI_IDS.forEach((id, i) => show($(id).parentElement, i < count));
   const unit = inst && state.type !== OTHER ? inst.unit : '';
   $('unit').textContent = unit;
+  for (const u of document.querySelectorAll('#multiRow .unit')) u.textContent = unit;
 
   const last = inst && state.type !== OTHER ? state.latest[inst.id] : undefined;
   const prev = $('prev');
@@ -189,12 +200,12 @@ function updateValueInfo() {
     prev.textContent = inst ? '전회 기록 없음' : '';
     return;
   }
-  let text = `전회 ${last.value} ${unit} (${shortDate(last.date)})`;
-  const raw = $('value').value.trim();
-  if (raw !== '' && Number.isFinite(Number(raw))) {
-    const delta = Number(raw) - last.value;
-    const digits = Math.max(decimalsOf(raw), decimalsOf(last.value));
-    text += ` · 변화 ${delta > 0 ? '+' : ''}${delta.toFixed(digits)} ${unit}`;
+  const lastValues = last.values?.length ? last.values : [last.value];
+  let text = `전회 ${lastValues.slice(0, count).join(' / ')} ${unit} (${shortDate(last.date)})`;
+  const raws = count > 1 ? MULTI_IDS.slice(0, count).map((id) => $(id).value.trim()) : [$('value').value.trim()];
+  if (lastValues.length >= count && raws.every((r) => r !== '' && Number.isFinite(Number(r)))) {
+    const deltas = raws.map((r, i) => signed(Number(r) - lastValues[i], Math.max(decimalsOf(r), decimalsOf(lastValues[i]))));
+    text += ` · 변화 ${deltas.join(' / ')} ${unit}`;
   }
   prev.textContent = text;
 }
@@ -203,6 +214,8 @@ function readForm() {
   const isOther = state.type === OTHER;
   const hasList = !$('instrumentField').classList.contains('hidden');
   const raw = $('value').value.trim();
+  const count = hasList ? valueCount(selectedInstrument()) : 1;
+  const values = count > 1 ? MULTI_IDS.slice(0, count).map((id) => ($(id).value.trim() === '' ? null : Number($(id).value))) : undefined;
   return {
     clientId: state.clientId,
     site: state.site,
@@ -210,7 +223,8 @@ function readForm() {
     user: $('user').value,
     type: isOther ? $('otherType').value.trim() : state.type,
     id: hasList ? $('instrument').value : $('freeId').value.trim(),
-    value: raw === '' ? null : Number(raw),
+    value: values ? values[0] : (raw === '' ? null : Number(raw)),
+    values,
     memo: $('memo').value.trim(),
   };
 }
@@ -306,7 +320,7 @@ function makePicker(box) {
 const pickers = {};
 
 function clearEntryFields() {
-  for (const id of ['value', 'memo', 'otherType', 'freeId']) $(id).value = '';
+  for (const id of ['value', 'memo', 'otherType', 'freeId', ...MULTI_IDS]) $(id).value = '';
   pickers.entry.clear();
   updateValueInfo();
 }
@@ -320,6 +334,7 @@ function saveDraft() {
     otherType: $('otherType').value,
     freeId: $('freeId').value,
     value: $('value').value,
+    values: MULTI_IDS.map((id) => $(id).value),
     memo: $('memo').value,
     date: $('date').value,
   };
@@ -336,6 +351,7 @@ function restoreDraft() {
   $('otherType').value = draft.otherType ?? '';
   $('freeId').value = draft.freeId ?? '';
   $('value').value = draft.value ?? '';
+  MULTI_IDS.forEach((id, i) => { $(id).value = draft.values?.[i] ?? ''; });
   $('memo').value = draft.memo ?? '';
   if (draft.date) $('date').value = draft.date;
   updateValueInfo();
@@ -365,8 +381,8 @@ function renderPeople() {
 }
 
 // The add_* replies carry the refreshed lists.
-function applyConfig({ sites, names, types, instruments }) {
-  state.config = { sites, names, types, instruments };
+function applyConfig({ sites, names, types, instruments, valueCounts }) {
+  state.config = { sites, names, types, instruments, valueCounts };
 }
 
 function changeSite(site) {
@@ -552,6 +568,16 @@ $('instForm').addEventListener('submit', addInstrument);
 $('shot').addEventListener('submit', saveShot);
 $('instrument').addEventListener('change', updateValueInfo);
 $('value').addEventListener('input', updateValueInfo);
+MULTI_IDS.forEach((id, i) => {
+  $(id).addEventListener('input', updateValueInfo);
+  // Enter jumps to the next value; on the last one it submits as usual.
+  $(id).addEventListener('keydown', (e) => {
+    const next = MULTI_IDS[i + 1] && $(MULTI_IDS[i + 1]);
+    if (e.key !== 'Enter' || !next || next.parentElement.classList.contains('hidden')) return;
+    e.preventDefault();
+    next.focus();
+  });
+});
 $('draft').addEventListener('click', saveDraft);
 
 $('input').addEventListener('submit', async (e) => {

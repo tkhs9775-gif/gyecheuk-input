@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="계측 입력">
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="logo.png">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=9">
 <title>계측 입력</title>
 </head>
 <body>
@@ -90,9 +90,14 @@
 
   <div class="card">
     <label class="label" for="value">측정값</label>
-    <div class="value-row">
+    <div id="singleRow" class="value-row">
       <input id="value" type="number" step="any" inputmode="decimal" placeholder="0.0">
       <span id="unit" class="unit"></span>
+    </div>
+    <div id="multiRow" class="multi hidden">
+      <label><span class="label">1</span><input id="mv0" type="number" step="any" inputmode="decimal" enterkeyhint="next" placeholder="0.0"><span class="unit"></span></label>
+      <label><span class="label">2</span><input id="mv1" type="number" step="any" inputmode="decimal" enterkeyhint="next" placeholder="0.0"><span class="unit"></span></label>
+      <label><span class="label">3</span><input id="mv2" type="number" step="any" inputmode="decimal" enterkeyhint="done" placeholder="0.0"><span class="unit"></span></label>
     </div>
     <div id="prev" class="muted"></div>
   </div>
@@ -193,7 +198,7 @@
   </form>
 </dialog>
 
-<script src="config.js?v=7"></script>
-<script src="app.js?v=7"></script>
+<script src="config.js?v=9"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

@@ -61,6 +61,13 @@ input:focus, select:focus, button:focus-visible, a:focus-visible { outline: 3px 
 
 .value-row { display: flex; align-items: baseline; gap: 8px; }
 #value { width: 100%; min-width: 0; height: 72px; padding: 0 0 4px; border: 0; border-bottom: 3px solid var(--accent); border-radius: 0; background: transparent; font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums; outline-offset: 4px; }
+.multi { display: flex; flex-direction: column; gap: 6px; }
+.multi label { display: flex; align-items: baseline; gap: 10px; }
+.multi .label { flex: none; width: 14px; margin: 0; }
+.multi input { flex: 1; min-width: 0; height: 56px; padding: 0 0 4px; border: 0; border-bottom: 3px solid var(--accent); border-radius: 0; background: transparent; font-size: 36px; font-weight: 700; font-variant-numeric: tabular-nums; outline-offset: 4px; -moz-appearance: textfield; appearance: textfield; }
+.multi input::-webkit-inner-spin-button, .multi input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.multi .unit { flex: none; min-width: 32px; font-size: 20px; }
+.list .val.multi { font-size: 15px; white-space: normal; text-align: right; }
 .unit { font-size: 24px; font-weight: 500; color: var(--muted); }
 #prev { margin-top: 12px; min-height: 20px; }
 
