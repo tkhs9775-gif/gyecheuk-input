@@ -18,6 +18,7 @@ const BUILD = new URL(document.currentScript.src).searchParams.get('v') ?? '-';
 const TABBED = ['home', 'trend', 'shot', 'info'];
 const SERIES_COLORS = ['#2a78d6', '#eb6834', '#1baf7a']; // categorical slots 1-3 of the dataviz palette (validated)
 const SURVEY = '측량';
+const ISSUE_KINDS = ['', '파손', '망실', '접근 불가', '작동 불량'];
 const MAX_SURVEY_FILES = 10;
 const MAX_SURVEY_BYTES = 15 * 1024 * 1024;
 const MB = 1024 * 1024;
@@ -37,12 +38,13 @@ const state = {
   latest: {},
   site: store.get('site') ?? '',
   type: '',
+  issue: '',
   clientId: crypto.randomUUID(),
   shotId: crypto.randomUUID(),
   statusTimer: null,
 };
 
-const FIELD_LABELS = { date: '날짜', site: '현장', user: '측정자', type: '계측기 종류', id: '계측기 ID', place: '위치', unit: '단위', value: '측정값', memo: '메모', photo: '사진', files: '파일' };
+const FIELD_LABELS = { date: '날짜', site: '현장', user: '측정자', type: '계측기 종류', id: '계측기 ID', place: '위치', unit: '단위', value: '측정값', issue: '이상 상태', memo: '메모', photo: '사진', files: '파일' };
 const SERVER_ERRORS = {
   bad_code: '접속 코드가 맞지 않습니다.',
   locked: '시도가 너무 많습니다. 10분 후 다시 해주세요.',
@@ -169,9 +171,14 @@ function renderRecent(rows) {
       li.addEventListener('click', () => openEdit(r));
       li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openEdit(r); });
       const val = document.createElement('div');
-      const multi = r.values?.length > 1;
-      val.className = multi ? 'val multi' : 'val';
-      val.textContent = multi ? r.values.join(' / ') : String(r.value);
+      if (r.issue) {
+        val.className = 'val issue';
+        val.textContent = `⚠ ${r.issue}`;
+      } else {
+        const multi = r.values?.length > 1;
+        val.className = multi ? 'val multi' : 'val';
+        val.textContent = multi ? r.values.join(' / ') : String(r.value);
+      }
       li.append(meta, val);
       return li;
     }));
@@ -208,11 +215,34 @@ function renderTypes() {
   }));
 }
 
+function renderIssues() {
+  const box = $('issues');
+  box.replaceChildren(...ISSUE_KINDS.map((issue) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = issue ? `⚠ ${issue}` : '정상 측정';
+    if (issue) b.className = 'warn';
+    b.dataset.issue = issue;
+    b.setAttribute('aria-pressed', String(issue === state.issue));
+    b.addEventListener('click', () => selectIssue(issue));
+    return b;
+  }));
+}
+
+function selectIssue(issue) {
+  state.issue = issue;
+  for (const b of $('issues').children) b.setAttribute('aria-pressed', String(b.dataset.issue === issue));
+  const isSurvey = state.type === SURVEY;
+  show($('valueCard'), !isSurvey && !issue);
+  $('memo').placeholder = issue ? `예: ${issue} 상세 사유 또는 현장 상황` : '예: 우천 후 측정';
+}
+
 function selectType(type) {
   state.type = type;
   for (const b of $('types').children) b.setAttribute('aria-pressed', String(b.dataset.type === type));
 
   const isSurvey = type === SURVEY;
+  if (isSurvey && state.issue) state.issue = '';
   const list = type === OTHER || isSurvey ? [] : instrumentsOf(type);
   $('instrument').replaceChildren(...list.map((i) => new Option(i.place ? `${i.id} · ${i.place}` : i.id, i.id)));
   show($('instrumentField'), list.length > 0);
@@ -221,8 +251,11 @@ function selectType(type) {
   show($('freeIdField'), list.length === 0 && !isSurvey);
   // Survey files replace the value card and the photos.
   show($('surveyBox'), isSurvey);
-  show($('valueCard'), !isSurvey);
+  show($('issueField'), !isSurvey);
+  show($('valueCard'), !isSurvey && !state.issue);
   show($('photoField'), !isSurvey);
+  show($('entryKeepField'), !isSurvey);
+  for (const b of $('issues').children) b.setAttribute('aria-pressed', String(b.dataset.issue === state.issue));
   updateValueInfo();
 }
 
@@ -262,7 +295,7 @@ function readForm() {
   const hasList = !$('instrumentField').classList.contains('hidden');
   const raw = $('value').value.trim();
   const count = hasList ? valueCount(selectedInstrument()) : 1;
-  const values = count > 1 ? MULTI_IDS.slice(0, count).map((id) => ($(id).value.trim() === '' ? null : Number($(id).value))) : undefined;
+  const values = state.issue ? undefined : (count > 1 ? MULTI_IDS.slice(0, count).map((id) => ($(id).value.trim() === '' ? null : Number($(id).value))) : undefined);
   return {
     clientId: state.clientId,
     site: state.site,
@@ -271,8 +304,9 @@ function readForm() {
     user: $('user').value,
     type: isOther ? $('otherType').value.trim() : state.type,
     id: hasList ? $('instrument').value : $('freeId').value.trim(),
-    value: values ? values[0] : (raw === '' ? null : Number(raw)),
+    value: state.issue ? null : (values ? values[0] : (raw === '' ? null : Number(raw))),
     values,
+    issue: state.issue || undefined,
     memo: $('memo').value.trim(),
   };
 }
@@ -439,6 +473,7 @@ const pickers = {};
 
 function clearEntryFields() {
   for (const id of ['value', 'memo', 'otherType', 'freeId', ...MULTI_IDS]) $(id).value = '';
+  selectIssue('');
   pickers.entry.clear();
   pickers.gps.clear();
   pickers.qgis.clear();
@@ -452,6 +487,7 @@ let draftTimer = null;
 function persistDraft() {
   const draft = {
     type: state.type,
+    issue: state.issue,
     instrument: $('instrument').value,
     otherType: $('otherType').value,
     freeId: $('freeId').value,
@@ -479,6 +515,7 @@ function restoreDraft() {
   try { draft = JSON.parse(store.get('draft') ?? 'null'); } catch { draft = null; }
   if (!draft || ![...siteTypes(), SURVEY, OTHER].includes(draft.type)) return false;
   selectType(draft.type);
+  selectIssue(ISSUE_KINDS.includes(draft.issue) ? draft.issue : '');
   if ([...$('instrument').options].some((o) => o.value === draft.instrument)) $('instrument').value = draft.instrument;
   $('otherType').value = draft.otherType ?? '';
   $('freeId').value = draft.freeId ?? '';
@@ -646,8 +683,9 @@ async function saveShot(e) {
 // ---------- info tab ----------
 
 function renderInfo() {
-  $('appVersion').textContent = `v${BUILD}`;
+  $('appVersion').textContent = `v${BUILD}${window.AndroidGallery ? ' (안드로이드 앱)' : ''}`;
   $('adminInfo').textContent = state.config.admin || '등록되지 않음';
+  show($('downloadApk'), !window.AndroidGallery);
 }
 
 // ---------- trend tab (line chart of the entered values) ----------
@@ -838,6 +876,7 @@ async function start() {
   $('date').value = new Date().toLocaleDateString('sv-SE');
 
   renderTypes();
+  renderIssues();
   if (!restoreDraft()) selectType(siteTypes()[0] ?? OTHER);
   route();
   try {
@@ -922,9 +961,12 @@ $('input').addEventListener('submit', async (e) => {
     } else {
       const entry = readForm();
       const photos = await readPhotos(pickers.entry.files());
-      result = await submitOrQueue({ id: entry.clientId, action: 'save', label: `${entry.date} ${entry.id}`, payload: { entry, photos } });
+      const label = entry.issue ? `⚠ ${entry.issue} · ${entry.id}` : `${entry.date} ${entry.id}`;
+      result = await submitOrQueue({ id: entry.clientId, action: 'save', label, payload: { entry, photos } });
+      store.set('entryKeep', $('entryKeep').checked ? '1' : '0');
+      if (photos.length > 0 && $('entryKeep').checked) saveCopiesToPhone(photos, entry.site).catch(() => {});
       // Not on the server yet: show this reading as the previous one so the next change is measured against it.
-      if (result === 'queued') state.latest[entry.id] = { value: entry.value, values: entry.values ?? [entry.value], date: entry.date };
+      if (result === 'queued' && !entry.issue) state.latest[entry.id] = { value: entry.value, values: entry.values ?? [entry.value], date: entry.date };
     }
     setStatus(result === 'sent' ? '저장됨 ✓' : '신호가 약해 이 폰에 보관했습니다. 잡히면 자동으로 보냅니다.', 'ok');
     state.clientId = crypto.randomUUID();
@@ -950,6 +992,11 @@ pickers.shot = makePicker($('photoBoxShot'));
 pickers.gps = makeFilePicker($('gpsBox'));
 pickers.qgis = makeFilePicker($('qgisBox'));
 $('shotKeep').checked = store.get('shotKeep') !== '0';
+$('entryKeep').checked = store.get('entryKeep') !== '0';
+if (window.AndroidGallery) {
+  $('shotKeepNote').textContent = '150KB 이하로 줄인 사진이 갤러리 「계측사진/현장이름」 폴더에 저장됩니다';
+  $('entryKeepNote').textContent = '150KB 이하로 줄인 사진이 갤러리 「계측사진/현장이름」 폴더에 저장됩니다';
+}
 initOutbox();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${BUILD}`).catch(() => {});
 

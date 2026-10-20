@@ -9,7 +9,7 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=16">
+<link rel="stylesheet" href="style.css?v=17">
 <title>계측 입력</title>
 </head>
 <body>
@@ -106,6 +106,11 @@
     </div>
   </section>
 
+  <div id="issueField" class="field">
+    <span class="label">계측기 상태 (파손·망실 등으로 측정 불가 시 선택)</span>
+    <div id="issues" class="chips issue-chips" role="group" aria-label="계측기 상태"></div>
+  </div>
+
   <div id="valueCard" class="card">
     <label class="label" for="value">측정값</label>
     <div id="singleRow" class="value-row">
@@ -129,6 +134,10 @@
   <div id="photoField" class="field"><span class="label">사진 (선택, 여러 장 가능)</span>
     <div id="photoBoxEntry"></div>
   </div>
+  <label id="entryKeepField" class="keep">
+    <input id="entryKeep" type="checkbox" checked>
+    <span>첨부 사진 이 폰에도 사본 저장<small id="entryKeepNote">150KB 이하 압축본이 현장 이름으로 폰에 저장됩니다</small></span>
+  </label>
 
   <h2 class="section">내 최근 입력 5건</h2>
   <ul id="recentInput" class="list"></ul>
@@ -162,7 +171,7 @@
   </label>
   <label class="keep">
     <input id="shotKeep" type="checkbox" checked>
-    <span>이 폰에도 사본 저장<small>150KB 이하로 줄인 사진이 다운로드 폴더에 현장 이름이 붙은 파일로 저장됩니다</small></span>
+    <span>이 폰에도 사본 저장<small id="shotKeepNote">150KB 이하로 줄인 사진이 다운로드 폴더에 현장 이름이 붙은 파일로 저장됩니다</small></span>
   </label>
 
   <div class="bar-bottom">
@@ -276,6 +285,7 @@
   </dl>
   <button id="openManage" type="button" class="btn outline wide">현장·측정자 관리</button>
   <button id="reloadApp" type="button" class="btn outline wide">최신 버전으로 새로고침</button>
+  <a id="downloadApk" href="https://github.com/tkhs9775-gif/gyecheuk-input/releases/download/latest/gyecheuk-input.apk" class="btn outline wide apk-link">📱 안드로이드 앱(APK) 내려받기</a>
 </main>
 
 <nav id="tabbar" class="hidden" aria-label="메뉴">
@@ -296,11 +306,11 @@
   </a>
 </nav>
 
-<script src="config.js?v=16"></script>
-<script src="weather.js?v=16"></script>
-<script src="entries.js?v=16"></script>
-<script src="outbox.js?v=16"></script>
-<script src="phonecopy.js?v=16"></script>
-<script src="app.js?v=16"></script>
+<script src="config.js?v=17"></script>
+<script src="weather.js?v=17"></script>
+<script src="entries.js?v=17"></script>
+<script src="outbox.js?v=17"></script>
+<script src="phonecopy.js?v=17"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>

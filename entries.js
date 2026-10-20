@@ -21,6 +21,7 @@ function unusualChange(values, lastValues, unit) {
 
 // 저장 직전에 부른다. 문제가 있어 사용자가 취소하면 false
 function confirmUnusual() {
+  if (state.issue) return true;
   const inst = selectedInstrument();
   if (!inst || state.type === OTHER || state.type === SURVEY) return true;
   const last = state.latest[inst.id];
@@ -39,10 +40,11 @@ function openEdit(row) {
     return;
   }
   editing = row;
+  const isIssue = !!row.issue;
   const count = Math.max(row.values?.length ?? 1, 1);
-  $('editInfo').textContent = `${row.id} · ${row.type}`;
+  $('editInfo').textContent = `${row.id} · ${row.type}${isIssue ? ` · ⚠ ${row.issue}` : ''}`;
   EDIT_IDS.forEach((id, i) => {
-    show($(id).parentElement, i < count);
+    show($(id).parentElement, !isIssue && i < count);
     $(id).value = row.values?.[i] ?? '';
   });
   $('editDate').value = row.date;
@@ -66,10 +68,11 @@ async function finishEdit(message) {
 async function saveEdit(e) {
   e.preventDefault();
   if (!editing) return;
+  const isIssue = !!editing.issue;
   const count = Math.max(editing.values?.length ?? 1, 1);
-  const values = EDIT_IDS.slice(0, count).map((id) => ($(id).value.trim() === '' ? null : Number($(id).value)));
+  const values = isIssue ? [] : EDIT_IDS.slice(0, count).map((id) => ($(id).value.trim() === '' ? null : Number($(id).value)));
   try {
-    await api('edit', { user: $('user').value, entry: { clientId: editing.clientId, values, date: $('editDate').value, memo: $('editMemo').value.trim() } });
+    await api('edit', { user: $('user').value, entry: { clientId: editing.clientId, values, issue: editing.issue || '', date: $('editDate').value, memo: $('editMemo').value.trim() } });
   } catch (err) {
     if (err.isAuth) { $('editDialog').close(); store.remove('code'); showGate(); return; }
     $('editError').textContent = editErrorText(err);

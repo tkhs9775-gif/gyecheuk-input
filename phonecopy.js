@@ -1,5 +1,8 @@
-// 사진 사본을 이 폰에도 남긴다. 웹앱은 폰의 폴더를 직접 만들거나 고를 수 없어서(안드로이드 크롬 제한),
-// 파일 이름 맨 앞에 현장 이름을 붙여 '다운로드' 폴더에 저장한다. 예: 당산동_신축공사_20261020_153012_1.jpg
+// 사진 사본을 이 폰에도 남긴다.
+// - 안드로이드 앱(APK)에서 열었을 때: 네이티브 브리지(window.AndroidGallery.savePhoto)를 통해
+//   폰 갤러리의 'Pictures/계측사진/<현장명>/' 폴더에 직접 저장한다.
+// - 일반 웹브라우저에서 열었을 때: 웹앱은 폰의 폴더를 직접 만들 수 없으므로
+//   파일 이름 맨 앞에 현장 이름을 붙여 '다운로드' 폴더에 저장한다. 예: 당산동_신축공사_20261020_153012_1.jpg
 // 이 파일은 app.js보다 먼저 읽히므로 화면 요소($)는 함수가 불릴 때만 쓴다.
 
 const NO_SITE_NAME = '현장무관';
@@ -15,6 +18,10 @@ function phoneFileName(site, now, index, mime) {
   return `${safeFilePart(site) || NO_SITE_NAME}_${date}_${time}_${index + 1}.${EXT_BY_TYPE[mime] ?? 'jpg'}`;
 }
 
+function phoneAlbumFolder(site) {
+  return safeFilePart(site) || NO_SITE_NAME;
+}
+
 // 클라우드로 보내는 것과 같은 압축본(150KB 이하 JPEG, base64)을 파일 조각으로 되돌린다
 function base64ToBlob(base64) {
   const bin = atob(base64);
@@ -26,11 +33,20 @@ function base64ToBlob(base64) {
 // photos: readPhotos()가 만든 [{ base64 }]. 원본이 아니라 압축본을 저장하므로 폰과 클라우드의 파일이 같다
 async function saveCopiesToPhone(photos, site) {
   const now = new Date();
+  const nativeBridge = typeof window !== 'undefined' && window.AndroidGallery && typeof window.AndroidGallery.savePhoto === 'function'
+    ? window.AndroidGallery
+    : null;
+  const folder = phoneAlbumFolder(site);
   for (const [i, photo] of photos.entries()) {
+    const fileName = phoneFileName(site, now, i, 'image/jpeg');
+    if (nativeBridge) {
+      nativeBridge.savePhoto(photo.base64, folder, fileName);
+      continue;
+    }
     const blob = base64ToBlob(photo.base64);
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = phoneFileName(site, now, i, blob.type);
+    link.download = fileName;
     document.body.append(link);
     link.click();
     link.remove();
@@ -39,4 +55,4 @@ async function saveCopiesToPhone(photos, site) {
   }
 }
 
-if (typeof module !== 'undefined') module.exports = { safeFilePart, phoneFileName, base64ToBlob };
+if (typeof module !== 'undefined') module.exports = { safeFilePart, phoneFileName, phoneAlbumFolder, base64ToBlob };
