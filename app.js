@@ -21,26 +21,29 @@ const store = {
 
 const state = {
   code: store.get('code') ?? '',
-  config: { names: [], types: [], instruments: [], site: '' },
+  config: { names: [], sites: [], types: [], instruments: [] },
   latest: {},
+  site: store.get('site') ?? '',
   type: '',
   clientId: crypto.randomUUID(),
+  shotId: crypto.randomUUID(),
   statusTimer: null,
 };
 
-const FIELD_LABELS = { date: '날짜', user: '측정자', type: '계측기 종류', id: '계측기 ID', value: '측정값', memo: '메모' };
+const FIELD_LABELS = { date: '날짜', site: '현장', user: '측정자', type: '계측기 종류', id: '계측기 ID', place: '위치', unit: '단위', value: '측정값', memo: '메모', photo: '사진' };
 const SERVER_ERRORS = {
   bad_code: '접속 코드가 맞지 않습니다.',
   locked: '시도가 너무 많습니다. 10분 후 다시 해주세요.',
+  duplicate: '이미 있습니다.',
 };
 
 // ---------- helpers ----------
 
 const show = (el, isOn) => el.classList.toggle('hidden', !isOn);
 
-function setStatus(text, kind) {
+function setStatus(text, kind, id = 'status') {
   clearTimeout(state.statusTimer);
-  const el = $('status');
+  const el = $(id);
   el.textContent = text;
   el.className = kind;
   if (kind === 'ok') state.statusTimer = setTimeout(() => { el.className = ''; }, STATUS_MS);
@@ -54,11 +57,15 @@ async function api(action, payload = {}) {
   if (data.ok) return data;
   const err = new Error(SERVER_ERRORS[data.error] ?? '서버 오류');
   err.isAuth = data.error === 'bad_code';
+  err.code = data.error;
   err.fields = data.fields;
   throw err;
 }
 
-const instrumentsOf = (type) => state.config.instruments.filter((i) => i.type === type);
+// An instrument with no site is shared by every site.
+const siteInstruments = () => state.config.instruments.filter((i) => !i.site || i.site === state.site);
+const siteTypes = () => [...new Set(siteInstruments().map((i) => i.type))];
+const instrumentsOf = (type) => siteInstruments().filter((i) => i.type === type);
 const selectedInstrument = () => state.config.instruments.find((i) => i.id === $('instrument').value);
 const decimalsOf = (n) => Math.min((String(n).split('.')[1] ?? '').length, MAX_DECIMALS);
 const shortDate = (iso) => `${iso.slice(5, 7)}/${iso.slice(8, 10)}`;
@@ -90,13 +97,13 @@ function showSplashLoading() {
 // ---------- screens ----------
 
 function showScreen(name) {
-  for (const id of ['gate', 'home', 'input']) show($(id), id === name);
+  for (const id of ['gate', 'home', 'input', 'shot']) show($(id), id === name);
   window.scrollTo(0, 0);
 }
 
 function route() {
   if (!state.config.names.length) return;
-  showScreen(location.hash === '#input' ? 'input' : 'home');
+  showScreen({ '#input': 'input', '#shot': 'shot' }[location.hash] ?? 'home');
 }
 
 function showGate() {
@@ -148,7 +155,7 @@ async function loadLatest() {
 
 function renderTypes() {
   const box = $('types');
-  box.replaceChildren(...[...state.config.types, OTHER].map((type) => {
+  box.replaceChildren(...[...siteTypes(), OTHER].map((type) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.textContent = type;
@@ -197,6 +204,7 @@ function readForm() {
   const raw = $('value').value.trim();
   return {
     clientId: state.clientId,
+    site: state.site,
     date: $('date').value,
     user: $('user').value,
     type: isOther ? $('otherType').value.trim() : state.type,
@@ -208,8 +216,8 @@ function readForm() {
 
 // Phone photos are several MB; shrink to <= PHOTO_MAX_BYTES so a weak signal can still send them.
 // Lower quality first; if still too big at the floor, shrink the pixels and start over.
-async function readPhoto() {
-  const file = $('photo').files[0];
+async function readPhoto(input = $('photo')) {
+  const file = input.files[0];
   if (!file) return null;
   let bitmap;
   try { bitmap = await createImageBitmap(file); } catch { throw new Error('사진을 읽을 수 없습니다. 다른 사진을 고르세요.'); }
@@ -251,7 +259,7 @@ function saveDraft() {
 function restoreDraft() {
   let draft;
   try { draft = JSON.parse(store.get('draft') ?? 'null'); } catch { draft = null; }
-  if (!draft || ![...state.config.types, OTHER].includes(draft.type)) return false;
+  if (!draft || ![...siteTypes(), OTHER].includes(draft.type)) return false;
   selectType(draft.type);
   if ([...$('instrument').options].some((o) => o.value === draft.instrument)) $('instrument').value = draft.instrument;
   $('otherType').value = draft.otherType ?? '';
@@ -261,6 +269,116 @@ function restoreDraft() {
   if (draft.date) $('date').value = draft.date;
   updateValueInfo();
   return true;
+}
+
+// ---------- sites, people, instruments ----------
+
+function errorText(err) {
+  if (err.fields) return '확인해 주세요: ' + err.fields.map((f) => FIELD_LABELS[f] ?? f).join(', ');
+  return err.message === 'Failed to fetch' ? '인터넷 연결을 확인하세요.' : err.message;
+}
+
+function fillSelect(el, items, wanted) {
+  el.replaceChildren(...items.map((n) => new Option(n, n)));
+  el.value = items.includes(wanted) ? wanted : (items[0] ?? '');
+}
+
+function renderPeople() {
+  const { names, sites, types } = state.config;
+  fillSelect($('site'), sites, state.site);
+  state.site = $('site').value;
+  fillSelect($('user'), names, $('user').value || store.get('user'));
+  $('shotSite').replaceChildren(new Option('현장 무관', ''), ...sites.map((s) => new Option(s, s)));
+  $('shotSite').value = state.site;
+  $('typeList').replaceChildren(...types.map((t) => new Option(t)));
+}
+
+// The add_* replies carry the refreshed lists.
+function applyConfig({ sites, names, types, instruments }) {
+  state.config = { sites, names, types, instruments };
+}
+
+function changeSite(site) {
+  state.site = site;
+  store.set('site', site);
+  renderPeople();
+  renderTypes();
+  selectType(siteTypes()[0] ?? OTHER);
+}
+
+async function addName(action, label) {
+  const name = prompt(`추가할 ${label} 이름`)?.trim();
+  if (!name) return;
+  try {
+    applyConfig(await api(action, { name }));
+  } catch (err) {
+    if (err.isAuth) { store.remove('code'); showGate(); return; }
+    alert(err.fields ? '이름은 100자 이하여야 하고, 쉼표(,)를 쓰거나 = + - @ 로 시작할 수 없습니다.' : errorText(err));
+    return;
+  }
+  if (action === 'add_site') {
+    changeSite(name);
+    return;
+  }
+  renderPeople();
+  $('user').value = name;
+  store.set('user', name);
+  loadRecent().catch((err) => setStatus(err.message, 'err'));
+}
+
+function openInstrumentDialog() {
+  $('instSite').textContent = state.site ? `${state.site} 현장에 추가됩니다.` : '';
+  $('iType').value = state.type !== OTHER ? state.type : '';
+  $('instError').textContent = '';
+  $('instDialog').showModal();
+}
+
+async function addInstrument(e) {
+  e.preventDefault();
+  const item = {
+    site: state.site,
+    id: $('iId').value.trim(),
+    place: $('iPlace').value.trim(),
+    type: $('iType').value.trim(),
+    unit: $('iUnit').value.trim(),
+  };
+  try {
+    applyConfig(await api('add_instrument', { item }));
+  } catch (err) {
+    if (err.isAuth) { $('instDialog').close(); store.remove('code'); showGate(); return; }
+    $('instError').textContent = errorText(err);
+    return;
+  }
+  $('instDialog').close();
+  for (const id of ['iId', 'iPlace', 'iUnit']) $(id).value = '';
+  renderPeople();
+  renderTypes();
+  selectType(item.type);
+  $('instrument').value = item.id;
+  updateValueInfo();
+}
+
+// Photo without a measurement: any site, or none.
+async function saveShot(e) {
+  e.preventDefault();
+  const status = (text, kind) => setStatus(text, kind, 'shotStatus');
+  if (!$('shotFile').files[0]) { status('사진을 먼저 찍어 주세요.', 'err'); return; }
+  const button = $('shotSave');
+  button.disabled = true;
+  status('저장 중...', 'ok');
+  try {
+    const entry = { clientId: state.shotId, site: $('shotSite').value, user: $('user').value, memo: $('shotMemo').value.trim() };
+    await api('photo', { entry, photo: await readPhoto($('shotFile')) });
+    status('저장됨 ✓', 'ok');
+    state.shotId = crypto.randomUUID();
+    $('shotFile').value = '';
+    $('shotMemo').value = '';
+  } catch (err) {
+    if (err.isAuth) { store.remove('code'); showGate(); return; }
+    status(`저장 실패: ${errorText(err)} 입력한 내용은 그대로 있습니다. 다시 저장을 눌러주세요.`, 'err');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // ---------- start ----------
@@ -282,16 +400,12 @@ async function start() {
     alert(err.message);
     return;
   }
-  const { names, site } = state.config;
-  $('siteName').textContent = site;
-  $('user').replaceChildren(...names.map((n) => new Option(n, n)));
-  const savedUser = store.get('user');
-  $('user').value = names.includes(savedUser) ? savedUser : names[0];
+  renderPeople();
   $('today').textContent = new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
   $('date').value = new Date().toLocaleDateString('sv-SE');
 
   renderTypes();
-  if (!restoreDraft()) selectType(state.config.types[0]);
+  if (!restoreDraft()) selectType(siteTypes()[0] ?? OTHER);
   route();
   try {
     await Promise.all([loadRecent(), loadLatest()]);
@@ -314,6 +428,13 @@ $('gateForm').addEventListener('submit', (e) => {
 $('retry').addEventListener('click', start);
 window.addEventListener('hashchange', route);
 $('user').addEventListener('change', () => { store.set('user', $('user').value); loadRecent().catch((err) => setStatus(err.message, 'err')); });
+$('site').addEventListener('change', () => changeSite($('site').value));
+$('addSite').addEventListener('click', () => addName('add_site', '현장'));
+$('addUser').addEventListener('click', () => addName('add_user', '측정자'));
+$('addInstrument').addEventListener('click', openInstrumentDialog);
+$('instCancel').addEventListener('click', () => $('instDialog').close());
+$('instForm').addEventListener('submit', addInstrument);
+$('shot').addEventListener('submit', saveShot);
 $('instrument').addEventListener('change', updateValueInfo);
 $('value').addEventListener('input', updateValueInfo);
 $('draft').addEventListener('click', saveDraft);
