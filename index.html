@@ -7,11 +7,17 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="계측 입력">
 <link rel="icon" href="data:,">
-<link rel="apple-touch-icon" href="logo.png">
-<link rel="stylesheet" href="style.css?v=14">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css?v=15">
 <title>계측 입력</title>
 </head>
 <body>
+
+<div id="netBar" class="netbar hidden" role="status" aria-live="polite">
+  <span id="netText"></span>
+  <button id="netAction" type="button" class="netbtn hidden"></button>
+</div>
 
 <div id="splash" role="status" aria-live="polite">
   <div class="logo-wrap">
@@ -154,6 +160,10 @@
   <label class="field"><span class="label">메모 (선택)</span>
     <input id="shotMemo" type="text" maxlength="1000" placeholder="예: 가설울타리 균열">
   </label>
+  <label class="keep">
+    <input id="shotKeep" type="checkbox" checked>
+    <span>이 폰에도 사본 저장<small>다운로드 폴더에 현장 이름이 붙은 파일로 저장됩니다</small></span>
+  </label>
 
   <div class="bar-bottom">
     <div id="shotStatus" role="status"></div>
@@ -201,6 +211,18 @@
       <button type="submit" class="btn primary grow">저장</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="outboxDialog">
+  <div class="dlg">
+    <h2 class="dlg-title">전송 대기 입력</h2>
+    <p class="muted">신호가 약해 아직 보내지 못한 입력입니다. 이 폰에 보관돼 있고, 신호가 잡히면 자동으로 보냅니다.</p>
+    <ul id="outboxList" class="list mlist"></ul>
+    <div class="row">
+      <button id="outboxClose" type="button" class="btn outline">닫기</button>
+      <button id="outboxSend" type="button" class="btn primary grow">지금 보내기</button>
+    </div>
+  </div>
 </dialog>
 
 <dialog id="instDialog">
@@ -274,9 +296,11 @@
   </a>
 </nav>
 
-<script src="config.js?v=14"></script>
-<script src="weather.js?v=14"></script>
-<script src="entries.js?v=14"></script>
-<script src="app.js?v=14"></script>
+<script src="config.js?v=15"></script>
+<script src="weather.js?v=15"></script>
+<script src="entries.js?v=15"></script>
+<script src="outbox.js?v=15"></script>
+<script src="phonecopy.js?v=15"></script>
+<script src="app.js?v=15"></script>
 </body>
 </html>

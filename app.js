@@ -10,6 +10,10 @@ const PHOTO_MIN_QUALITY = 0.4;
 const PHOTO_QUALITY_STEP = 0.1;
 const PHOTO_SHRINK = 0.85;
 const MAX_PHOTOS = 10;
+const DRAFT_DELAY_MS = 500;
+const MIN_TIMEOUT_MS = 30 * 1000;
+const MAX_TIMEOUT_MS = 10 * 60 * 1000;
+const BYTES_PER_MS = 15;   // 느린 신호를 초당 약 15KB로 보고 시간 제한을 잡는다
 const BUILD = new URL(document.currentScript.src).searchParams.get('v') ?? '-';
 const TABBED = ['home', 'trend', 'shot', 'info'];
 const SERIES_COLORS = ['#2a78d6', '#eb6834', '#1baf7a']; // categorical slots 1-3 of the dataviz palette (validated)
@@ -61,10 +65,22 @@ function setStatus(text, kind, id = 'status') {
 }
 
 // One POST per call. A string body keeps it a "simple" request, so the browser skips the CORS preflight Apps Script cannot answer.
+// Network trouble (offline, timeout) is flagged err.network so callers can keep the input and retry later.
+// The time limit grows with the body size: a slow signal needs longer for photos and survey files.
 async function api(action, payload = {}) {
-  const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ code: state.code, action, ...payload }) });
+  const body = JSON.stringify({ code: state.code, action, ...payload });
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, body.length / BYTES_PER_MS)));
   let data;
-  try { data = await res.json(); } catch { throw new Error('서버 응답을 읽을 수 없습니다.'); }
+  try {
+    const res = await fetch(API_URL, { method: 'POST', body, signal: ctl.signal });
+    try { data = await res.json(); } catch { throw Object.assign(new Error('서버 응답을 읽을 수 없습니다.'), { network: true }); }
+  } catch (err) {
+    if (err.network) throw err;
+    throw Object.assign(new Error('인터넷 연결을 확인하세요.'), { network: true });
+  } finally {
+    clearTimeout(timer);
+  }
   if (data.ok) return data;
   const err = new Error(SERVER_ERRORS[data.error] ?? '서버 오류');
   err.isAuth = data.error === 'bad_code';
@@ -170,7 +186,12 @@ async function loadRecent() {
 
 async function loadLatest() {
   state.latest = (await api('latest')).latest;
+  store.set('latest', JSON.stringify(state.latest));
   updateValueInfo();
+}
+
+function readCached(key) {
+  try { return JSON.parse(store.get(key) ?? 'null'); } catch { return null; }
 }
 
 // ---------- input form ----------
@@ -407,14 +428,11 @@ function surveyProblem() {
   return '';
 }
 
-async function surveyPayload() {
-  const files = {};
-  for (const kind of ['gps', 'qgis']) {
-    files[kind] = [];
-    for (const f of pickers[kind].files()) files[kind].push({ name: f.name, base64: await readFileAsBase64(f) });
-  }
+function surveyRequest() {
   const entry = { clientId: state.clientId, site: state.site, date: $('date').value, user: $('user').value, memo: $('memo').value.trim() };
-  return { entry, files };
+  const rawFiles = { gps: [...pickers.gps.files()], qgis: [...pickers.qgis.files()] };
+  const count = rawFiles.gps.length + rawFiles.qgis.length;
+  return { id: entry.clientId, action: 'survey', label: `측량 파일 ${count}개 · ${state.site}`, entry, rawFiles };
 }
 
 const pickers = {};
@@ -429,7 +447,9 @@ function clearEntryFields() {
 
 // ---------- draft (this phone only) ----------
 
-function saveDraft() {
+let draftTimer = null;
+
+function persistDraft() {
   const draft = {
     type: state.type,
     instrument: $('instrument').value,
@@ -441,7 +461,17 @@ function saveDraft() {
     date: $('date').value,
   };
   store.set('draft', JSON.stringify(draft));
+}
+
+function saveDraft() {
+  persistDraft();
   setStatus('임시저장됨 (이 휴대폰에만 보관, 사진 제외)', 'ok');
+}
+
+// Every edit is kept on this phone, so closing the app or losing the page never loses typed values.
+function autosaveDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(persistDraft, DRAFT_DELAY_MS);
 }
 
 function restoreDraft() {
@@ -485,6 +515,7 @@ function renderPeople() {
 // The add_* replies carry the refreshed lists.
 function applyConfig({ sites, names, types, instruments, valueCounts }) {
   state.config = { ...state.config, sites, names, types, instruments, valueCounts };
+  store.set('cfg', JSON.stringify(state.config));
 }
 
 function changeSite(site) {
@@ -593,9 +624,13 @@ async function saveShot(e) {
   button.disabled = true;
   status('저장 중...', 'ok');
   try {
+    const files = [...pickers.shot.files()];
     const entry = { clientId: state.shotId, site: $('shotSite').value, user: $('user').value, memo: $('shotMemo').value.trim() };
-    await api('photo', { entry, photos: await readPhotos(pickers.shot.files()) });
-    status('저장됨 ✓', 'ok');
+    const label = `사진 ${files.length}장 · ${entry.site || '현장 무관'}`;
+    const result = await submitOrQueue({ id: entry.clientId, action: 'photo', label, payload: { entry, photos: await readPhotos(files) } });
+    store.set('shotKeep', $('shotKeep').checked ? '1' : '0');
+    if ($('shotKeep').checked) saveCopiesToPhone(files, entry.site).catch(() => {});
+    status(result === 'sent' ? '저장됨 ✓' : '신호가 약해 이 폰에 보관했습니다. 잡히면 자동으로 보냅니다.', 'ok');
     state.shotId = crypto.randomUUID();
     pickers.shot.clear();
     $('shotMemo').value = '';
@@ -777,18 +812,24 @@ async function start() {
   showSplashLoading();
   try {
     state.config = await api('config');
+    state.offline = false;
+    store.set('cfg', JSON.stringify(state.config));
   } catch (err) {
-    if (!err.isAuth) {
-      // Offline or server down: keep the saved code and let the user retry.
-      const reason = err.message === 'Failed to fetch' ? '서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요.' : err.message;
-      showSplashError(reason);
+    if (err.isAuth) {
+      store.remove('code');
+      showGate();
+      hideSplash();
+      alert(err.message);
       return;
     }
-    store.remove('code');
-    showGate();
-    hideSplash();
-    alert(err.message);
-    return;
+    // No signal: open with the lists saved last time so the work can still be typed in and kept on the phone.
+    const cached = err.network ? readCached('cfg') : null;
+    if (!cached) {
+      showSplashError(err.network ? '서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요.' : err.message);
+      return;
+    }
+    state.config = cached;
+    state.offline = true;
   }
   renderPeople();
   refreshWeather();
@@ -799,12 +840,19 @@ async function start() {
   if (!restoreDraft()) selectType(siteTypes()[0] ?? OTHER);
   route();
   try {
-    await Promise.all([loadRecent(), loadLatest()]);
+    if (state.offline) {
+      state.latest = readCached('latest') ?? {};
+      updateValueInfo();
+    } else {
+      await Promise.all([loadRecent(), loadLatest()]);
+    }
   } catch (err) {
     setStatus(err.message, 'err');
   } finally {
     await hideSplash();
   }
+  renderOutbox();
+  flushOutbox();
 }
 
 // ---------- events ----------
@@ -854,6 +902,8 @@ MULTI_IDS.forEach((id, i) => {
   });
 });
 $('draft').addEventListener('click', saveDraft);
+$('input').addEventListener('input', autosaveDraft);
+$('input').addEventListener('change', autosaveDraft);
 
 $('input').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -865,13 +915,22 @@ $('input').addEventListener('submit', async (e) => {
   button.disabled = true;
   setStatus(isSurvey ? '파일 올리는 중... (파일이 크면 1분 정도 걸립니다)' : '저장 중...', 'ok');
   try {
-    if (isSurvey) await api('survey', await surveyPayload());
-    else await api('save', { entry: readForm(), photos: await readPhotos(pickers.entry.files()) });
-    setStatus('저장됨 ✓', 'ok');
+    let result;
+    if (isSurvey) {
+      result = await submitOrQueue(surveyRequest());
+    } else {
+      const entry = readForm();
+      const photos = await readPhotos(pickers.entry.files());
+      result = await submitOrQueue({ id: entry.clientId, action: 'save', label: `${entry.date} ${entry.id}`, payload: { entry, photos } });
+      // Not on the server yet: show this reading as the previous one so the next change is measured against it.
+      if (result === 'queued') state.latest[entry.id] = { value: entry.value, values: entry.values ?? [entry.value], date: entry.date };
+    }
+    setStatus(result === 'sent' ? '저장됨 ✓' : '신호가 약해 이 폰에 보관했습니다. 잡히면 자동으로 보냅니다.', 'ok');
     state.clientId = crypto.randomUUID();
+    clearTimeout(draftTimer);
     store.remove('draft');
     clearEntryFields();
-    await Promise.all([loadRecent(), loadLatest()]);
+    if (result === 'sent') await Promise.all([loadRecent(), loadLatest()]);
   } catch (err) {
     if (err.isAuth) { store.remove('code'); showGate(); return; }
     if (err.fields) {
@@ -889,6 +948,9 @@ pickers.entry = makePicker($('photoBoxEntry'));
 pickers.shot = makePicker($('photoBoxShot'));
 pickers.gps = makeFilePicker($('gpsBox'));
 pickers.qgis = makeFilePicker($('qgisBox'));
+$('shotKeep').checked = store.get('shotKeep') !== '0';
+initOutbox();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${BUILD}`).catch(() => {});
 
 if (state.code) {
   start();
