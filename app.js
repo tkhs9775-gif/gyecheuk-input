@@ -15,7 +15,7 @@ const MIN_TIMEOUT_MS = 30 * 1000;
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const BYTES_PER_MS = 15;   // 느린 신호를 초당 약 15KB로 보고 시간 제한을 잡는다
 const BUILD = new URL(document.currentScript.src).searchParams.get('v') ?? '-';
-const TABBED = ['home', 'trend', 'shot', 'info'];
+const TABBED = ['home', 'drawing', 'shot', 'info'];
 const SERIES_COLORS = ['#2a78d6', '#eb6834', '#1baf7a']; // categorical slots 1-3 of the dataviz palette (validated)
 const SURVEY = '측량';
 const ISSUE_KINDS = ['', '파손', '망실', '접근 불가', '작동 불량'];
@@ -126,7 +126,7 @@ function showSplashLoading() {
 // ---------- screens ----------
 
 function showScreen(name) {
-  for (const id of ['gate', 'home', 'input', 'shot', 'trend', 'info']) show($(id), id === name);
+  for (const id of ['gate', 'home', 'input', 'shot', 'drawing', 'info']) show($(id), id === name);
   show($('tabbar'), TABBED.includes(name));
   for (const a of $('tabbar').children) a.setAttribute('aria-current', a.dataset.screen === name ? 'page' : 'false');
   window.scrollTo(0, 0);
@@ -134,9 +134,9 @@ function showScreen(name) {
 
 function route() {
   if (!state.config.names.length) return;
-  const name = { '#input': 'input', '#shot': 'shot', '#trend': 'trend', '#info': 'info' }[location.hash] ?? 'home';
+  const name = { '#input': 'input', '#shot': 'shot', '#drawing': 'drawing', '#info': 'info' }[location.hash] ?? 'home';
   showScreen(name);
-  if (name === 'trend') loadTrend();
+  if (name === 'drawing') loadDrawingTab();
   if (name === 'info') renderInfo();
 }
 
@@ -914,7 +914,6 @@ $('editForm').addEventListener('submit', saveEdit);
 $('editDelete').addEventListener('click', removeEntry);
 $('editCancel').addEventListener('click', () => $('editDialog').close());
 $('openManage').addEventListener('click', openManage);
-$('trendInst').addEventListener('change', loadTrend);
 $('reloadApp').addEventListener('click', () => location.reload());
 $('manageClose').addEventListener('click', () => $('manageDialog').close());
 for (const kind of Object.keys(PEOPLE)) {
@@ -998,6 +997,7 @@ if (window.AndroidGallery) {
   $('entryKeepNote').textContent = '150KB 이하로 줄인 사진이 갤러리 「계측사진/현장이름」 폴더에 저장됩니다';
 }
 initOutbox();
+if (typeof initDrawingModule === 'function') initDrawingModule();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${BUILD}`).catch(() => {});
 
 if (state.code) {

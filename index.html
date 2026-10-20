@@ -9,7 +9,7 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=18">
+<link rel="stylesheet" href="style.css?v=19">
 <title>키움이엔씨</title>
 </head>
 <body>
@@ -259,23 +259,102 @@
   </form>
 </dialog>
 
-<main id="trend" class="screen hidden">
-  <h1 class="title">계측기 그래프</h1>
-  <p class="muted">입력한 계측값을 날짜 순서로 그린 그래프입니다.</p>
-
-  <label class="field select-card"><span class="label">계측기</span>
-    <select id="trendInst"></select>
-  </label>
-
-  <div class="card chart-card">
-    <div id="trendRead" class="readout" aria-live="polite"></div>
-    <svg id="trendSvg" viewBox="0 0 320 220" role="img" aria-label="계측값 추이 그래프"></svg>
+<main id="drawing" class="screen hidden">
+  <div id="drawingSitesView">
+    <h1 class="title">현장 도면 (야장)</h1>
+    <p class="muted">현장명을 터치하면 해당 현장의 도면(PDF) 폴더가 열립니다.</p>
+    <ul id="drawingSiteList" class="list"></ul>
   </div>
-  <p id="trendNote" class="muted"></p>
 
-  <h2 class="section">최근 기록</h2>
-  <ul id="trendTable" class="list"></ul>
+  <div id="drawingFilesView" class="hidden">
+    <div class="bar-top">
+      <button id="drawingBackSites" type="button" class="icon-btn" aria-label="현장 목록으로">
+        <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+      </button>
+      <h1 id="drawingSiteTitle" class="title">도면 폴더</h1>
+    </div>
+    <div class="row between" style="margin: 8px 0 12px;">
+      <span id="drawingFolderNote" class="muted">PDF를 터치하면 전체화면 야장으로 열립니다.</span>
+      <button id="btnUploadDrawing" type="button" class="btn outline small">＋ PDF 도면 추가</button>
+      <input id="inputDrawingPdf" type="file" accept="application/pdf,.pdf" hidden>
+    </div>
+    <ul id="drawingFileList" class="list"></ul>
+  </div>
 </main>
+
+<!-- PDF 전체화면 야장 오버레이 -->
+<div id="pdfViewer" class="pdf-viewer hidden" role="dialog" aria-label="도면 야장">
+  <header class="pdf-topbar">
+    <button id="pdfClose" type="button" class="icon-btn" aria-label="닫기">
+      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+    </button>
+    <div class="pdf-title-wrap">
+      <strong id="pdfTitle">도면.pdf</strong>
+      <small id="pdfPageInfo">1 / 1쪽</small>
+    </div>
+    <div class="pdf-top-actions">
+      <button id="pdfPrevPage" type="button" class="pdf-sm-btn" aria-label="이전 쪽">◀</button>
+      <button id="pdfNextPage" type="button" class="pdf-sm-btn" aria-label="다음 쪽">▶</button>
+      <button id="pdfZoomOut" type="button" class="pdf-sm-btn" aria-label="축소">－</button>
+      <button id="pdfZoomIn" type="button" class="pdf-sm-btn" aria-label="확대">＋</button>
+      <button id="pdfSaveNotes" type="button" class="pdf-save-btn">저장</button>
+    </div>
+  </header>
+
+  <div id="pdfStageWrap" class="pdf-stage-wrap">
+    <div id="pdfStage" class="pdf-stage">
+      <canvas id="pdfCanvas"></canvas>
+      <canvas id="inkCanvas" class="ink-canvas"></canvas>
+      <div id="pinLayer" class="pin-layer"></div>
+    </div>
+  </div>
+
+  <!-- 왼쪽 하단 동그란 원(마커 메모) 버튼 + 야장 펜 도구 -->
+  <div class="pdf-fab-group">
+    <button id="btnPinMode" type="button" class="circle-pin-fab" aria-pressed="false" title="누른 상태로 도면 터치 시 동그라미 메모 생성">
+      <span class="circle-dot"></span>
+      <span id="pinModeLabel">동그라미 메모</span>
+    </button>
+    <button id="btnPenMode" type="button" class="pdf-tool-fab" aria-pressed="false">✏️ 자유 필기</button>
+    <button id="btnClearInk" type="button" class="pdf-tool-fab hidden">🧹 필기 지움</button>
+  </div>
+
+  <!-- 동그란 원 터치 시 뜨는 메모 박스 팝오버 -->
+  <div id="pinMemoBox" class="pin-memo-box hidden">
+    <div class="pin-memo-head">
+      <strong id="pinMemoTitle">📍 마커 #1 메모</strong>
+      <div class="row">
+        <button id="pinMemoDelete" type="button" class="del-pin-btn">삭제</button>
+        <button id="pinMemoClose" type="button" class="close-pin-btn">닫기</button>
+      </div>
+    </div>
+    <p class="pin-memo-hint">💡 아래 메모 칸을 <b>한 번 더 터치</b>하면 펜으로 손글씨를 써서 텍스트(OCR)로 자동 변환할 수 있습니다.</p>
+    <div id="pinMemoDisplay" class="pin-memo-display" tabindex="0" role="button" aria-label="메모 칸 (터치하면 손글씨 펜 입력 열기)"></div>
+    <div class="row" style="margin-top: 8px;">
+      <input id="pinMemoKeyboard" type="text" placeholder="키보드로 직접 수정할 수도 있습니다">
+      <button id="pinMemoOpenPad" type="button" class="btn primary small">✍️ 펜 필기(OCR)</button>
+    </div>
+  </div>
+</div>
+
+<!-- 손글씨(펜 필체) 입력 → OCR 텍스트 자동 변환 모달 -->
+<dialog id="ocrPadDialog">
+  <div class="dlg ocr-dlg">
+    <div class="row between">
+      <h2 class="dlg-title">✍️ 손글씨 펜 입력 (OCR 자동 판독)</h2>
+      <button id="ocrPadClose" type="button" class="btn outline small">닫기</button>
+    </div>
+    <p class="muted">아래 칸에 손가락이나 펜으로 글씨·숫자를 크게 적어주세요. 판독을 누르면 텍스트로 바꿔 메모에 넣어줍니다.</p>
+    <div class="ocr-canvas-wrap">
+      <canvas id="ocrPadCanvas" width="600" height="240"></canvas>
+    </div>
+    <p id="ocrStatus" class="muted" style="min-height: 20px; margin: 6px 0;"></p>
+    <div class="row">
+      <button id="ocrPadClear" type="button" class="btn outline">다시 쓰기</button>
+      <button id="ocrPadRecognize" type="button" class="btn primary grow">🔍 필체 판독하여 텍스트로 넣기</button>
+    </div>
+  </div>
+</dialog>
 
 <main id="info" class="screen hidden">
   <h1 class="title">버전 및 관리자</h1>
@@ -293,9 +372,9 @@
     <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>
     <span>홈</span>
   </a>
-  <a href="#trend" data-screen="trend">
-    <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 15 4-5 3 3 5-7"/></svg>
-    <span>그래프</span>
+  <a href="#drawing" data-screen="drawing">
+    <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+    <span>도면</span>
   </a>
   <a href="#shot" data-screen="shot" class="cam" aria-label="사진만 찍기">
     <svg aria-hidden="true" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -306,11 +385,12 @@
   </a>
 </nav>
 
-<script src="config.js?v=18"></script>
-<script src="weather.js?v=18"></script>
-<script src="entries.js?v=18"></script>
-<script src="outbox.js?v=18"></script>
-<script src="phonecopy.js?v=18"></script>
-<script src="app.js?v=18"></script>
+<script src="config.js?v=19"></script>
+<script src="weather.js?v=19"></script>
+<script src="entries.js?v=19"></script>
+<script src="outbox.js?v=19"></script>
+<script src="phonecopy.js?v=19"></script>
+<script src="drawing.js?v=19"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

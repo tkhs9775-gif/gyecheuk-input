@@ -99,8 +99,279 @@ a.apk-link { display: grid; place-items: center; }
 #tabbar a.cam { color: var(--accent); }
 #tabbar a.cam[aria-current="page"] svg { background: var(--chip); border-radius: 16px; padding: 6px; box-sizing: content-box; margin: -6px; }
 #shot .bar-bottom { bottom: var(--nav-h); padding-bottom: 12px; }
-#home, #trend, #info, #shot { padding-bottom: calc(var(--nav-h) + 100px); }
-#home, #trend, #info { padding-bottom: calc(var(--nav-h) + 24px); }
+#home, #drawing, #info, #shot { padding-bottom: calc(var(--nav-h) + 100px); }
+#home, #drawing, #info { padding-bottom: calc(var(--nav-h) + 24px); }
+
+/* 도면(PDF 야장) 전용 스타일 */
+.pdf-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: #1A202C;
+  color: #FFF;
+  display: flex;
+  flex-direction: column;
+}
+.pdf-topbar {
+  height: 54px;
+  padding: 0 8px;
+  background: #1B2A57;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.pdf-topbar .icon-btn { color: #FFF; width: 40px; height: 40px; }
+.pdf-title-wrap { min-width: 0; flex: 1; }
+.pdf-title-wrap strong { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pdf-title-wrap small { font-size: 11px; color: #CBD5E0; }
+.pdf-top-actions { display: flex; align-items: center; gap: 4px; }
+.pdf-sm-btn {
+  min-width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid #4A63A3;
+  background: #25386E;
+  color: #FFF;
+  font-size: 14px;
+  font-weight: 700;
+}
+.pdf-save-btn {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 0;
+  background: #2B8A3E;
+  color: #FFF;
+  font-size: 13px;
+  font-weight: 700;
+}
+.pdf-stage-wrap {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  justify-content: safe center;
+  align-items: safe flex-start;
+  padding: 12px;
+  background: #2D3748;
+  position: relative;
+}
+.pdf-stage {
+  position: relative;
+  display: inline-block;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  background: #FFF;
+}
+#pdfCanvas { display: block; }
+.ink-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.ink-canvas.drawing-active {
+  pointer-events: auto;
+  touch-action: none;
+  cursor: crosshair;
+}
+.pin-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.pin-layer.pin-mode-active {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.pdf-pin {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  margin-left: -16px;
+  margin-top: -16px;
+  border-radius: 50%;
+  background: rgba(229, 57, 53, 0.92);
+  border: 2.5px solid #FFFFFF;
+  color: #FFFFFF;
+  font-size: 13px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+  pointer-events: auto;
+  cursor: pointer;
+  animation: pin-pop .2s ease-out;
+}
+.pdf-pin.selected {
+  background: #1F62A8;
+  transform: scale(1.18);
+  z-index: 3;
+}
+.pdf-pin-tag {
+  position: absolute;
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(27, 42, 87, 0.92);
+  color: #FFF;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+@keyframes pin-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* 왼쪽 하단 동그란 원(마커) 버튼 그룹 */
+.pdf-fab-group {
+  position: fixed;
+  left: 16px;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.circle-pin-fab {
+  height: 52px;
+  padding: 0 18px 0 14px;
+  border-radius: 26px;
+  border: 2px solid #FFFFFF;
+  background: #1B2A57;
+  color: #FFFFFF;
+  font-weight: 800;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+.circle-pin-fab .circle-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 3px solid #FF6B6B;
+  background: rgba(255, 107, 107, 0.35);
+  display: inline-block;
+}
+.circle-pin-fab[aria-pressed="true"] {
+  background: #E53935;
+  border-color: #FFE3E3;
+  transform: scale(1.04);
+}
+.circle-pin-fab[aria-pressed="true"] .circle-dot {
+  border-color: #FFFFFF;
+  background: #FFFFFF;
+}
+.pdf-tool-fab {
+  height: 46px;
+  padding: 0 14px;
+  border-radius: 23px;
+  border: 1.5px solid rgba(255,255,255,0.7);
+  background: rgba(27,42,87,0.88);
+  color: #FFF;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+}
+.pdf-tool-fab[aria-pressed="true"] {
+  background: #1F62A8;
+  border-color: #FFF;
+}
+
+/* 동그란 원 터치 시 뜨는 메모 박스 */
+.pin-memo-box {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(82px + env(safe-area-inset-bottom));
+  max-width: 480px;
+  margin: 0 auto;
+  z-index: 48;
+  background: #FFFFFF;
+  color: var(--text);
+  border-radius: 20px;
+  padding: 16px;
+  box-shadow: 0 12px 34px rgba(0,0,0,0.45);
+  border: 2px solid var(--accent);
+}
+.pin-memo-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.pin-memo-hint {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--chip);
+  padding: 6px 10px;
+  border-radius: 8px;
+}
+.pin-memo-display {
+  min-height: 64px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 2px dashed var(--accent);
+  background: #F8FAFF;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.pin-memo-display:empty::before {
+  content: "여기를 한 번 더 터치하면 펜으로 글씨를 써서 텍스트(OCR)로 바꿉니다 ✍️";
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 14px;
+}
+.del-pin-btn, .close-pin-btn {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #FFF;
+  font-size: 13px;
+  font-weight: 700;
+}
+.del-pin-btn { color: var(--err); border-color: var(--err); }
+#pinMemoKeyboard {
+  flex: 1;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  font-size: 14px;
+}
+
+/* 손글씨 OCR 패드 모달 */
+.ocr-canvas-wrap {
+  margin-top: 8px;
+  border: 2px solid var(--accent);
+  border-radius: 14px;
+  overflow: hidden;
+  background: #FFFFFF;
+}
+#ocrPadCanvas {
+  display: block;
+  width: 100%;
+  height: 200px;
+  touch-action: none;
+  cursor: crosshair;
+  background:
+    linear-gradient(transparent 95%, #E2E8F0 95%),
+    #FFFFFF;
+  background-size: 100% 48px;
+}
 
 .chart-card { padding: 12px; }
 #trendSvg { display: block; width: 100%; height: auto; touch-action: pan-y; }

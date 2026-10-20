@@ -5,7 +5,7 @@ const CACHE = `shell-${V}`;
 const SHELL = [
   './', 'index.html', 'logo.png', 'manifest.json',
   `style.css?v=${V}`, `config.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`,
-  `outbox.js?v=${V}`, `phonecopy.js?v=${V}`, `app.js?v=${V}`,
+  `outbox.js?v=${V}`, `phonecopy.js?v=${V}`, `drawing.js?v=${V}`, `app.js?v=${V}`,
 ];
 
 self.addEventListener('install', (event) => {
