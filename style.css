@@ -28,10 +28,16 @@ a { color: inherit; text-decoration: none; }
 @keyframes logo-sheen { to { transform: translateX(260%); } }
 @keyframes rule-draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 @media (prefers-reduced-motion: reduce) {
-  .logo-wrap, .splash-rule, .splash-title, .splash-bar, .splash-bar span { animation: none; }
+  /* Reduced motion: no movement or sweep, only a gentle fade-in so the logo still appears with a beat. */
+  .logo-wrap { animation: fade-only .7s ease-out both; }
+  .splash-rule { animation: fade-only .4s .5s ease-out both; }
+  .splash-title { animation: fade-only .4s .8s ease-out both; }
+  .splash-bar { animation: fade-only .4s 1s ease-out both; }
+  .splash-bar span { animation: none; }
   .sheen { display: none; }
   #splash { transition: none; }
 }
+@keyframes fade-only { from { opacity: 0; } to { opacity: 1; } }
 .screen { max-width: 520px; margin: 0 auto; padding: 16px 16px 140px; }
 .title { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.3; }
 .section { margin: 24px 4px 8px; font-size: 15px; color: var(--muted); }
