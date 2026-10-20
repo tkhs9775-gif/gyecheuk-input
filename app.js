@@ -43,6 +43,9 @@ const SERVER_ERRORS = {
   bad_code: '접속 코드가 맞지 않습니다.',
   locked: '시도가 너무 많습니다. 10분 후 다시 해주세요.',
   duplicate: '이미 있습니다.',
+  expired: '입력한 지 24시간이 지나 앱에서는 고칠 수 없습니다. 관리자에게 문의해 주세요.',
+  forbidden: '본인이 입력한 기록만 고칠 수 있습니다.',
+  not_found: '기록을 찾을 수 없습니다. 이미 삭제됐을 수 있습니다.',
 };
 
 // ---------- helpers ----------
@@ -142,8 +145,13 @@ function renderRecent(rows) {
       const title = document.createElement('b');
       title.textContent = r.id;
       const sub = document.createElement('small');
-      sub.textContent = `${r.type} · ${r.date}`;
+      sub.textContent = `${r.type} · ${r.date}${r.canEdit ? ' · 눌러서 수정' : ''}`;
       meta.append(title, sub);
+      li.classList.add('tap');
+      li.tabIndex = 0;
+      li.setAttribute('role', 'button');
+      li.addEventListener('click', () => openEdit(r));
+      li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openEdit(r); });
       const val = document.createElement('div');
       const multi = r.values?.length > 1;
       val.className = multi ? 'val multi' : 'val';
@@ -237,6 +245,7 @@ function readForm() {
   return {
     clientId: state.clientId,
     site: state.site,
+    weather: weatherRecord(),
     date: $('date').value,
     user: $('user').value,
     type: isOther ? $('otherType').value.trim() : state.type,
@@ -484,6 +493,7 @@ function changeSite(site) {
   renderPeople();
   renderTypes();
   selectType(siteTypes()[0] ?? OTHER);
+  refreshWeather();
 }
 
 const PEOPLE = {
@@ -781,6 +791,7 @@ async function start() {
     return;
   }
   renderPeople();
+  refreshWeather();
   $('today').textContent = new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
   $('date').value = new Date().toLocaleDateString('sv-SE');
 
@@ -810,6 +821,10 @@ window.addEventListener('hashchange', route);
 $('user').addEventListener('change', () => { store.set('user', $('user').value); loadRecent().catch((err) => setStatus(err.message, 'err')); });
 $('site').addEventListener('change', () => changeSite($('site').value));
 $('manage').addEventListener('click', openManage);
+$('weather').addEventListener('click', pickPlace);
+$('editForm').addEventListener('submit', saveEdit);
+$('editDelete').addEventListener('click', removeEntry);
+$('editCancel').addEventListener('click', () => $('editDialog').close());
 $('openManage').addEventListener('click', openManage);
 $('trendInst').addEventListener('change', loadTrend);
 $('reloadApp').addEventListener('click', () => location.reload());
@@ -845,6 +860,7 @@ $('input').addEventListener('submit', async (e) => {
   const isSurvey = state.type === SURVEY;
   const problem = isSurvey ? surveyProblem() : '';
   if (problem) { setStatus(problem, 'err'); return; }
+  if (!isSurvey && !confirmUnusual()) return;
   const button = $('save');
   button.disabled = true;
   setStatus(isSurvey ? '파일 올리는 중... (파일이 크면 1분 정도 걸립니다)' : '저장 중...', 'ok');

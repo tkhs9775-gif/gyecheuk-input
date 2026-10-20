@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="계측 입력">
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="logo.png">
-<link rel="stylesheet" href="style.css?v=13">
+<link rel="stylesheet" href="style.css?v=14">
 <title>계측 입력</title>
 </head>
 <body>
@@ -46,6 +46,11 @@
     </button>
   </header>
 
+  <button id="weather" type="button" class="weather hidden" aria-live="polite">
+    <span id="weatherMain" class="w-main"></span>
+    <span id="weatherSub" class="w-sub"></span>
+  </button>
+
   <div class="row between">
     <h1 class="title">오늘의 계측·측량</h1>
     <span id="today" class="muted"></span>
@@ -67,6 +72,7 @@
     </a>
     <h1 class="title">계측·측량 입력</h1>
   </div>
+  <p id="weatherLine" class="muted weather-line hidden"></p>
 
   <div id="types" class="chips" role="group" aria-label="계측기 종류"></div>
 
@@ -179,6 +185,24 @@
   </div>
 </dialog>
 
+<dialog id="editDialog">
+  <form id="editForm" class="dlg" novalidate>
+    <h2 class="dlg-title">입력 수정</h2>
+    <p id="editInfo" class="muted"></p>
+    <label class="field"><span class="label">값 1</span><input id="ev0" type="number" step="any" inputmode="decimal"></label>
+    <label class="field"><span class="label">값 2</span><input id="ev1" type="number" step="any" inputmode="decimal"></label>
+    <label class="field"><span class="label">값 3</span><input id="ev2" type="number" step="any" inputmode="decimal"></label>
+    <label class="field"><span class="label">측정일</span><input id="editDate" type="date"></label>
+    <label class="field"><span class="label">특이사항</span><input id="editMemo" type="text" maxlength="1000"></label>
+    <p id="editError" class="dlg-err" role="alert"></p>
+    <div class="row">
+      <button id="editDelete" type="button" class="btn outline danger">삭제</button>
+      <button id="editCancel" type="button" class="btn outline">취소</button>
+      <button type="submit" class="btn primary grow">저장</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="instDialog">
   <form id="instForm" class="dlg" novalidate>
     <h2 class="dlg-title">계측기 추가</h2>
@@ -250,7 +274,9 @@
   </a>
 </nav>
 
-<script src="config.js?v=13"></script>
-<script src="app.js?v=13"></script>
+<script src="config.js?v=14"></script>
+<script src="weather.js?v=14"></script>
+<script src="entries.js?v=14"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
