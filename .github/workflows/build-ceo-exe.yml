@@ -8,6 +8,9 @@ on:
       - '.github/workflows/build-ceo-exe.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
