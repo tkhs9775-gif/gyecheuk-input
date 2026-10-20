@@ -5,6 +5,10 @@ const SPLASH_MIN_MS = 800; // keep the loading page up long enough to read as in
 const SPLASH_FADE_MS = 300;
 const PHOTO_MAX_PX = 1280;
 const PHOTO_QUALITY = 0.8;
+const PHOTO_MAX_BYTES = 150 * 1024;
+const PHOTO_MIN_QUALITY = 0.4;
+const PHOTO_QUALITY_STEP = 0.1;
+const PHOTO_SHRINK = 0.85;
 const $ = (id) => document.getElementById(id);
 const openedAt = Date.now();
 
@@ -202,18 +206,25 @@ function readForm() {
   };
 }
 
-// Phone photos are several MB; shrink before upload so a weak signal can still send them.
+// Phone photos are several MB; shrink to <= PHOTO_MAX_BYTES so a weak signal can still send them.
+// Lower quality first; if still too big at the floor, shrink the pixels and start over.
 async function readPhoto() {
   const file = $('photo').files[0];
   if (!file) return null;
   let bitmap;
   try { bitmap = await createImageBitmap(file); } catch { throw new Error('사진을 읽을 수 없습니다. 다른 사진을 고르세요.'); }
-  const scale = Math.min(1, PHOTO_MAX_PX / Math.max(bitmap.width, bitmap.height));
+  let scale = Math.min(1, PHOTO_MAX_PX / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement('canvas');
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  return { base64: canvas.toDataURL('image/jpeg', PHOTO_QUALITY).split(',')[1] };
+  for (;;) {
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    for (let q = PHOTO_QUALITY; q >= PHOTO_MIN_QUALITY - 1e-9; q -= PHOTO_QUALITY_STEP) {
+      const base64 = canvas.toDataURL('image/jpeg', q).split(',')[1];
+      if (base64.length * 0.75 <= PHOTO_MAX_BYTES) return { base64 };
+    }
+    scale *= PHOTO_SHRINK;
+  }
 }
 
 function clearEntryFields() {
