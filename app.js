@@ -684,7 +684,7 @@ async function saveShot(e) {
 
 function renderInfo() {
   $('appVersion').textContent = `v${BUILD}${window.AndroidGallery ? ' (안드로이드 앱)' : ''}`;
-  $('adminInfo').textContent = state.config.admin || '등록되지 않음';
+  $('adminInfo').textContent = state.config.admin || '과장 정준업(Master)';
   show($('downloadApk'), !window.AndroidGallery);
 }
 
