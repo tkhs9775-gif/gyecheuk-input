@@ -627,9 +627,10 @@ async function saveShot(e) {
     const files = [...pickers.shot.files()];
     const entry = { clientId: state.shotId, site: $('shotSite').value, user: $('user').value, memo: $('shotMemo').value.trim() };
     const label = `사진 ${files.length}장 · ${entry.site || '현장 무관'}`;
-    const result = await submitOrQueue({ id: entry.clientId, action: 'photo', label, payload: { entry, photos: await readPhotos(files) } });
+    const photos = await readPhotos(files);   // 150KB 이하로 줄인 사진: 클라우드와 폰 사본이 같은 파일
+    const result = await submitOrQueue({ id: entry.clientId, action: 'photo', label, payload: { entry, photos } });
     store.set('shotKeep', $('shotKeep').checked ? '1' : '0');
-    if ($('shotKeep').checked) saveCopiesToPhone(files, entry.site).catch(() => {});
+    if ($('shotKeep').checked) saveCopiesToPhone(photos, entry.site).catch(() => {});
     status(result === 'sent' ? '저장됨 ✓' : '신호가 약해 이 폰에 보관했습니다. 잡히면 자동으로 보냅니다.', 'ok');
     state.shotId = crypto.randomUUID();
     pickers.shot.clear();

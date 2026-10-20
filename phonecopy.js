@@ -15,18 +15,28 @@ function phoneFileName(site, now, index, mime) {
   return `${safeFilePart(site) || NO_SITE_NAME}_${date}_${time}_${index + 1}.${EXT_BY_TYPE[mime] ?? 'jpg'}`;
 }
 
-async function saveCopiesToPhone(files, site) {
+// 클라우드로 보내는 것과 같은 압축본(150KB 이하 JPEG, base64)을 파일 조각으로 되돌린다
+function base64ToBlob(base64) {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: 'image/jpeg' });
+}
+
+// photos: readPhotos()가 만든 [{ base64 }]. 원본이 아니라 압축본을 저장하므로 폰과 클라우드의 파일이 같다
+async function saveCopiesToPhone(photos, site) {
   const now = new Date();
-  for (const [i, file] of files.entries()) {
+  for (const [i, photo] of photos.entries()) {
+    const blob = base64ToBlob(photo.base64);
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(file);
-    link.download = phoneFileName(site, now, i, file.type);
+    link.href = URL.createObjectURL(blob);
+    link.download = phoneFileName(site, now, i, blob.type);
     document.body.append(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(link.href), 30000);
-    if (i < files.length - 1) await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_GAP_MS));
+    if (i < photos.length - 1) await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_GAP_MS));
   }
 }
 
-if (typeof module !== 'undefined') module.exports = { safeFilePart, phoneFileName };
+if (typeof module !== 'undefined') module.exports = { safeFilePart, phoneFileName, base64ToBlob };
