@@ -9,7 +9,7 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=21">
+<link rel="stylesheet" href="style.css?v=22">
 <title>키움이엔씨</title>
 </head>
 <body>
@@ -34,12 +34,21 @@
 </div>
 
 <main id="gate" class="screen hidden">
-  <h1 class="title">계측 입력</h1>
-  <form id="gateForm" class="card">
-    <label class="field"><span class="label">접속 코드</span>
-      <input id="code" type="password" autocomplete="current-password">
+  <div class="gate-hero">
+    <div class="logo-wrap gate-logo-anim">
+      <img class="splash-logo" src="logo.png" alt="(주)키움이엔씨">
+      <span class="sheen" aria-hidden="true"><i></i></span>
+    </div>
+    <span class="splash-rule" aria-hidden="true"></span>
+    <span class="gate-badge">KIWOOM ENC · CLOUD</span>
+    <h1 class="title">키움이엔씨 현장 계측</h1>
+    <p class="muted">접속 코드를 입력하면 클라우드와 즉시 연결됩니다.</p>
+  </div>
+  <form id="gateForm" class="card gate-card-anim">
+    <label class="field"><span class="label">보안 접속 코드</span>
+      <input id="code" type="password" autocomplete="current-password" placeholder="접속 코드를 입력하세요">
     </label>
-    <button type="submit" class="btn primary wide">확인</button>
+    <button type="submit" class="btn primary wide">연결 및 시작하기</button>
   </form>
 </main>
 
@@ -387,12 +396,12 @@
   </a>
 </nav>
 
-<script src="config.js?v=21"></script>
-<script src="weather.js?v=21"></script>
-<script src="entries.js?v=21"></script>
-<script src="outbox.js?v=21"></script>
-<script src="phonecopy.js?v=21"></script>
-<script src="drawing.js?v=21"></script>
-<script src="app.js?v=21"></script>
+<script src="config.js?v=22"></script>
+<script src="weather.js?v=22"></script>
+<script src="entries.js?v=22"></script>
+<script src="outbox.js?v=22"></script>
+<script src="phonecopy.js?v=22"></script>
+<script src="drawing.js?v=22"></script>
+<script src="app.js?v=22"></script>
 </body>
 </html>

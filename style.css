@@ -3,10 +3,39 @@
   --accent: #1F62A8; --chip: #DCE9F8; --ok-bg: #DFF3E5; --ok: #0D5A29; --err-bg: #FBE3E1; --err: #8C1A12;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font-family: "Noto Sans KR", system-ui, -apple-system, sans-serif; font-size: 16px; -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: "Noto Sans KR", system-ui, -apple-system, sans-serif; font-size: 16px; -webkit-text-size-adjust: 100%; word-break: keep-all; }
 button, input, select { font: inherit; color: inherit; }
+button { white-space: nowrap; flex-shrink: 0; }
 a { color: inherit; text-decoration: none; }
 .hidden { display: none !important; }
+
+/* 모바일 로그인(접속코드) 화면 애니메이션 */
+.gate-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 28px 12px 12px;
+}
+.gate-logo-anim .sheen i {
+  animation: logo-sheen 2.6s .5s ease-in-out infinite;
+}
+.gate-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 16px;
+  background: var(--chip);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: .8px;
+  animation: splash-in .5s .4s ease-out both;
+}
+.gate-card-anim {
+  animation: splash-in .55s .25s cubic-bezier(.2, .7, .2, 1) both;
+  box-shadow: 0 12px 32px rgba(27, 42, 87, .09);
+}
 
 #splash { position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 24px; background: #FFFFFF; transition: opacity .3s ease; }
 #splash.leaving { opacity: 0; pointer-events: none; }
@@ -126,16 +155,19 @@ a.apk-link { display: grid; place-items: center; }
 .pdf-title-wrap { min-width: 0; flex: 1; }
 .pdf-title-wrap strong { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pdf-title-wrap small { font-size: 11px; color: #CBD5E0; }
-.pdf-top-actions { display: flex; align-items: center; gap: 4px; }
+.pdf-top-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .pdf-sm-btn {
   min-width: 34px;
   height: 34px;
+  padding: 0 8px;
   border-radius: 8px;
   border: 1px solid #4A63A3;
   background: #25386E;
   color: #FFF;
   font-size: 14px;
   font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .pdf-save-btn {
   height: 34px;
@@ -146,6 +178,8 @@ a.apk-link { display: grid; place-items: center; }
   color: #FFF;
   font-size: 13px;
   font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .pdf-stage-wrap {
   flex: 1;
@@ -239,9 +273,9 @@ a.apk-link { display: grid; place-items: center; }
   gap: 8px;
 }
 .circle-pin-fab {
-  height: 52px;
-  padding: 0 18px 0 14px;
-  border-radius: 26px;
+  height: 50px;
+  padding: 0 16px 0 12px;
+  border-radius: 25px;
   border: 2px solid #FFFFFF;
   background: #1B2A57;
   color: #FFFFFF;
@@ -249,7 +283,9 @@ a.apk-link { display: grid; place-items: center; }
   font-size: 14px;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
   box-shadow: 0 6px 18px rgba(0,0,0,0.4);
 }
 .circle-pin-fab .circle-dot {
@@ -270,14 +306,16 @@ a.apk-link { display: grid; place-items: center; }
   background: #FFFFFF;
 }
 .pdf-tool-fab {
-  height: 46px;
-  padding: 0 14px;
-  border-radius: 23px;
+  height: 44px;
+  padding: 0 13px;
+  border-radius: 22px;
   border: 1.5px solid rgba(255,255,255,0.7);
   background: rgba(27,42,87,0.88);
   color: #FFF;
   font-size: 13px;
   font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
   box-shadow: 0 4px 14px rgba(0,0,0,0.35);
 }
 .pdf-tool-fab[aria-pressed="true"] {

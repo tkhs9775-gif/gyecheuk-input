@@ -74,9 +74,72 @@ const drawingState = {
   dirty: false,
 };
 
+const PDF_CACHE_DB = 'gyecheuk_pdf_cache';
+const PDF_CACHE_STORE = 'pdfs';
+let pdfCacheDbPromise = null;
+
+function openPdfCacheDb() {
+  pdfCacheDbPromise ??= new Promise((resolve, reject) => {
+    const req = indexedDB.open(PDF_CACHE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(PDF_CACHE_STORE, { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => { pdfCacheDbPromise = null; reject(req.error); };
+  });
+  return pdfCacheDbPromise;
+}
+
+async function getCachedPdfBytes(fileId) {
+  try {
+    const db = await openPdfCacheDb();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(PDF_CACHE_STORE, 'readonly');
+      const req = tx.objectStore(PDF_CACHE_STORE).get(fileId);
+      req.onsuccess = () => resolve(req.result?.bytes || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function putCachedPdfBytes(fileId, bytes) {
+  try {
+    const db = await openPdfCacheDb();
+    await new Promise((resolve) => {
+      const tx = db.transaction(PDF_CACHE_STORE, 'readwrite');
+      tx.objectStore(PDF_CACHE_STORE).put({ id: fileId, bytes, savedAt: Date.now() });
+      tx.oncomplete = resolve;
+      tx.onerror = resolve;
+    });
+  } catch { /* ignore */ }
+}
+
+function b64ToUint8(base64) {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+const prefetchInFlight = new Set();
+async function prefetchPdfToCache(fileId) {
+  if (!fileId || prefetchInFlight.has(fileId)) return;
+  if (await getCachedPdfBytes(fileId)) return;
+  prefetchInFlight.add(fileId);
+  try {
+    const dl = await api('drive_download', { fileId });
+    if (dl && dl.base64) {
+      await putCachedPdfBytes(fileId, b64ToUint8(dl.base64));
+    }
+  } catch { /* ignore */ } finally {
+    prefetchInFlight.delete(fileId);
+  }
+}
+
 // ---------- 1단계: 현장명 목록 화면 ----------
 
 function loadDrawingTab() {
+  ensurePdfJs().catch(() => {}); // 도면 탭 진입 즉시 PDF 엔진 예열!
   show($('drawingSitesView'), true);
   show($('drawingFilesView'), false);
   renderDrawingSites();
@@ -129,6 +192,8 @@ async function openSiteDrawingFolder(site) {
     drawingState.files = res.files || [];
     store.set(`drawings_${site}`, JSON.stringify(drawingState.files));
     renderDrawingFiles();
+    // 폴더 내 도면들을 백그라운드로 미리 휴대폰에 받아두어 터치 시 0.1초 만에 열리게 한다!
+    drawingState.files.slice(0, 6).forEach((f) => prefetchPdfToCache(f.id));
   } catch (err) {
     const cached = readCached(`drawings_${site}`);
     if (cached) {
@@ -193,6 +258,7 @@ async function uploadDrawingPdf(file) {
     const base64 = await readFileAsBase64(file);
     const res = await api('drawing_upload', { site: drawingState.site, file: { name: file.name, base64 } });
     if (res.file) {
+      await putCachedPdfBytes(res.file.id, b64ToUint8(base64));
       drawingState.files.unshift(res.file);
       store.set(`drawings_${drawingState.site}`, JSON.stringify(drawingState.files));
     }
@@ -223,32 +289,35 @@ async function openPdfFieldbook(file) {
 
   try {
     const pdfjsLib = await ensurePdfJs();
-    // 캐시된 PDF가 있는지 먼저 확인하고 없으면 서버에서 다운로드
-    let base64 = store.get(`pdf_b64_${file.id}`);
-    if (!base64) {
-      const dl = await api('drive_download', { fileId: file.id });
-      base64 = dl.base64;
-      // 용량이 너무 크지 않으면 로컬에도 캐시
-      if (base64 && base64.length < 3500000) store.set(`pdf_b64_${file.id}`, base64);
+
+    // 1) IndexedDB 고속 캐시 확인 + 2) 야장 메모 조회를 병렬로 동시에 실행!
+    const [cachedBytes, noteRes] = await Promise.all([
+      getCachedPdfBytes(file.id),
+      api('drawing_notes_get', { fileId: file.id }).catch(() => null),
+    ]);
+
+    let bytes = cachedBytes;
+    if (!bytes) {
+      const legacyB64 = store.get(`pdf_b64_${file.id}`);
+      if (legacyB64) {
+        bytes = b64ToUint8(legacyB64);
+      } else {
+        const dl = await api('drive_download', { fileId: file.id });
+        bytes = b64ToUint8(dl.base64);
+      }
+      putCachedPdfBytes(file.id, bytes);
     }
-    const bin = atob(base64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
     drawingState.rawPdfBytes = bytes.slice();
 
-    // 저장된 야장 데이터(동그란 원 메모 + 자유 필기) 불러오기
-    try {
-      const noteRes = await api('drawing_notes_get', { fileId: file.id });
-      drawingState.notes = noteRes.data && Array.isArray(noteRes.data.pins)
-        ? { pins: noteRes.data.pins, strokes: noteRes.data.strokes || {} }
-        : { pins: [], strokes: {} };
+    if (noteRes && noteRes.data && Array.isArray(noteRes.data.pins)) {
+      drawingState.notes = { pins: noteRes.data.pins, strokes: noteRes.data.strokes || {} };
       store.set(`pdf_notes_${file.id}`, JSON.stringify(drawingState.notes));
-    } catch {
+    } else {
       const localNotes = readCached(`pdf_notes_${file.id}`);
       drawingState.notes = localNotes || { pins: [], strokes: {} };
     }
 
-    drawingState.pdfDoc = await pdfjsLib.getDocument({ data: bytes }).promise;
+    drawingState.pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
     drawingState.pageCount = drawingState.pdfDoc.numPages;
     await renderPdfPage();
   } catch (err) {
@@ -876,7 +945,8 @@ async function saveDrawingNotesToServer(showAlert = true) {
     });
 
     if (res.file) {
-      // 도면 폴더 목록에 새 파일 반영 (이미 같은 이름의 오늘자 파일이 있으면 교체)
+      // 새로 저장한 파일도 즉시 IndexedDB 캐시에 넣어 다시 열 때 0.1초 만에 뜨도록 함
+      if (pdfBase64) putCachedPdfBytes(res.file.id, b64ToUint8(pdfBase64));
       drawingState.files = [res.file, ...drawingState.files.filter((f) => f.name !== res.file.name && f.id !== res.file.id)];
       store.set(`drawings_${drawingState.site}`, JSON.stringify(drawingState.files));
       store.set(`pdf_notes_${res.file.id}`, JSON.stringify(drawingState.notes));
