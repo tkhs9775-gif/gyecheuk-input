@@ -77,6 +77,8 @@ function negateIfPlainNumber(type, text) {
 const drawingState = {
   site: '',
   files: [],
+  folders: [],            // 원본별 폴더(계측기별 PDF 묶음): [{ name, files }]
+  openFolders: new Set(), // 펼쳐 둔 폴더 이름
   currentFile: null,
   rawPdfBytes: null,
   pdfDoc: null,
@@ -207,7 +209,9 @@ async function openSiteDrawingFolder(site) {
   try {
     const res = await api('drawing_list', { site });
     drawingState.files = res.files || [];
+    drawingState.folders = res.folders || [];
     store.set(`drawings_${site}`, JSON.stringify(drawingState.files));
+    store.set(`drawing_folders_${site}`, JSON.stringify(drawingState.folders));
     renderDrawingFiles();
     // 폴더 내 도면들을 백그라운드로 미리 휴대폰에 받아두어 터치 시 0.1초 만에 열리게 한다!
     drawingState.files.slice(0, 6).forEach((f) => prefetchPdfToCache(f.id));
@@ -215,6 +219,7 @@ async function openSiteDrawingFolder(site) {
     const cached = readCached(`drawings_${site}`);
     if (cached) {
       drawingState.files = cached;
+      drawingState.folders = readCached(`drawing_folders_${site}`) || [];
       renderDrawingFiles();
       $('drawingFolderNote').textContent = '신호가 약해 이전에 불러온 도면 목록을 표시합니다.';
     } else {
@@ -223,43 +228,68 @@ async function openSiteDrawingFolder(site) {
   }
 }
 
+function drawingRow(title, subText, badgeText, onOpen, extraClass = '') {
+  const li = document.createElement('li');
+  li.className = `tap ${extraClass}`.trim();
+  li.tabIndex = 0;
+  li.setAttribute('role', 'button');
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const b = document.createElement('b');
+  b.textContent = title;
+  const sub = document.createElement('small');
+  sub.textContent = subText;
+  meta.append(b, sub);
+  const badge = document.createElement('div');
+  badge.className = 'val';
+  badge.style.fontSize = '15px';
+  badge.style.color = '#1F62A8';
+  badge.textContent = badgeText;
+  li.append(meta, badge);
+  li.addEventListener('click', onOpen);
+  li.addEventListener('keydown', (e) => { if (e.key === 'Enter') onOpen(); });
+  return li;
+}
+
+const drawingFileRow = (f, extraClass = '') => drawingRow(
+  `📄 ${f.name}`, `${f.updated || ''} · ${fmtSize(f.size || 0)} · 터치하여 야장 열기`, '야장 열기', () => openPdfFieldbook(f), extraClass,
+);
+
+// 원본별 폴더 한 줄(터치하면 펼침/접힘) + 펼쳤을 때 폴더 안 PDF 줄들
+function drawingFolderRows(folder) {
+  const isOpen = drawingState.openFolders.has(folder.name);
+  const head = drawingRow(
+    `${isOpen ? '📂' : '📁'} ${folder.name}`, `계측기별 PDF ${folder.files.length}개`, isOpen ? '접기' : '펼치기',
+    () => {
+      if (drawingState.openFolders.has(folder.name)) drawingState.openFolders.delete(folder.name);
+      else drawingState.openFolders.add(folder.name);
+      renderDrawingFiles();
+    },
+    'folder',
+  );
+  if (!isOpen) return [head];
+  const rows = folder.files.length
+    ? folder.files.map((f) => drawingFileRow(f, 'in-folder'))
+    : [Object.assign(document.createElement('li'), { className: 'empty in-folder', textContent: '폴더가 비어 있습니다.' })];
+  return [head, ...rows];
+}
+
 function renderDrawingFiles() {
-  const files = drawingState.files;
-  $('drawingFolderNote').textContent = files.length
-    ? `PDF 도면 ${files.length}개 · 터치하면 전체화면 야장으로 열립니다.`
+  const { files, folders } = drawingState;
+  const total = files.length + folders.reduce((n, f) => n + f.files.length, 0);
+  $('drawingFolderNote').textContent = total
+    ? `PDF 도면 ${files.length}개${folders.length ? ` · 계측기별 폴더 ${folders.length}개` : ''} · 터치하면 전체화면 야장으로 열립니다.`
     : '아직 이 현장 폴더에 등록된 PDF 도면이 없습니다. [＋ PDF 도면 추가]로 올려주세요.';
 
   const ul = $('drawingFileList');
-  if (files.length === 0) {
+  if (total === 0 && folders.length === 0) {
     const li = document.createElement('li');
     li.className = 'empty';
     li.textContent = '등록된 PDF 도면 파일이 없습니다.';
     ul.replaceChildren(li);
     return;
   }
-
-  ul.replaceChildren(...files.map((f) => {
-    const li = document.createElement('li');
-    li.className = 'tap';
-    li.tabIndex = 0;
-    li.setAttribute('role', 'button');
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    const b = document.createElement('b');
-    b.textContent = `📄 ${f.name}`;
-    const sub = document.createElement('small');
-    sub.textContent = `${f.updated || ''} · ${fmtSize(f.size || 0)} · 터치하여 야장 열기`;
-    meta.append(b, sub);
-    const badge = document.createElement('div');
-    badge.className = 'val';
-    badge.style.fontSize = '15px';
-    badge.style.color = '#1F62A8';
-    badge.textContent = '야장 열기';
-    li.append(meta, badge);
-    li.addEventListener('click', () => openPdfFieldbook(f));
-    li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openPdfFieldbook(f); });
-    return li;
-  }));
+  ul.replaceChildren(...files.map((f) => drawingFileRow(f)), ...folders.flatMap(drawingFolderRows));
 }
 
 async function uploadDrawingPdf(file) {
@@ -1056,6 +1086,12 @@ async function saveTypedPdfs() {
       // 옛 서버 코드는 folder를 안 돌려주고 subdir을 무시한 채 현장 폴더에 저장한다
       if (res.folder !== `도면/${drawingState.site}/${folderName}`) throw new Error(`서버가 옛 버전이라 ${res.folder || '도면/' + drawingState.site} 에 저장됨. Code.gs를 새 버전으로 배포하세요`);
       saved.push(t.name);
+      // 도면 목록에도 바로 보이도록 폴더 목록을 갱신한다(같은 이름은 교체)
+      const dir = drawingState.folders.find((f) => f.name === folderName) || { name: folderName, files: [] };
+      const nextDir = { name: folderName, files: [res.file, ...dir.files.filter((f) => f.name !== res.file.name)] };
+      drawingState.folders = [...drawingState.folders.filter((f) => f.name !== folderName), nextDir]
+        .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+      store.set(`drawing_folders_${drawingState.site}`, JSON.stringify(drawingState.folders));
     } catch (err) {
       failed.push(`${t.name}(${errorText(err)})`);
     }

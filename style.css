@@ -517,3 +517,7 @@ dialog::backdrop { background: rgba(27, 42, 87, .45); }
 .list .meta small { color: var(--muted); font-size: 14px; }
 .list .val { font-size: 22px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .list .empty { color: var(--muted); justify-content: flex-start; }
+
+/* 도면 목록: 원본별 계측기 폴더 */
+.list li.folder { background: #EEF4FB; border-color: #C9DBF0; }
+.list li.in-folder { margin-left: 22px; }
