@@ -1053,6 +1053,8 @@ async function saveTypedPdfs() {
         file: { name, base64, replaceSameName: true, subdir: folderName, user: $('user')?.value || '' },
       });
       if (!res.file) throw new Error(res.error || '저장 실패');
+      // 옛 서버 코드는 folder를 안 돌려주고 subdir을 무시한 채 현장 폴더에 저장한다
+      if (res.folder !== `도면/${drawingState.site}/${folderName}`) throw new Error(`서버가 옛 버전이라 ${res.folder || '도면/' + drawingState.site} 에 저장됨. Code.gs를 새 버전으로 배포하세요`);
       saved.push(t.name);
     } catch (err) {
       failed.push(`${t.name}(${errorText(err)})`);
