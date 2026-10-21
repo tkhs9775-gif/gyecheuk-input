@@ -58,6 +58,22 @@ function buildSavedDrawingFileName(originalName, now = new Date()) {
   return `${baseName}_${ymdStr}(${dayChar}).pdf`;
 }
 
+// 동그라미 범례: 원 안에 코드 글자와 번호가 들어간다(W1, W2, H1...). 코드가 없는 옛 메모는 번호만
+const PIN_TYPES = [
+  { code: 'W', name: '수위' },
+  { code: 'H', name: '굴착고' },
+  { code: 'S', name: '변형률계' },
+  { code: 'L', name: '하중계' },
+  { code: 'C', name: '균열' },
+];
+const pinTypeName = (code) => PIN_TYPES.find((t) => t.code === code)?.name || '';
+
+// 항상 음수인 종류(수위 W, 굴착고 H): 숫자만 쓰면 앞에 -를 붙인다. 0과 글자가 섞인 메모, 이미 -가 있는 값은 그대로
+const NEGATIVE_PIN_TYPES = ['W', 'H'];
+function negateIfPlainNumber(type, text) {
+  return NEGATIVE_PIN_TYPES.includes(type) && /^\d+(\.\d+)?$/.test(text) && Number(text) !== 0 ? `-${text}` : text;
+}
+
 const drawingState = {
   site: '',
   files: [],
@@ -68,6 +84,7 @@ const drawingState = {
   pageCount: 1,
   scale: 1.25,
   pinMode: false,
+  pinType: '', // 범례에서 고른 계측기 코드. ''이면 전체 보기·종류 없는 메모
   penMode: false,
   notes: { pins: [], strokes: {} }, // pins: [{ id, page, x, y, text, author, time }], strokes: { [page]: [ [{x,y}, ...] ] }
   activePinId: null,
@@ -369,8 +386,46 @@ function setPinMode(on) {
   drawingState.pinMode = on;
   if (on) setPenMode(false);
   $('btnPinMode').setAttribute('aria-pressed', String(on));
-  $('pinModeLabel').textContent = on ? '도면을 터치하세요 (ON)' : '동그라미 메모';
+  refreshPinModeLabel();
   $('pinLayer').classList.toggle('pin-mode-active', on);
+}
+
+function refreshPinModeLabel() {
+  const type = drawingState.pinType;
+  const onText = type ? `${type} ${pinTypeName(type)} 터치 (ON)` : '도면을 터치하세요 (ON)';
+  $('pinModeLabel').textContent = drawingState.pinMode ? onText : '동그라미 메모';
+}
+
+// 같은 쪽·같은 종류끼리 번호를 센다. 보기 필터와 상관없이 번호가 고정된다
+function pinLabel(pin) {
+  const same = (drawingState.notes.pins || []).filter((p) => p.page === pin.page && (p.type || '') === (pin.type || ''));
+  return `${pin.type || ''}${same.indexOf(pin) + 1}`;
+}
+
+function visiblePagePins() {
+  return currentPagePins().filter((p) => !drawingState.pinType || p.type === drawingState.pinType);
+}
+
+function setPinType(code) {
+  drawingState.pinType = drawingState.pinType === code ? '' : code;
+  const active = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
+  if (active && drawingState.pinType && active.type !== drawingState.pinType) closePinMemoBox();
+  refreshPinModeLabel();
+  renderPinLegend();
+  renderPagePins();
+}
+
+function renderPinLegend() {
+  const items = [{ code: '', label: '전체' }, ...PIN_TYPES.map((t) => ({ code: t.code, label: `${t.code} ${t.name}` }))];
+  $('pinLegend').replaceChildren(...items.map((item) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'pin-legend-item';
+    el.textContent = item.label;
+    el.setAttribute('aria-pressed', String(drawingState.pinType === item.code));
+    el.addEventListener('click', () => (item.code ? setPinType(item.code) : setPinType(drawingState.pinType)));
+    return el;
+  }));
 }
 
 function setPenMode(on) {
@@ -383,14 +438,15 @@ function setPenMode(on) {
 
 function renderPagePins() {
   const layer = $('pinLayer');
-  const pins = currentPagePins();
-  layer.replaceChildren(...pins.map((pin, idx) => {
+  const pins = visiblePagePins();
+  layer.replaceChildren(...pins.map((pin) => {
+    const label = pinLabel(pin);
     const el = document.createElement('button');
     el.type = 'button';
-    el.className = `pdf-pin${pin.id === drawingState.activePinId ? ' selected' : ''}`;
+    el.className = `pdf-pin${pin.id === drawingState.activePinId ? ' selected' : ''}${label.length > 2 ? ' small' : ''}`;
     el.style.left = `${(pin.x * 100).toFixed(2)}%`;
     el.style.top = `${(pin.y * 100).toFixed(2)}%`;
-    el.textContent = String(idx + 1);
+    el.textContent = label;
     if (pin.text) {
       const tag = document.createElement('span');
       tag.className = 'pdf-pin-tag';
@@ -417,6 +473,7 @@ function handleStageTapForPin(e) {
     page: drawingState.pageNum,
     x,
     y,
+    type: drawingState.pinType,
     text: '',
     author: $('user')?.value || '',
     time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
@@ -433,8 +490,8 @@ function openPinMemoBox(pinId) {
   const pin = drawingState.notes.pins.find((p) => p.id === pinId);
   if (!pin) return;
   drawingState.activePinId = pinId;
-  const idx = currentPagePins().findIndex((p) => p.id === pinId) + 1;
-  $('pinMemoTitle').textContent = `⭕ 동그라미 #${idx} 메모`;
+  const kind = pinTypeName(pin.type);
+  $('pinMemoTitle').textContent = `⭕ ${pinLabel(pin)}${kind ? ` ${kind}` : ''} 메모`;
   $('pinMemoDisplay').textContent = pin.text || '';
   $('pinMemoKeyboard').value = pin.text || '';
   show($('pinMemoBox'), true);
@@ -450,6 +507,7 @@ function closePinMemoBox() {
 function updateActivePinText(newText) {
   const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
   if (!pin) return;
+  newText = negateIfPlainNumber(pin.type, newText);
   pin.text = newText;
   drawingState.dirty = true;
   $('pinMemoDisplay').textContent = newText;
@@ -816,9 +874,10 @@ function uint8ToBase64(bytes) {
 }
 
 // 특정 페이지의 동그라미 마커 + OCR 텍스트 태그 + 자유 펜 필기를 투명 PNG 데이터로 그린다
-function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx) {
-  const pagePins = (drawingState.notes.pins || []).filter((p) => p.page === pageIndex1Based);
-  const pageStrokes = drawingState.notes.strokes?.[String(pageIndex1Based)] || [];
+// onlyType을 주면 그 계측기 메모만 그린다(자유 펜 필기는 계측기와 무관하므로 뺀다). 없으면 전부
+function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType = null) {
+  const pagePins = (drawingState.notes.pins || []).filter((p) => p.page === pageIndex1Based && (!onlyType || p.type === onlyType));
+  const pageStrokes = onlyType ? [] : (drawingState.notes.strokes?.[String(pageIndex1Based)] || []);
   if (!pagePins.length && !pageStrokes.length) return null;
 
   const c = document.createElement('canvas');
@@ -843,7 +902,7 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx) {
   }
 
   // 2) 동그란 원 마커 및 OCR 텍스트 라벨 그리기
-  pagePins.forEach((pin, idx) => {
+  pagePins.forEach((pin) => {
     const cx = pin.x * widthPx;
     const cy = pin.y * heightPx;
     const r = 13;
@@ -858,9 +917,11 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx) {
 
     ctx.fillStyle = '#FFFFFF';
     ctx.font = 'bold 12px "Noto Sans KR", "Malgun Gothic", sans-serif';
+    const label = pinLabel(pin);
+    ctx.font = `bold ${label.length > 2 ? 10 : 12}px "Noto Sans KR", "Malgun Gothic", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(String(idx + 1), cx, cy);
+    ctx.fillText(label, cx, cy);
 
     if (pin.text) {
       ctx.font = 'bold 12px "Noto Sans KR", "Malgun Gothic", sans-serif';
@@ -887,7 +948,7 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx) {
 }
 
 // 원본 PDF 바이트 위에 모든 페이지의 야장 메모/필기를 합성한 새 PDF base64 생성
-async function buildAnnotatedPdfBase64() {
+async function buildAnnotatedPdfBase64(onlyType = null) {
   const PDFLib = await ensurePdfLib();
   const pdfDoc = await PDFLib.PDFDocument.load(drawingState.rawPdfBytes);
   const pages = pdfDoc.getPages();
@@ -895,7 +956,7 @@ async function buildAnnotatedPdfBase64() {
   for (let i = 0; i < pages.length; i += 1) {
     const p = pages[i];
     const { width, height } = p.getSize();
-    const pngUrl = renderPageAnnotationsPng(i + 1, width, height);
+    const pngUrl = renderPageAnnotationsPng(i + 1, width, height, onlyType);
     if (!pngUrl) continue;
     const pngImage = await pdfDoc.embedPng(pngUrl);
     p.drawImage(pngImage, { x: 0, y: 0, width, height });
@@ -966,7 +1027,50 @@ async function saveDrawingNotesToServer(showAlert = true) {
   }
 }
 
+// 원본 도면 하나에서 계측기(범례 종류)별로 PDF를 따로 만들어 올린다. 메모가 있는 종류만, 종류마다 한 파일
+async function saveTypedPdfs() {
+  const file = drawingState.currentFile;
+  if (!file || !drawingState.rawPdfBytes) return;
+  const pins = drawingState.notes.pins || [];
+  const types = PIN_TYPES.filter((t) => pins.some((p) => p.type === t.code));
+  if (!types.length) {
+    alert('계측기 종류를 고른 동그라미 메모가 없습니다. 범례에서 종류를 고른 뒤 동그라미를 찍어 주세요.');
+    return;
+  }
+  const btn = $('pdfSaveTyped');
+  btn.disabled = true;
+  // 원본 이름에서 .pdf와 날짜 꼬리표를 뗀 이름이 폴더 이름. 날짜가 달라져도 같은 폴더를 쓴다
+  const folderName = buildSavedDrawingFileName(file.name).replace(/_\d{4}-\d{2}-\d{2}\([일월화수목금토]\)\.pdf$/, '');
+  const saved = [];
+  const failed = [];
+  for (const t of types) {
+    btn.textContent = `${t.name} 저장중..`;
+    const name = buildSavedDrawingFileName(file.name, new Date()).replace(/(_\d{4}-\d{2}-\d{2}\([일월화수목금토]\)\.pdf)$/, `_${t.name}$1`);
+    try {
+      const base64 = await buildAnnotatedPdfBase64(t.code);
+      const res = await api('drawing_upload', {
+        site: drawingState.site,
+        file: { name, base64, replaceSameName: true, subdir: folderName, user: $('user')?.value || '' },
+      });
+      if (!res.file) throw new Error(res.error || '저장 실패');
+      saved.push(t.name);
+    } catch (err) {
+      failed.push(`${t.name}(${errorText(err)})`);
+    }
+  }
+  btn.disabled = false;
+  btn.textContent = '계측기별 PDF';
+  const untyped = pins.filter((p) => !p.type).length;
+  alert([
+    saved.length ? `'${folderName}' 폴더에 ${saved.length}개 저장: ${saved.join(', ')}` : '저장된 파일이 없습니다',
+    failed.length ? `실패: ${failed.join(', ')}` : '',
+    untyped ? `종류 없는 메모 ${untyped}개는 계측기별 PDF에 들어가지 않습니다` : '',
+  ].filter(Boolean).join('\n'));
+}
+
 function initDrawingModule() {
+  renderPinLegend();
+  $('pdfSaveTyped').addEventListener('click', saveTypedPdfs);
   $('drawingBackSites').addEventListener('click', loadDrawingTab);
   $('btnUploadDrawing').addEventListener('click', () => $('inputDrawingPdf').click());
   $('inputDrawingPdf').addEventListener('change', (e) => {
@@ -1032,4 +1136,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName };
+if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, negateIfPlainNumber };

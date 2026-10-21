@@ -142,8 +142,8 @@ a.apk-link { display: grid; place-items: center; }
   flex-direction: column;
 }
 .pdf-topbar {
-  height: 54px;
-  padding: 0 8px;
+  min-height: 54px;
+  padding: 4px 8px;
   background: #1B2A57;
   display: flex;
   align-items: center;
@@ -155,7 +155,7 @@ a.apk-link { display: grid; place-items: center; }
 .pdf-title-wrap { min-width: 0; flex: 1; }
 .pdf-title-wrap strong { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pdf-title-wrap small { font-size: 11px; color: #CBD5E0; }
-.pdf-top-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.pdf-top-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; max-width: 72%; }
 .pdf-sm-btn {
   min-width: 34px;
   height: 34px;
@@ -269,9 +269,38 @@ a.apk-link { display: grid; place-items: center; }
   bottom: calc(18px + env(safe-area-inset-bottom));
   z-index: 45;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
 }
+.pdf-fab-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.pin-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pin-legend-item {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 15px;
+  border: 1.5px solid rgba(255,255,255,0.7);
+  background: rgba(27,42,87,0.88);
+  color: #FFF;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+  box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+}
+.pin-legend-item[aria-pressed="true"] {
+  background: #1F62A8;
+  border-color: #FFF;
+}
+.pdf-pin.small { font-size: 10px; }
 .circle-pin-fab {
   height: 50px;
   padding: 0 16px 0 12px;
