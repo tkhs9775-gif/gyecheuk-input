@@ -93,6 +93,7 @@ const drawingState = {
   dirty: false,
 };
 
+const EXTERNAL_DIR = '외부계측기';
 const PDF_CACHE_DB = 'gyecheuk_pdf_cache';
 const PDF_CACHE_STORE = 'pdfs';
 let pdfCacheDbPromise = null;
@@ -1071,6 +1072,7 @@ async function saveTypedPdfs() {
   btn.disabled = true;
   // 원본 이름에서 .pdf와 날짜 꼬리표를 뗀 이름이 폴더 이름. 날짜가 달라져도 같은 폴더를 쓴다
   const folderName = buildSavedDrawingFileName(file.name).replace(/_\d{4}-\d{2}-\d{2}\([일월화수목금토]\)\.pdf$/, '');
+  const savePath = `${folderName}/${EXTERNAL_DIR}`;   // 원본 폴더 안의 외부계측기 폴더
   const saved = [];
   const failed = [];
   for (const t of types) {
@@ -1080,11 +1082,11 @@ async function saveTypedPdfs() {
       const base64 = await buildAnnotatedPdfBase64(t.code);
       const res = await api('drawing_upload', {
         site: drawingState.site,
-        file: { name, base64, replaceSameName: true, subdir: folderName, user: $('user')?.value || '' },
+        file: { name, base64, replaceSameName: true, subdir: savePath, user: $('user')?.value || '' },
       });
       if (!res.file) throw new Error(res.error || '저장 실패');
       // 옛 서버 코드는 folder를 안 돌려주고 subdir을 무시한 채 현장 폴더에 저장한다
-      if (res.folder !== `도면/${drawingState.site}/${folderName}`) throw new Error(`서버가 옛 버전이라 ${res.folder || '도면/' + drawingState.site} 에 저장됨. Code.gs를 새 버전으로 배포하세요`);
+      if (res.folder !== `도면/${drawingState.site}/${savePath}`) throw new Error(`서버가 옛 버전이라 ${res.folder || '도면/' + drawingState.site} 에 저장됨. Code.gs를 새 버전으로 배포하세요`);
       saved.push(t.name);
       // 도면 목록에도 바로 보이도록 폴더 목록을 갱신한다(같은 이름은 교체)
       const dir = drawingState.folders.find((f) => f.name === folderName) || { name: folderName, files: [] };
