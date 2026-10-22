@@ -26,18 +26,22 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Build Release APK
+      - name: Build Release APKs (직원용 + 대표님 감독판)
         working-directory: android
-        run: gradle assembleRelease --no-daemon
+        run: gradle assembleStaffRelease assembleCeoRelease --no-daemon
 
-      - name: Rename APK
-        run: cp android/app/build/outputs/apk/release/app-release.apk gyecheuk-input.apk
+      - name: Rename APKs
+        run: |
+          cp android/app/build/outputs/apk/staff/release/app-staff-release.apk gyecheuk-input.apk
+          cp android/app/build/outputs/apk/ceo/release/app-ceo-release.apk kiwoom-ceo.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: gyecheuk-input-apk
-          path: gyecheuk-input.apk
+          path: |
+            gyecheuk-input.apk
+            kiwoom-ceo.apk
 
       - name: Publish to GitHub Release (latest)
         uses: softprops/action-gh-release@v2
@@ -48,5 +52,9 @@ jobs:
             휴대폰에서 아래 `gyecheuk-input.apk`를 눌러 바로 설치하세요.
             - 사진 촬영 시 휴대폰 갤러리의 `Pictures/계측사진/<현장명>/` 폴더에 자동으로 분류 저장됩니다.
             - 구글 드라이브 로그인 없이 접속 코드만으로 바로 작동합니다.
-          files: gyecheuk-input.apk
+
+            대표님용 감독판은 `kiwoom-ceo.apk`를 설치하세요. (직원용 앱과 따로 설치되며, 읽기 전용입니다.)
+          files: |
+            gyecheuk-input.apk
+            kiwoom-ceo.apk
           prerelease: false

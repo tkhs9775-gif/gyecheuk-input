@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#F2F5FA">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css?v=29">
+<link rel="stylesheet" href="ceo.css?v=1">
+<title>키움이엔씨 감독판</title>
+</head>
+<body>
+
+<div id="splash" role="status" aria-live="polite">
+  <div class="logo-wrap">
+    <img class="splash-logo" src="logo.png" alt="(주)키움이엔씨">
+    <span class="sheen" aria-hidden="true"><i></i></span>
+  </div>
+  <span class="splash-rule" aria-hidden="true"></span>
+  <p class="splash-title">현장 감독판</p>
+  <div id="splashLoading" class="splash-bar" aria-hidden="true"><span></span></div>
+  <div id="splashError" class="splash-error hidden">
+    <p id="splashMessage"></p>
+    <button id="retry" type="button" class="btn primary">다시 시도</button>
+  </div>
+</div>
+
+<main id="gate" class="screen hidden">
+  <div class="gate-hero">
+    <div class="logo-wrap gate-logo-anim">
+      <img class="splash-logo" src="logo.png" alt="(주)키움이엔씨">
+      <span class="sheen" aria-hidden="true"><i></i></span>
+    </div>
+    <span class="splash-rule" aria-hidden="true"></span>
+    <span class="gate-badge">KIWOOM ENC · DIRECTOR</span>
+    <h1 class="title">현장 감독판</h1>
+    <p class="muted">접속 코드를 입력하면 전체 현장 계측 현황을 볼 수 있습니다. (읽기 전용)</p>
+  </div>
+  <form id="gateForm" class="card gate-card-anim">
+    <label class="field"><span class="label">보안 접속 코드</span>
+      <input id="code" type="password" autocomplete="current-password" placeholder="접속 코드를 입력하세요">
+    </label>
+    <p id="gateError" class="c-error hidden" role="alert"></p>
+    <button type="submit" class="btn primary c-wide">연결 및 시작하기</button>
+  </form>
+</main>
+
+<main id="app" class="screen hidden">
+  <header class="c-top">
+    <select id="siteFilter" class="pill" aria-label="현장"></select>
+    <input id="dateInput" class="pill c-date" type="date" aria-label="조회 기준일">
+    <button id="refresh" type="button" class="icon-btn c-refresh" aria-label="새로고침">
+      <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+    </button>
+  </header>
+  <p id="syncNote" class="muted c-sync" role="status"></p>
+
+  <section id="tab-home" class="c-tab">
+    <div class="c-tiles" id="tiles"></div>
+    <h2 class="section">현장별 계측 달성률</h2>
+    <div id="coverageList" class="c-stack"></div>
+    <button id="changeCode" type="button" class="btn c-wide">접속 코드 다시 입력</button>
+  </section>
+
+  <section id="tab-feed" class="c-tab hidden">
+    <input id="feedSearch" class="c-search" type="text" placeholder="계측기 ID · 메모 · 측정자 검색" aria-label="검색">
+    <div id="feedList" class="c-stack"></div>
+    <button id="feedMore" type="button" class="btn c-wide hidden">더 보기</button>
+  </section>
+
+  <section id="tab-audit" class="c-tab hidden">
+    <h2 class="section">이상보고 접수 내역</h2>
+    <div id="issueList" class="c-stack"></div>
+    <h2 class="section">수정·삭제 이력</h2>
+    <div id="auditList" class="c-stack"></div>
+  </section>
+
+  <section id="tab-files" class="c-tab hidden">
+    <div id="fileChips" class="chips" role="group" aria-label="자료 종류"></div>
+    <div id="fileList" class="c-stack"></div>
+    <h2 class="section">도면 야장 메모</h2>
+    <div id="noteList" class="c-stack"></div>
+  </section>
+</main>
+
+<nav id="tabbar" class="c-tabbar hidden" aria-label="화면 이동">
+  <button type="button" data-tab="home" aria-pressed="true"><b>📊</b>현황</button>
+  <button type="button" data-tab="feed" aria-pressed="false"><b>⚡</b>기록</button>
+  <button type="button" data-tab="audit" aria-pressed="false"><b>🚨</b>점검</button>
+  <button type="button" data-tab="files" aria-pressed="false"><b>📁</b>자료</button>
+</nav>
+
+<dialog id="viewer" class="c-viewer">
+  <p id="viewerTitle" class="muted"></p>
+  <div id="viewerBody"></div>
+  <button id="viewerClose" type="button" class="btn primary c-wide">닫기</button>
+</dialog>
+
+<script src="config.js?v=1"></script>
+<script src="ceo-logic.js?v=1"></script>
+<script src="ceo.js?v=1"></script>
+</body>
+</html>

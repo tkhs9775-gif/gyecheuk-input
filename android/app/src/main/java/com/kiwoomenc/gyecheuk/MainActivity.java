@@ -36,8 +36,9 @@ public class MainActivity extends Activity {
 
     private static final int REQ_FILE_CHOOSER = 1001;
     private static final int REQ_CAMERA_PERM = 1002;
-    private static final String LIVE_URL = "https://tkhs9775-gif.github.io/gyecheuk-input/";
-    private static final String LOCAL_URL = "file:///android_asset/www/index.html";
+    // 직원용/감독판 APK마다 시작 화면이 다르다 (app/build.gradle 의 productFlavors)
+    private static final String LIVE_URL = BuildConfig.LIVE_URL;
+    private static final String LOCAL_URL = BuildConfig.LOCAL_URL;
 
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;

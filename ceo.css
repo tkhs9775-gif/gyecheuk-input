@@ -1,0 +1,65 @@
+/* 감독판(휴대폰) 전용 스타일. 색·글꼴·카드·버튼은 직원용 앱 style.css 를 그대로 쓰고, 여기엔 감독판에만 있는 부분만 둔다. */
+:root { --warn: #8A5A00; --warn-bg: #FFF1D6; }
+
+.c-top { display: flex; align-items: center; gap: 8px; }
+.c-top select.pill { flex: 1; max-width: none; min-width: 0; }
+.c-top .c-date { width: 140px; min-height: 48px; padding: 0 8px; flex: none; font-size: 14px; }
+.c-refresh { flex: none; border: 1px solid var(--line); background: var(--card); color: var(--accent); }
+.c-refresh.spin svg { animation: c-spin 1s linear infinite; }
+@keyframes c-spin { to { transform: rotate(360deg); } }
+.c-sync { margin: 8px 4px 0; min-height: 20px; }
+.c-error { margin: 12px 0 0; color: var(--err); font-weight: 600; }
+.c-wide { display: block; width: 100%; margin-top: 16px; background: var(--card); color: var(--accent); }
+.c-wide.primary { background: var(--accent); color: #fff; }
+.c-stack { display: flex; flex-direction: column; gap: 10px; }
+.c-empty { margin: 8px 4px; color: var(--muted); font-size: 15px; }
+
+/* 요약 타일 */
+.c-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.c-tile { background: var(--card); border: 1px solid #E3E8F1; border-radius: 20px; padding: 14px 16px; }
+.c-tile .k { display: block; font-size: 13px; color: var(--muted); }
+.c-tile .v { display: block; margin-top: 6px; font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent); }
+.c-tile.alert .v { color: var(--err); }
+
+/* 현장 카드 + 달성률 막대 */
+.c-card { background: var(--card); border: 1px solid #E3E8F1; border-radius: 20px; padding: 14px 16px; }
+.c-card.tap { cursor: pointer; }
+.c-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.c-name { font-size: 16px; font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+.c-sub { margin-top: 4px; font-size: 13.5px; color: var(--muted); overflow-wrap: anywhere; }
+.c-badge { flex: none; padding: 4px 12px; border-radius: 16px; font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; background: var(--chip); color: var(--accent); }
+.c-bar { height: 8px; margin-top: 10px; border-radius: 4px; background: var(--chip); overflow: hidden; }
+.c-bar i { display: block; height: 100%; border-radius: 4px; background: var(--accent); }
+.lv-complete .c-badge { background: var(--ok-bg); color: var(--ok); }
+.lv-complete .c-bar i { background: var(--ok); }
+.lv-zero .c-badge { background: var(--err-bg); color: var(--err); }
+.lv-zero .c-bar i { background: var(--err); }
+
+/* 계측기별 점검 줄 */
+.c-insts { margin-top: 12px; border-top: 1px solid var(--line); }
+.c-inst { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid #EEF1F7; font-size: 14.5px; }
+.c-inst:last-child { border-bottom: 0; }
+.c-chip { flex: none; padding: 3px 10px; border-radius: 12px; font-size: 13px; font-weight: 700; }
+.c-chip.done { background: var(--ok-bg); color: var(--ok); }
+.c-chip.issue { background: var(--warn-bg); color: var(--warn); }
+.c-chip.missing { background: var(--err-bg); color: var(--err); }
+.c-chip.plain { background: var(--chip); color: var(--accent); }
+
+/* 기록 카드 */
+.c-search { width: 100%; min-height: 52px; margin-top: 12px; padding: 0 16px; border: 1px solid #C5CFDF; border-radius: 16px; background: var(--card); }
+.c-value { margin-top: 6px; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.c-memo { margin-top: 6px; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; white-space: pre-line; }
+.c-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.c-links a { padding: 6px 12px; border: 1.5px solid var(--accent); border-radius: 16px; font-size: 13.5px; font-weight: 700; color: var(--accent); }
+.c-card.is-deleted { opacity: .6; }
+
+/* 하단 탭 */
+.c-tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; background: var(--card); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+.c-tabbar button { flex: 1; min-height: 60px; border: 0; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.c-tabbar button b { font-size: 20px; line-height: 1; }
+.c-tabbar button[aria-pressed="true"] { color: var(--accent); }
+
+/* 사진 미리보기 */
+.c-viewer { width: min(92vw, 480px); max-height: 88vh; padding: 16px; border: 0; border-radius: 24px; background: var(--card); color: var(--text); overflow: auto; }
+.c-viewer::backdrop { background: rgba(27, 42, 87, .45); }
+.c-viewer img { display: block; width: 100%; height: auto; border-radius: 12px; }

@@ -6,8 +6,7 @@ import threading
 import urllib.request
 import urllib.error
 import webbrowser
-from datetime import datetime, timedelta
-from collections import defaultdict
+from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -49,13 +48,6 @@ COL = {
 
 def safe_get(row, idx):
     return str(row[idx]).strip() if idx < len(row) and row[idx] is not None else ""
-
-
-def parse_dt(s):
-    try:
-        return datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
-    except Exception:
-        return None
 
 
 class CEOMonitorApp(tk.Tk):
@@ -176,7 +168,7 @@ class CEOMonitorApp(tk.Tk):
         ).pack(anchor="w")
         tk.Label(
             title_box,
-            text="(주)키움이엔씨 실시간 현장·직원 근태 및 계측 감독 시스템",
+            text="(주)키움이엔씨 실시간 현장 계측 감독 시스템",
             bg="#0F172A",
             fg="#F8FAFC",
             font=("맑은 고딕", 16, "bold"),
@@ -230,9 +222,7 @@ class CEOMonitorApp(tk.Tk):
         self.kpi_vars = {}
         kpi_specs = [
             ("today_count", "오늘 실시간 입력 건수", "0건", "#38BDF8"),
-            ("active_users", "오늘 활동 직원 / 총원", "0 / 0명", "#4ADE80"),
             ("site_coverage", "오늘 가동 현장 / 전체", "0 / 0곳", "#A78BFA"),
-            ("suspect_count", "몰아치기·지연입력 의심", "0건", "#FBBF24"),
             ("issue_count", "현장 이상보고 / 수정·삭제", "0 / 0건", "#F87171"),
         ]
 
@@ -252,19 +242,16 @@ class CEOMonitorApp(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True, padx=18, pady=10)
 
-        self.tab_staff = tk.Frame(self.notebook, bg="#0F172A")
         self.tab_live = tk.Frame(self.notebook, bg="#0F172A")
         self.tab_sites = tk.Frame(self.notebook, bg="#0F172A")
         self.tab_audit = tk.Frame(self.notebook, bg="#0F172A")
         self.tab_drive = tk.Frame(self.notebook, bg="#0F172A")
 
-        self.notebook.add(self.tab_staff, text=" 🕵️ 1. 직원별 성실도·근태 정밀 분석 ")
-        self.notebook.add(self.tab_live, text=" ⚡ 2. 실시간 입력 피드 & 전체 기록 ")
-        self.notebook.add(self.tab_sites, text=" 🏗️ 3. 현장별 계측 달성률 & 미측정 색출 ")
-        self.notebook.add(self.tab_audit, text=" 🚨 4. 수정/삭제 뒷조사 & 이상보고 ")
-        self.notebook.add(self.tab_drive, text=" 📁 5. 현장 사진 · 측량 · 도면야장 열람 ")
+        self.notebook.add(self.tab_live, text=" ⚡ 1. 실시간 입력 피드 & 전체 기록 ")
+        self.notebook.add(self.tab_sites, text=" 🏗️ 2. 현장별 계측 달성률 & 미측정 색출 ")
+        self.notebook.add(self.tab_audit, text=" 🚨 3. 수정/삭제 이력 & 이상보고 ")
+        self.notebook.add(self.tab_drive, text=" 📁 4. 현장 사진 · 측량 · 도면야장 열람 ")
 
-        self.init_tab_staff()
         self.init_tab_live()
         self.init_tab_sites()
         self.init_tab_audit()
@@ -276,94 +263,6 @@ class CEOMonitorApp(tk.Tk):
         self.status_var = tk.StringVar(value="보안 접속 코드를 입력해 클라우드와 연결하세요. (스텔스 읽기 전용 모드)")
         tk.Label(bar, textvariable=self.status_var, bg="#1E293B", fg="#CBD5E1", font=("맑은 고딕", 9)).pack(side="left")
         tk.Label(bar, text=APP_VERSION, bg="#1E293B", fg="#64748B", font=("맑은 고딕", 9)).pack(side="right")
-
-    # --------------------------------------------------------------------------
-    # 탭 1: 직원별 성실도·근태 정밀 분석
-    # --------------------------------------------------------------------------
-    def init_tab_staff(self):
-        top_info = tk.Frame(self.tab_staff, bg="#0F172A", pady=8)
-        top_info.pack(fill="x")
-        tk.Label(
-            top_info,
-            text="💡 [판독 기준]  • 몰아치기 의심: 이전 입력 후 60초 이내에 연속 입력한 건수   • 지연(소급) 입력: 측정일과 실제 서버 저장일이 다른 건수   • 직원을 클릭하면 아래에 타임라인이 표시됩니다.",
-            bg="#0F172A", fg="#94A3B8", font=("맑은 고딕", 9)
-        ).pack(side="left", padx=8)
-
-        paned = tk.PanedWindow(self.tab_staff, orient="vertical", bg="#0F172A", sashwidth=6, bd=0)
-        paned.pack(fill="both", expand=True)
-
-        # 상단: 직원별 요약 표
-        upper = tk.Frame(paned, bg="#0F172A")
-        cols = ("user", "today_cnt", "total_cnt", "sites", "first_time", "last_time", "work_span", "burst_cnt", "late_cnt", "edit_cnt", "score", "verdict")
-        self.tree_staff = ttk.Treeview(upper, columns=cols, show="headings", height=10)
-        headers = {
-            "user": ("직원명", 100),
-            "today_cnt": ("기준일 입력", 90),
-            "total_cnt": ("누적 입력", 90),
-            "sites": ("담당 현장(기준일)", 220),
-            "first_time": ("첫 입력 시각", 100),
-            "last_time": ("마지막 입력", 100),
-            "work_span": ("현장 체류(활동)시간", 130),
-            "burst_cnt": ("몰아치기(1분내)", 110),
-            "late_cnt": ("소급(뒷북)입력", 110),
-            "edit_cnt": ("수정/삭제", 85),
-            "score": ("성실도 점수", 95),
-            "verdict": ("AI 종합 근태 판정", 220),
-        }
-        for c, (txt, w) in headers.items():
-            self.tree_staff.heading(c, text=txt)
-            self.tree_staff.column(c, width=w, anchor="center" if c not in ("sites", "verdict") else "w")
-
-        self.tree_staff.tag_configure("good", foreground="#4ADE80")
-        self.tree_staff.tag_configure("warn", foreground="#FBBF24")
-        self.tree_staff.tag_configure("bad", foreground="#F87171")
-        self.tree_staff.tag_configure("inactive", foreground="#64748B")
-
-        sb1 = ttk.Scrollbar(upper, orient="vertical", command=self.tree_staff.yview)
-        self.tree_staff.configure(yscrollcommand=sb1.set)
-        self.tree_staff.pack(side="left", fill="both", expand=True)
-        sb1.pack(side="right", fill="y")
-        self.tree_staff.bind("<<TreeviewSelect>>", self.on_select_staff)
-        paned.add(upper)
-
-        # 하단: 선택한 직원의 시간순 입력 간격 분석
-        lower = tk.Frame(paned, bg="#0F172A")
-        lbl_frame = tk.Frame(lower, bg="#0F172A", pady=4)
-        lbl_frame.pack(fill="x")
-        self.staff_detail_label = tk.Label(
-            lbl_frame, text="▼ 위 표에서 직원을 선택하면 시간대별 상세 입력 간격과 몰아치기/소급입력 여부가 표시됩니다.",
-            bg="#0F172A", fg="#38BDF8", font=("맑은 고딕", 10, "bold")
-        )
-        self.staff_detail_label.pack(side="left", padx=6)
-
-        dcols = ("save_time", "gap", "meas_date", "site", "inst_id", "type", "val", "delta", "weather", "flag", "memo")
-        self.tree_staff_detail = ttk.Treeview(lower, columns=dcols, show="headings", height=9)
-        dheaders = {
-            "save_time": ("실제 전송시각", 145),
-            "gap": ("직전 입력과의 간격", 120),
-            "meas_date": ("입력한 측정일", 100),
-            "site": ("현장명", 160),
-            "inst_id": ("계측기ID", 110),
-            "type": ("종류", 100),
-            "val": ("측정값", 110),
-            "delta": ("변화량", 95),
-            "weather": ("당시 날씨", 160),
-            "flag": ("근태 판독", 140),
-            "memo": ("메모 / 수정이력", 200),
-        }
-        for c, (txt, w) in dheaders.items():
-            self.tree_staff_detail.heading(c, text=txt)
-            self.tree_staff_detail.column(c, width=w, anchor="center" if c not in ("site", "weather", "memo") else "w")
-
-        self.tree_staff_detail.tag_configure("flag_warn", foreground="#FBBF24")
-        self.tree_staff_detail.tag_configure("flag_bad", foreground="#F87171")
-        self.tree_staff_detail.tag_configure("normal", foreground="#E2E8F0")
-
-        sb2 = ttk.Scrollbar(lower, orient="vertical", command=self.tree_staff_detail.yview)
-        self.tree_staff_detail.configure(yscrollcommand=sb2.set)
-        self.tree_staff_detail.pack(side="left", fill="both", expand=True)
-        sb2.pack(side="right", fill="y")
-        paned.add(lower)
 
     # --------------------------------------------------------------------------
     # 탭 2: 실시간 입력 피드 & 전체 기록 검색/엑셀 저장
@@ -658,7 +557,7 @@ class CEOMonitorApp(tk.Tk):
 
         self.is_loading = True
         self.btn_sync.configure(state="disabled", text="⏳ 동기화 중...")
-        self.status_var.set("클라우드 서버에서 전체 현장 데이터 및 직원 활동 로그를 은밀하게 수집 중입니다...")
+        self.status_var.set("클라우드 서버에서 전체 현장 계측 데이터를 수집 중입니다...")
 
         def worker():
             try:
@@ -734,7 +633,6 @@ class CEOMonitorApp(tk.Tk):
     def refresh_all_views(self):
         target_date = self.date_var.get().strip()
         records = self.sync_data["records"]
-        names = self.sync_data["names"]
         sites = self.sync_data["sites"]
 
         # 유효 기록(삭제 제외)과 전체 기록 분리
@@ -743,9 +641,6 @@ class CEOMonitorApp(tk.Tk):
             r for r in active_records
             if safe_get(r, COL["date"]) == target_date or safe_get(r, COL["time"]).startswith(target_date)
         ]
-
-        # 1. 직원별 성실도 분석
-        self.analyze_and_populate_staff(target_date, records, names)
 
         # 2. 실시간 입력 피드
         self.populate_live_feed()
@@ -764,167 +659,11 @@ class CEOMonitorApp(tk.Tk):
         self.populate_drive_and_notes()
 
         # KPI 업데이트
-        active_workers_today = len({safe_get(r, COL["user"]) for r in today_records if safe_get(r, COL["user"])})
         active_sites_today = len({safe_get(r, COL["site"]) for r in today_records if safe_get(r, COL["site"])})
 
         self.kpi_vars["today_count"].set(f"{len(today_records):,}건")
-        self.kpi_vars["active_users"].set(f"{active_workers_today} / {len(names)}명")
         self.kpi_vars["site_coverage"].set(f"{active_sites_today} / {len(sites)}곳")
         self.kpi_vars["issue_count"].set(f"{len(self.sync_data['issues'])} / {len(edited_or_deleted)}건")
-
-    def analyze_and_populate_staff(self, target_date, all_records, names):
-        self.tree_staff.delete(*self.tree_staff.get_children())
-        self.staff_records_by_user = defaultdict(list)
-
-        all_users = list(dict.fromkeys(names + [safe_get(r, COL["user"]) for r in all_records if safe_get(r, COL["user"])]))
-        total_suspect = 0
-
-        for user in all_users:
-            u_all = [r for r in all_records if safe_get(r, COL["user"]) == user]
-            u_active = [r for r in u_all if safe_get(r, COL["status"]) != "삭제"]
-            u_today = [
-                r for r in u_active
-                if safe_get(r, COL["date"]) == target_date or safe_get(r, COL["time"]).startswith(target_date)
-            ]
-
-            # 시간순 정렬
-            u_today_sorted = sorted(u_today, key=lambda r: safe_get(r, COL["time"]))
-            self.staff_records_by_user[user] = u_today_sorted if u_today_sorted else sorted(u_active, key=lambda r: safe_get(r, COL["time"]))[-50:]
-
-            today_sites = sorted({safe_get(r, COL["site"]) for r in u_today_sorted if safe_get(r, COL["site"])})
-            first_t = safe_get(u_today_sorted[0], COL["time"])[11:16] if u_today_sorted else "-"
-            last_t = safe_get(u_today_sorted[-1], COL["time"])[11:16] if u_today_sorted else "-"
-
-            work_span_str = "-"
-            if len(u_today_sorted) >= 2:
-                dt0 = parse_dt(safe_get(u_today_sorted[0], COL["time"]))
-                dt1 = parse_dt(safe_get(u_today_sorted[-1], COL["time"]))
-                if dt0 and dt1:
-                    mins = int((dt1 - dt0).total_seconds() // 60)
-                    work_span_str = f"{mins // 60}시간 {mins % 60}분" if mins >= 60 else f"{mins}분"
-
-            # 몰아치기(60초 이내 연속 입력) 및 소급입력(저장일 != 측정일) 계산
-            burst_cnt = 0
-            late_cnt = 0
-            prev_dt = None
-            for r in u_today_sorted:
-                cur_dt = parse_dt(safe_get(r, COL["time"]))
-                save_ymd = safe_get(r, COL["time"])[:10]
-                meas_ymd = safe_get(r, COL["date"])[:10]
-                if save_ymd and meas_ymd and save_ymd != meas_ymd:
-                    late_cnt += 1
-                if prev_dt and cur_dt:
-                    gap_sec = (cur_dt - prev_dt).total_seconds()
-                    if 0 <= gap_sec <= 60:
-                        burst_cnt += 1
-                prev_dt = cur_dt
-
-            edit_cnt = sum(1 for r in u_all if safe_get(r, COL["status"]) == "삭제" or safe_get(r, COL["history"]) != "")
-            total_suspect += (burst_cnt + late_cnt)
-
-            # 성실도 점수 및 판정
-            if not u_today_sorted:
-                score_str = "-"
-                verdict = "기준일 입력 없음 (미활동/휴무)"
-                tag = "inactive"
-            else:
-                score = 100
-                burst_ratio = burst_cnt / max(1, len(u_today_sorted))
-                if burst_ratio > 0.5 and len(u_today_sorted) >= 4:
-                    score -= 30
-                elif burst_cnt >= 3:
-                    score -= 15
-                score -= late_cnt * 15
-                score -= min(20, edit_cnt * 5)
-                score = max(10, score)
-                score_str = f"{score}점"
-
-                if score >= 85:
-                    verdict = "✅ 정상 · 현장 순차 성실 측정"
-                    tag = "good"
-                elif score >= 65:
-                    verdict = "⚠️ 주의 · 연속 몰아치기/수정 다수"
-                    tag = "warn"
-                else:
-                    verdict = "🚨 의심 · 일괄 몰아치기/소급 입력"
-                    tag = "bad"
-
-            self.tree_staff.insert(
-                "", "end", iid=user, tags=(tag,),
-                values=(
-                    user,
-                    f"{len(u_today_sorted)}건",
-                    f"{len(u_active)}건",
-                    ", ".join(today_sites) if today_sites else "-",
-                    first_t,
-                    last_t,
-                    work_span_str,
-                    f"{burst_cnt}건",
-                    f"{late_cnt}건",
-                    f"{edit_cnt}건",
-                    score_str,
-                    verdict,
-                )
-            )
-
-        self.kpi_vars["suspect_count"].set(f"{total_suspect}건")
-
-    def on_select_staff(self, event):
-        sel = self.tree_staff.selection()
-        if not sel:
-            return
-        user = sel[0]
-        rows = self.staff_records_by_user.get(user, [])
-        self.staff_detail_label.configure(text=f"▼ [{user}] 직원의 입력 타임라인 및 간격 정밀 분석 (총 {len(rows)}건)")
-        self.tree_staff_detail.delete(*self.tree_staff_detail.get_children())
-
-        prev_dt = None
-        for r in rows:
-            t_str = safe_get(r, COL["time"])
-            cur_dt = parse_dt(t_str)
-            gap_str = "첫 입력"
-            flags = []
-
-            if prev_dt and cur_dt:
-                sec = int((cur_dt - prev_dt).total_seconds())
-                if sec < 60:
-                    gap_str = f"⚡ {sec}초 만"
-                    flags.append("몰아치기(1분내)")
-                elif sec < 3600:
-                    gap_str = f"{sec // 60}분 {sec % 60}초"
-                else:
-                    gap_str = f"{sec // 3600}시간 {(sec % 3600) // 60}분"
-            prev_dt = cur_dt
-
-            m_date = safe_get(r, COL["date"])
-            if t_str[:10] and m_date and t_str[:10] != m_date:
-                flags.append(f"소급입력({m_date})")
-
-            if safe_get(r, COL["history"]):
-                flags.append("수정됨")
-
-            vals = [safe_get(r, COL["value"]), safe_get(r, COL["value2"]), safe_get(r, COL["value3"])]
-            vals = [v for v in vals if v != ""]
-            val_str = " / ".join(vals) + (f" {safe_get(r, COL['unit'])}" if vals else "")
-            if safe_get(r, COL["status"]) and safe_get(r, COL["status"]) != "삭제":
-                val_str = f"⚠ {safe_get(r, COL['status'])}"
-
-            flag_text = " · ".join(flags) if flags else "정상"
-            tag = "flag_bad" if "소급" in flag_text else ("flag_warn" if flags else "normal")
-
-            memo_hist = safe_get(r, COL["memo"])
-            if safe_get(r, COL["history"]):
-                memo_hist = f"{memo_hist} [{safe_get(r, COL['history'])}]".strip()
-
-            self.tree_staff_detail.insert(
-                "", "end", tags=(tag,),
-                values=(
-                    t_str, gap_str, m_date, safe_get(r, COL["site"]),
-                    safe_get(r, COL["id"]), safe_get(r, COL["type"]),
-                    val_str, safe_get(r, COL["delta"]), safe_get(r, COL["weather"]),
-                    flag_text, memo_hist
-                )
-            )
 
     def populate_live_feed(self):
         self.tree_live.delete(*self.tree_live.get_children())
