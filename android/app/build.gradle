@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.application'
+    id 'com.google.gms.google-services'   // app/google-services.json(Firebase 설정)을 읽는다. 저장소에는 올리지 않고 CI가 비밀값에서 만든다
 }
 
 android {
@@ -53,6 +54,8 @@ android {
 
 dependencies {
     implementation 'androidx.webkit:webkit:1.11.0'
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-messaging'
 }
 
 // 빌드 시 루트 폴더의 최신 웹앱 파일들을 assets/www 로 자동 복사

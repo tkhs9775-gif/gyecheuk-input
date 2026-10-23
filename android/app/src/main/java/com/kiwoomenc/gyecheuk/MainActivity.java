@@ -26,6 +26,8 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import com.google.firebase.messaging.FirebaseMessaging;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
@@ -36,6 +38,7 @@ public class MainActivity extends Activity {
 
     private static final int REQ_FILE_CHOOSER = 1001;
     private static final int REQ_CAMERA_PERM = 1002;
+    private static final int REQ_NOTIFY_PERM = 1003;
     // 직원용/감독판 APK마다 시작 화면이 다르다 (app/build.gradle 의 productFlavors)
     private static final String LIVE_URL = BuildConfig.LIVE_URL;
     private static final String LOCAL_URL = BuildConfig.LOCAL_URL;
@@ -65,6 +68,12 @@ public class MainActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
 
         webView.addJavascriptInterface(new GalleryBridge(), "AndroidGallery");
+        webView.addJavascriptInterface(new PushBridge(), "AndroidPush");
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFY_PERM);
+        }
+        FirebaseMessaging.getInstance().getToken().addOnSuccessListener(t ->
+            getSharedPreferences(PushService.PREFS, MODE_PRIVATE).edit().putString(PushService.KEY_TOKEN, t).apply());
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -208,6 +217,14 @@ public class MainActivity extends Activity {
             webView.goBack();
         } else {
             super.onBackPressed();
+        }
+    }
+
+    // 웹 화면(JS)이 이 폰의 푸시 주소를 읽어 서버에 등록할 수 있게 한다. 아직 못 받았으면 빈 문자열
+    public class PushBridge {
+        @JavascriptInterface
+        public String getToken() {
+            return getSharedPreferences(PushService.PREFS, MODE_PRIVATE).getString(PushService.KEY_TOKEN, "");
         }
     }
 

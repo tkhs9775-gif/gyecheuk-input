@@ -83,7 +83,10 @@ async function api(action, payload = {}) {
   } finally {
     clearTimeout(timer);
   }
-  if (data.ok) return data;
+  if (data.ok) {
+    announceSaved(action, payload, data);
+    return data;
+  }
   const err = new Error(SERVER_ERRORS[data.error] ?? '서버 오류');
   err.isAuth = data.error === 'bad_code';
   err.code = data.error;
@@ -878,6 +881,7 @@ async function start() {
   showSplashLoading();
   try {
     state.config = await api('config');
+    registerPush();
     state.offline = false;
     store.set('cfg', JSON.stringify(state.config));
   } catch (err) {

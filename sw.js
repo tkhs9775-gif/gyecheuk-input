@@ -4,7 +4,7 @@ const V = new URL(self.location.href).searchParams.get('v') || '0';
 const CACHE = `shell-${V}`;
 const SHELL = [
   './', 'index.html', 'logo.png', 'manifest.json',
-  `style.css?v=${V}`, `config.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`,
+  `style.css?v=${V}`, `config.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
   `outbox.js?v=${V}`, `phonecopy.js?v=${V}`, `drawing.js?v=${V}`, `app.js?v=${V}`,
 ];
 

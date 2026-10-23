@@ -26,22 +26,26 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Firebase 설정 파일 만들기 (푸시 알림용, 저장소에는 올리지 않고 비밀값에서 만든다)
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          test -n "$GOOGLE_SERVICES_JSON" || { echo "비밀값 GOOGLE_SERVICES_JSON이 없습니다"; exit 1; }
+          printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+
       - name: Build Release APKs (직원용 + 대표님 감독판)
         working-directory: android
-        run: gradle assembleStaffRelease assembleCeoRelease --no-daemon
+        run: gradle assembleStaffRelease --no-daemon   # 감독판(ceo)은 푸시 설정이 없어 당분간 빌드하지 않는다
 
       - name: Rename APKs
         run: |
           cp android/app/build/outputs/apk/staff/release/app-staff-release.apk gyecheuk-input.apk
-          cp android/app/build/outputs/apk/ceo/release/app-ceo-release.apk kiwoom-ceo.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: gyecheuk-input-apk
-          path: |
-            gyecheuk-input.apk
-            kiwoom-ceo.apk
+          path: gyecheuk-input.apk
 
       - name: Publish to GitHub Release (latest)
         uses: softprops/action-gh-release@v2
@@ -54,7 +58,5 @@ jobs:
             - 구글 드라이브 로그인 없이 접속 코드만으로 바로 작동합니다.
 
             대표님용 감독판은 `kiwoom-ceo.apk`를 설치하세요. (직원용 앱과 따로 설치되며, 읽기 전용입니다.)
-          files: |
-            gyecheuk-input.apk
-            kiwoom-ceo.apk
+          files: gyecheuk-input.apk
           prerelease: false
