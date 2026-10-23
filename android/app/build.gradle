@@ -11,8 +11,8 @@ android {
         applicationId 'com.kiwoomenc.gyecheuk'
         minSdk 26
         targetSdk 34
-        versionCode 23
-        versionName '1.23'
+        versionCode 24
+        versionName '1.24'
     }
 
     buildFeatures {
@@ -39,10 +39,23 @@ android {
         }
     }
 
+    // 모든 빌드를 같은 키로 서명해야 직원 폰에서 덮어 설치(업데이트)가 된다. 키 파일과 비밀번호는 저장소에 없고 CI가 비밀값에서 꺼내 준다.
+    // KEYSTORE_FILE이 없는 내 컴퓨터 빌드는 예전처럼 debug 키를 쓴다(이 APK는 직원에게 배포하지 말 것).
+    signingConfigs {
+        release {
+            if (System.getenv('KEYSTORE_FILE')) {
+                storeFile file(System.getenv('KEYSTORE_FILE'))
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias 'kiwoom'
+                keyPassword System.getenv('KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.debug
+            signingConfig System.getenv('KEYSTORE_FILE') ? signingConfigs.release : signingConfigs.debug
         }
     }
 

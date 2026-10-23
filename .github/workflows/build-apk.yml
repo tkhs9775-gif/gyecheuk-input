@@ -33,8 +33,18 @@ jobs:
           test -n "$GOOGLE_SERVICES_JSON" || { echo "비밀값 GOOGLE_SERVICES_JSON이 없습니다"; exit 1; }
           printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
 
+      - name: 서명 키 꺼내기 (모든 빌드를 같은 키로 서명해야 폰에서 덮어 설치가 된다)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "비밀값 KEYSTORE_BASE64가 없습니다"; exit 1; }
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
       - name: Build Release APKs (직원용 + 대표님 감독판)
         working-directory: android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: gradle assembleStaffRelease --no-daemon   # 감독판(ceo)은 푸시 설정이 없어 당분간 빌드하지 않는다
 
       - name: Rename APKs
