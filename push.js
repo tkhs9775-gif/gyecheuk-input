@@ -23,10 +23,17 @@ async function pushPost(path, body) {
   await fetch(PUSH_URL + path, { method: 'POST', body: JSON.stringify({ code: state.code, ...body }) });
 }
 
+const REGISTER_RETRY_MS = 3000;
+const REGISTER_TRIES = 10;
+
 // 이 폰을 알림 대상으로 등록(앱이 열릴 때마다 해도 같은 폰은 한 줄로 유지된다)
-function registerPush() {
+// 앱을 처음 설치한 직후에는 푸시 주소가 몇 초 늦게 만들어지므로, 안드로이드 앱이면 잠시 기다리며 다시 확인한다
+function registerPush(triesLeft = REGISTER_TRIES) {
   const token = pushToken();
-  if (!token) return;
+  if (!token) {
+    if (window.AndroidPush && triesLeft > 0) setTimeout(() => registerPush(triesLeft - 1), REGISTER_RETRY_MS);
+    return;
+  }
   pushPost('/subscribe', { token, user: store.get('user') ?? '' }).catch(() => {});
 }
 
