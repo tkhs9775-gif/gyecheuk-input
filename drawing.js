@@ -85,6 +85,7 @@ const drawingState = {
   pageNum: 1,
   pageCount: 1,
   scale: 1.25,
+  rotation: 0,            // 보기 회전(시계 방향 0·90·180·270). 메모 좌표는 회전 전 쪽 기준으로 저장한다
   pinMode: false,
   pinType: '', // 범례에서 고른 계측기 코드. ''이면 전체 보기·종류 없는 메모
   penMode: false,
@@ -325,6 +326,7 @@ async function openPdfFieldbook(file) {
   drawingState.currentFile = file;
   drawingState.pageNum = 1;
   drawingState.scale = 1.25;
+  drawingState.rotation = 0;
   drawingState.activePinId = null;
   drawingState.dirty = false;
   setPinMode(false);
@@ -374,14 +376,29 @@ async function openPdfFieldbook(file) {
   }
 }
 
+// 쪽 기준(0~1) 좌표 <-> 시계 방향으로 rot도 돌려 본 화면 좌표
+function toView({ x, y }, rot) {
+  if (rot === 90) return { x: 1 - y, y: x };
+  if (rot === 180) return { x: 1 - x, y: 1 - y };
+  if (rot === 270) return { x: y, y: 1 - x };
+  return { x, y };
+}
+function fromView({ x, y }, rot) {
+  if (rot === 90) return { x: y, y: 1 - x };
+  if (rot === 180) return { x: 1 - x, y: 1 - y };
+  if (rot === 270) return { x: 1 - y, y: x };
+  return { x, y };
+}
+
 async function renderPdfPage() {
   if (!drawingState.pdfDoc) return;
   const page = await drawingState.pdfDoc.getPage(drawingState.pageNum);
   const wrapW = Math.max(320, $('pdfStageWrap').clientWidth - 24);
-  const unscaled = page.getViewport({ scale: 1 });
+  const rotation = (page.rotate + drawingState.rotation) % 360;
+  const unscaled = page.getViewport({ scale: 1, rotation });
   const fitScale = (wrapW / unscaled.width) * drawingState.scale;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const viewport = page.getViewport({ scale: fitScale * dpr });
+  const viewport = page.getViewport({ scale: fitScale * dpr, rotation });
 
   const pdfCanvas = $('pdfCanvas');
   const cssW = Math.round(viewport.width / dpr);
@@ -475,8 +492,9 @@ function renderPagePins() {
     const el = document.createElement('button');
     el.type = 'button';
     el.className = `pdf-pin${pin.id === drawingState.activePinId ? ' selected' : ''}${label.length > 2 ? ' small' : ''}`;
-    el.style.left = `${(pin.x * 100).toFixed(2)}%`;
-    el.style.top = `${(pin.y * 100).toFixed(2)}%`;
+    const at = toView(pin, drawingState.rotation);
+    el.style.left = `${(at.x * 100).toFixed(2)}%`;
+    el.style.top = `${(at.y * 100).toFixed(2)}%`;
     el.textContent = label;
     if (pin.text) {
       const tag = document.createElement('span');
@@ -497,8 +515,10 @@ function handleStageTapForPin(e) {
   if (e.target.closest('.pdf-pin')) return;
   const rect = $('pinLayer').getBoundingClientRect();
   if (!rect.width || !rect.height) return;
-  const x = Math.max(0.02, Math.min(0.98, (e.clientX - rect.left) / rect.width));
-  const y = Math.max(0.02, Math.min(0.98, (e.clientY - rect.top) / rect.height));
+  const { x, y } = fromView({
+    x: Math.max(0.02, Math.min(0.98, (e.clientX - rect.left) / rect.width)),
+    y: Math.max(0.02, Math.min(0.98, (e.clientY - rect.top) / rect.height)),
+  }, drawingState.rotation);
   const newPin = {
     id: crypto.randomUUID(),
     page: drawingState.pageNum,
@@ -840,10 +860,8 @@ function initInkCanvasEvents() {
 
   const pt = (e) => {
     const r = c.getBoundingClientRect();
-    return {
-      x: Math.round(((e.clientX - r.left) / r.width) * 10000) / 10000,
-      y: Math.round(((e.clientY - r.top) / r.height) * 10000) / 10000,
-    };
+    const p = fromView({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }, drawingState.rotation);
+    return { x: Math.round(p.x * 10000) / 10000, y: Math.round(p.y * 10000) / 10000 };
   };
 
   c.addEventListener('pointerdown', (e) => {
@@ -885,9 +903,10 @@ function redrawPageInk() {
   for (const s of strokes) {
     if (!s.length) continue;
     ctx.beginPath();
-    ctx.moveTo(s[0].x * c.width, s[0].y * c.height);
-    for (let i = 1; i < s.length; i += 1) {
-      ctx.lineTo(s[i].x * c.width, s[i].y * c.height);
+    const v = s.map((p) => toView(p, drawingState.rotation));
+    ctx.moveTo(v[0].x * c.width, v[0].y * c.height);
+    for (let i = 1; i < v.length; i += 1) {
+      ctx.lineTo(v[i].x * c.width, v[i].y * c.height);
     }
     ctx.stroke();
   }
@@ -1146,6 +1165,11 @@ function initDrawingModule() {
     drawingState.scale = Math.max(0.75, drawingState.scale - 0.35);
     renderPdfPage();
   });
+  $('pdfRotate').addEventListener('click', () => {
+    drawingState.rotation = (drawingState.rotation + 90) % 360;
+    closePinMemoBox();
+    renderPdfPage();
+  });
   $('pdfSaveNotes').addEventListener('click', () => saveDrawingNotesToServer(true));
 
   $('btnPinMode').addEventListener('click', () => setPinMode(!drawingState.pinMode));
@@ -1176,4 +1200,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, negateIfPlainNumber };
+if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, negateIfPlainNumber, toView, fromView };
