@@ -71,7 +71,7 @@ a { color: inherit; text-decoration: none; }
 /* 아이폰식 화면 전환: 오른쪽에서 밀려 들어오며 끝에서 부드럽게 멈춘다 (hidden이 풀리는 순간 자동 재생) */
 @keyframes ios-push { from { transform: translateX(32px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes ios-push-full { from { transform: translateX(100%); } to { transform: none; } }
-body { overflow-x: clip; }
+html, body { overflow-x: clip; }   /* html에도 걸어야 body가 자기 안쪽을 잘라, 전환 중 옆으로 밀린 화면이 문서 폭을 넓히지 않는다(안드로이드에서 화면이 크게 잡히던 원인) */
 .screen:not(.hidden), #drawingFilesView:not(.hidden), #drawingSitesView:not(.hidden) {
   animation: ios-push .38s cubic-bezier(.32, .72, 0, 1) both;
 }
@@ -91,7 +91,7 @@ body { overflow-x: clip; }
 .pill { min-height: 48px; padding: 0 16px; border: 1px solid var(--line); border-radius: 24px; background: var(--card); font-size: 15px; font-weight: 500; display: flex; align-items: center; min-width: 0; }
 .site { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; line-height: 48px; }
 .site:empty { visibility: hidden; }
-select.pill { max-width: 45%; }
+select.pill { max-width: 45%; font-size: 16px; }   /* 16px 미만이면 아이폰이 누를 때 화면을 확대해 밀린 채 남는다 */
 
 .tile { display: flex; flex-direction: column; justify-content: space-between; gap: 24px; min-height: 112px; margin-top: 16px; padding: 16px; border-radius: 20px; background: var(--accent); color: #fff; font-size: 18px; font-weight: 700; }
 
