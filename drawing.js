@@ -337,14 +337,12 @@ async function openPdfFieldbook(file) {
   $('pdfPageInfo').textContent = '도면 불러오는 중...';
   show($('pdfViewer'), true);
 
-  try {
-    const pdfjsLib = await ensurePdfJs();
+  // 야장 메모 조회(서버)는 도면 그리기를 막지 않도록 먼저 출발만 시켜 두고, 그리기 끝난 뒤 반영한다
+  const notesPromise = api('drawing_notes_get', { fileId: file.id }).catch(() => null);
+  drawingState.notes = readCached(`pdf_notes_${file.id}`) || { pins: [], strokes: {} };
 
-    // 1) IndexedDB 고속 캐시 확인 + 2) 야장 메모 조회를 병렬로 동시에 실행!
-    const [cachedBytes, noteRes] = await Promise.all([
-      getCachedPdfBytes(file.id),
-      api('drawing_notes_get', { fileId: file.id }).catch(() => null),
-    ]);
+  try {
+    const [pdfjsLib, cachedBytes] = await Promise.all([ensurePdfJs(), getCachedPdfBytes(file.id)]);
 
     let bytes = cachedBytes;
     if (!bytes) {
@@ -359,21 +357,25 @@ async function openPdfFieldbook(file) {
     }
     drawingState.rawPdfBytes = bytes.slice();
 
-    if (noteRes && noteRes.data && Array.isArray(noteRes.data.pins)) {
-      drawingState.notes = { pins: noteRes.data.pins, strokes: noteRes.data.strokes || {} };
-      store.set(`pdf_notes_${file.id}`, JSON.stringify(drawingState.notes));
-    } else {
-      const localNotes = readCached(`pdf_notes_${file.id}`);
-      drawingState.notes = localNotes || { pins: [], strokes: {} };
-    }
-
     drawingState.pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
     drawingState.pageCount = drawingState.pdfDoc.numPages;
     await renderPdfPage();
+    applyServerNotes(file, await notesPromise);
   } catch (err) {
     alert(`PDF 도면을 열지 못했습니다: ${errorText(err)}`);
     show($('pdfViewer'), false);
   }
+}
+
+// 서버 메모가 늦게 도착해도, 그 사이 다른 도면으로 바뀌었거나 사용자가 이미 고친 게 있으면 덮어쓰지 않는다
+function applyServerNotes(file, noteRes) {
+  if (drawingState.currentFile !== file || drawingState.dirty) return;
+  if (!noteRes?.data || !Array.isArray(noteRes.data.pins)) return;
+  drawingState.notes = { pins: noteRes.data.pins, strokes: noteRes.data.strokes || {} };
+  store.set(`pdf_notes_${file.id}`, JSON.stringify(drawingState.notes));
+  $('pdfPageInfo').textContent = `${drawingState.pageNum} / ${drawingState.pageCount}쪽 · 마커 ${currentPagePins().length}개`;
+  redrawPageInk();
+  renderPagePins();
 }
 
 // 쪽 기준(0~1) 좌표 <-> 시계 방향으로 rot도 돌려 본 화면 좌표
