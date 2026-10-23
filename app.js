@@ -614,7 +614,34 @@ async function managePeople(kind, op, name) {
   return true;
 }
 
+// Drive에 폴더만 만들고 현장 목록에 없는 이름을 찾아 눌러서 추가하게 한다
+async function scanDriveSites() {
+  $('manageError').textContent = '';
+  let sites;
+  try {
+    ({ sites } = await api('drive_sites'));
+  } catch (err) {
+    if (err.isAuth) { $('manageDialog').close(); store.remove('code'); showGate(); return; }
+    $('manageError').textContent = errorText(err);
+    return;
+  }
+  $('siteFound').replaceChildren(...(sites.length ? sites : ['']).map((name) => {
+    const li = document.createElement('li');
+    if (!name) { li.className = 'empty'; li.textContent = '새로 가져올 폴더가 없습니다.'; return li; }
+    const text = document.createElement('span');
+    text.textContent = name;
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'btn primary small';
+    add.textContent = '추가';
+    add.addEventListener('click', async () => { if (await managePeople('site', 'add', name)) scanDriveSites(); });
+    li.append(text, add);
+    return li;
+  }));
+}
+
 function openManage() {
+  $('siteFound').replaceChildren();
   $('manageError').textContent = '';
   renderManage();
   $('manageDialog').showModal();
@@ -924,6 +951,7 @@ for (const kind of Object.keys(PEOPLE)) {
     if (name && await managePeople(kind, 'add', name)) input.value = '';
   });
 }
+$('siteScan').addEventListener('click', scanDriveSites);
 $('addInstrument').addEventListener('click', openInstrumentDialog);
 $('instCancel').addEventListener('click', () => $('instDialog').close());
 $('instForm').addEventListener('submit', addInstrument);
