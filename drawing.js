@@ -12,40 +12,60 @@ const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf
 const TESSERACT_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const PDFLIB_CDN = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js';
 const WEEKDAYS_KO = ['일', '월', '화', '수', '목', '금', '토'];
+const MAX_DRAWING_BYTES = 18 * 1024 * 1024;   // 서버 상한(base64 25,000,000자)과 같다
+const PREFETCH_COUNT = 6;
+const NOTES_SAVE_DELAY_MS = 300;
+const OCR_TIMEOUT_MS = 12 * 1000;
+const BTN_RESET_MS = 2200;
+const INK_COLOR = '#C62828';   // 흰 글자가 4.5:1 이상 읽히는 빨강(마커·필기 공통)
 
-let pdfjsLoaded = null;
-let tesseractLoaded = null;
-let pdflibLoaded = null;
-
+// CDN 라이브러리는 탭을 열 때 받는다. 한 번 실패한 주소는 다음에 다시 받을 수 있게 기억에서 지운다
+const scriptLoads = new Map();
 function loadScriptOnce(src) {
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = src;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error(`라이브러리를 불러올 수 없습니다: ${src}`));
-    document.head.appendChild(s);
-  });
+  if (!scriptLoads.has(src)) {
+    scriptLoads.set(src, new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = resolve;
+      s.onerror = () => {
+        s.remove();
+        scriptLoads.delete(src);
+        reject(new Error(navigator.onLine === false
+          ? '신호가 없어 도면 기능 파일을 내려받지 못했습니다. 신호가 잡히면 다시 열어 주세요.'
+          : '도면 기능 파일을 내려받지 못했습니다. 잠시 후 다시 시도해 주세요.'));
+      };
+      document.head.appendChild(s);
+    }));
+  }
+  return scriptLoads.get(src);
+}
+
+async function ensureLib(src, globalName) {
+  if (!window[globalName]) await loadScriptOnce(src);
+  if (!window[globalName]) throw new Error('도면 기능 파일이 올바르지 않습니다. 정보 탭에서 새로고침해 주세요.');
+  return window[globalName];
 }
 
 async function ensurePdfJs() {
-  if (window.pdfjsLib) return window.pdfjsLib;
-  pdfjsLoaded ??= loadScriptOnce(PDFJS_CDN).then(() => {
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
-    return window.pdfjsLib;
-  });
-  return pdfjsLoaded;
+  const lib = await ensureLib(PDFJS_CDN, 'pdfjsLib');
+  lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+  return lib;
+}
+const ensureTesseract = () => ensureLib(TESSERACT_CDN, 'Tesseract');
+const ensurePdfLib = () => ensureLib(PDFLIB_CDN, 'PDFLib');
+
+// 오류를 사람이 읽을 한 줄로: 서버가 짚어 준 칸이 있으면 그 칸, 한글 문구면 그대로, 영어(pdf.js·OCR 라이브러리)면 fallback
+function friendlyError(err, fallback) {
+  const message = String(err?.message ?? '');
+  if (err?.fields && typeof errorText === 'function') return errorText(err);
+  return /[가-힣]/.test(message) ? message : fallback;
 }
 
-async function ensureTesseract() {
-  if (window.Tesseract) return window.Tesseract;
-  tesseractLoaded ??= loadScriptOnce(TESSERACT_CDN).then(() => window.Tesseract);
-  return tesseractLoaded;
-}
-
-async function ensurePdfLib() {
-  if (window.PDFLib) return window.PDFLib;
-  pdflibLoaded ??= loadScriptOnce(PDFLIB_CDN).then(() => window.PDFLib);
-  return pdflibLoaded;
+// 저장분(폰·서버)이 깨져 있어도 화면이 멈추지 않게 모양을 맞춘다
+function normalizeNotes(data) {
+  const pins = Array.isArray(data?.pins) ? data.pins.filter((p) => p && typeof p === 'object' && p.id) : [];
+  const strokes = data?.strokes && typeof data.strokes === 'object' && !Array.isArray(data.strokes) ? data.strokes : {};
+  return { pins, strokes };
 }
 
 // 원본 파일명에서 확장자(.pdf)와 기존 날짜 꼬리표(_YYYY-MM-DD(요) 또는 _YYYYMMDD(요))를 떼고
@@ -142,19 +162,29 @@ function b64ToUint8(base64) {
   return bytes;
 }
 
-const prefetchInFlight = new Set();
-async function prefetchPdfToCache(fileId) {
-  if (!fileId || prefetchInFlight.has(fileId)) return;
-  if (await getCachedPdfBytes(fileId)) return;
-  prefetchInFlight.add(fileId);
-  try {
-    const dl = await api('drive_download', { fileId });
-    if (dl && dl.base64) {
-      await putCachedPdfBytes(fileId, b64ToUint8(dl.base64));
-    }
-  } catch { /* ignore */ } finally {
-    prefetchInFlight.delete(fileId);
+// ponytail: 받아 둔 PDF는 지우지 않는다(현장당 도면 수십 개 수준). 용량이 문제되면 savedAt 기준으로 오래된 것부터 지운다
+// 같은 파일을 두 번 받지 않는다: 미리 받는 중이면 그 약속을 돌려주어 열 때 기다릴 수 있다
+const prefetchInFlight = new Map();
+function prefetchPdfToCache(fileId) {
+  if (!fileId || navigator.onLine === false) return Promise.resolve();
+  if (!prefetchInFlight.has(fileId)) {
+    prefetchInFlight.set(fileId, (async () => {
+      try {
+        if (await getCachedPdfBytes(fileId)) return;
+        const dl = await api('drive_download', { fileId });
+        if (typeof dl?.base64 === 'string' && dl.base64) await putCachedPdfBytes(fileId, b64ToUint8(dl.base64));
+      } catch (err) {
+        console.warn('도면 미리 받기 실패', err);
+      } finally {
+        prefetchInFlight.delete(fileId);
+      }
+    })());
   }
+  return prefetchInFlight.get(fileId);
+}
+
+function updatePageInfo() {
+  $('pdfPageInfo').textContent = `${drawingState.pageNum} / ${drawingState.pageCount}쪽 · 마커 ${currentPagePins().length}개`;
 }
 
 // ---------- 1단계: 현장명 목록 화면 ----------
@@ -200,7 +230,10 @@ function renderDrawingSites() {
 
 // ---------- 2단계: 현장 터치 시 관련 도면 폴더(PDF 목록) 열기 ----------
 
+let folderSeq = 0;   // 현장을 연달아 바꿀 때 늦게 온 옛 목록이 새 목록을 덮지 않게 한다
+
 async function openSiteDrawingFolder(site) {
+  const seq = ++folderSeq;
   drawingState.site = site;
   $('drawingSiteTitle').textContent = `${site} 도면`;
   $('drawingFolderNote').textContent = '도면 폴더를 불러오는 중...';
@@ -210,14 +243,22 @@ async function openSiteDrawingFolder(site) {
 
   try {
     const res = await api('drawing_list', { site });
-    drawingState.files = res.files || [];
-    drawingState.folders = res.folders || [];
+    if (seq !== folderSeq) return;
+    drawingState.files = Array.isArray(res.files) ? res.files : [];
+    drawingState.folders = Array.isArray(res.folders) ? res.folders.map((f) => ({ name: f.name, files: Array.isArray(f.files) ? f.files : [] })) : [];
     store.set(`drawings_${site}`, JSON.stringify(drawingState.files));
     store.set(`drawing_folders_${site}`, JSON.stringify(drawingState.folders));
     renderDrawingFiles();
-    // 폴더 내 도면들을 백그라운드로 미리 휴대폰에 받아두어 터치 시 0.1초 만에 열리게 한다!
-    drawingState.files.slice(0, 6).forEach((f) => prefetchPdfToCache(f.id));
+    // 폴더 내 도면들을 하나씩 차례로 미리 받아 둔다(한꺼번에 받으면 사용자가 연 도면이 느려진다)
+    (async () => {
+      for (const f of drawingState.files.slice(0, PREFETCH_COUNT)) {
+        if (seq !== folderSeq) return;
+        await prefetchPdfToCache(f.id);
+      }
+    })();
   } catch (err) {
+    if (seq !== folderSeq) return;
+    if (err.isAuth) { signOut(); return; }
     const cached = readCached(`drawings_${site}`);
     if (cached) {
       drawingState.files = cached;
@@ -225,7 +266,7 @@ async function openSiteDrawingFolder(site) {
       renderDrawingFiles();
       $('drawingFolderNote').textContent = '신호가 약해 이전에 불러온 도면 목록을 표시합니다.';
     } else {
-      $('drawingFolderNote').textContent = `도면 목록을 불러오지 못했습니다: ${errorText(err)}`;
+      $('drawingFolderNote').textContent = `도면 목록을 불러오지 못했습니다: ${errorText(err)} 신호가 잡히면 현장을 다시 눌러 주세요.`;
     }
   }
 }
@@ -296,13 +337,12 @@ function renderDrawingFiles() {
 
 async function uploadDrawingPdf(file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith('.pdf')) {
-    alert('PDF 파일(.pdf)만 도면으로 올릴 수 있습니다.');
-    return;
-  }
+  if (!file.name.toLowerCase().endsWith('.pdf')) { alert('PDF 파일(.pdf)만 도면으로 올릴 수 있습니다.'); return; }
+  if (file.size === 0) { alert('비어 있는 파일입니다. 다른 파일을 골라 주세요.'); return; }
+  if (file.size > MAX_DRAWING_BYTES) { alert(`도면 PDF는 ${MAX_DRAWING_BYTES / MB}MB 이하만 올릴 수 있습니다. (이 파일 ${fmtSize(file.size)})`); return; }
   const btn = $('btnUploadDrawing');
   btn.disabled = true;
-  $('drawingFolderNote').textContent = `'${file.name}' 도면을 클라우드 폴더에 올리는 중...`;
+  $('drawingFolderNote').textContent = `'${file.name}' 도면을 클라우드 폴더에 올리는 중... (파일이 크면 1분 정도 걸립니다)`;
   try {
     const base64 = await readFileAsBase64(file);
     const res = await api('drawing_upload', { site: drawingState.site, file: { name: file.name, base64 } });
@@ -313,7 +353,8 @@ async function uploadDrawingPdf(file) {
     }
     renderDrawingFiles();
   } catch (err) {
-    alert(`도면 업로드 실패: ${errorText(err)}`);
+    if (err.isAuth) { signOut(); return; }
+    alert(`도면 업로드 실패: ${friendlyError(err, '파일을 읽지 못했습니다. 다시 골라 주세요.')}`);
     renderDrawingFiles();
   } finally {
     btn.disabled = false;
@@ -322,58 +363,107 @@ async function uploadDrawingPdf(file) {
 
 // ---------- 3단계: PDF 전체화면 야장 뷰어 ----------
 
+let openSeq = 0;              // 도면을 연달아 두 번 누르면 먼저 것은 버린다
+let viewerReturnFocus = null; // 뷰어를 닫으면 열기 전에 있던 자리(도면 줄)로 포커스를 돌려준다
+let closingViewer = false;
+
 async function openPdfFieldbook(file) {
+  const seq = ++openSeq;
+  persistNotesNow();
+  drawingState.pdfDoc?.destroy();   // 이전 도면 메모리 해제
+  drawingState.pdfDoc = null;
+  drawingState.rawPdfBytes = null;
   drawingState.currentFile = file;
   drawingState.pageNum = 1;
+  drawingState.pageCount = 1;
   drawingState.scale = 1.25;
   drawingState.rotation = 0;
   drawingState.activePinId = null;
   drawingState.dirty = false;
+  drawingState.notes = normalizeNotes(readCached(`pdf_notes_${file.id}`));
   setPinMode(false);
   setPenMode(false);
   closePinMemoBox();
 
   $('pdfTitle').textContent = file.name;
   $('pdfPageInfo').textContent = '도면 불러오는 중...';
-  show($('pdfViewer'), true);
+  if ($('pdfViewer').classList.contains('hidden')) {
+    viewerReturnFocus = document.activeElement;
+    // 안드로이드 뒤로가기(history.back)가 화면을 바꾸는 대신 뷰어를 닫게 한 칸 넣어 둔다
+    try { history.pushState({ pdfViewer: true }, ''); } catch (err) { console.warn('history 사용 불가', err); }
+    show($('pdfViewer'), true);
+    $('pdfClose').focus();
+  }
 
   // 야장 메모 조회(서버)는 도면 그리기를 막지 않도록 먼저 출발만 시켜 두고, 그리기 끝난 뒤 반영한다
-  const notesPromise = api('drawing_notes_get', { fileId: file.id }).catch(() => null);
-  drawingState.notes = readCached(`pdf_notes_${file.id}`) || { pins: [], strokes: {} };
+  const notesPromise = api('drawing_notes_get', { fileId: file.id }).catch((err) => { console.warn('야장 메모 조회 실패', err); return null; });
 
   try {
     const [pdfjsLib, cachedBytes] = await Promise.all([ensurePdfJs(), getCachedPdfBytes(file.id)]);
-
     let bytes = cachedBytes;
+    if (!bytes && prefetchInFlight.has(file.id)) {   // 미리 받는 중이면 다시 받지 않고 그것을 기다린다
+      await prefetchInFlight.get(file.id);
+      bytes = await getCachedPdfBytes(file.id);
+    }
     if (!bytes) {
       const legacyB64 = store.get(`pdf_b64_${file.id}`);
       if (legacyB64) {
         bytes = b64ToUint8(legacyB64);
       } else {
         const dl = await api('drive_download', { fileId: file.id });
+        if (typeof dl.base64 !== 'string' || !dl.base64) throw new Error('서버에서 도면 내용을 받지 못했습니다.');
         bytes = b64ToUint8(dl.base64);
       }
       putCachedPdfBytes(file.id, bytes);
     }
+    if (seq !== openSeq) return;
     drawingState.rawPdfBytes = bytes.slice();
 
-    drawingState.pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
-    drawingState.pageCount = drawingState.pdfDoc.numPages;
+    const pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+    if (seq !== openSeq) { pdfDoc.destroy(); return; }
+    drawingState.pdfDoc = pdfDoc;
+    drawingState.pageCount = pdfDoc.numPages;
     await renderPdfPage();
     applyServerNotes(file, await notesPromise);
   } catch (err) {
-    alert(`PDF 도면을 열지 못했습니다: ${errorText(err)}`);
-    show($('pdfViewer'), false);
+    if (seq !== openSeq) return;
+    if (err.isAuth) { drawingState.dirty = false; signOut(); closePdfViewer(); return; }
+    alert(`PDF 도면을 열지 못했습니다: ${friendlyError(err, '파일이 손상되었거나 PDF가 아닙니다.')}`);
+    closePdfViewer();
   }
+}
+
+// 뷰어 닫기: 열 때 history에 한 칸 넣었으면 뒤로가기(popstate)로 닫히고, 아니면 바로 닫는다
+function closePdfViewer() {
+  if (closingViewer) return;
+  if (history.state?.pdfViewer) { closingViewer = true; history.back(); } else hideViewer();
+}
+
+// 화면을 실제로 닫는다. 고친 메모가 있으면 먼저 서버에 저장한다(그동안 저장 버튼에 '저장중..'이 보인다)
+async function hideViewer() {
+  closingViewer = false;
+  if ($('pdfViewer').classList.contains('hidden')) return;
+  openSeq += 1;   // 아직 열리던 도면은 버린다
+  if (savingNotes) await savingNotes;
+  else if (drawingState.dirty) await saveDrawingNotesToServer(false);
+  show($('pdfViewer'), false);
+  closePinMemoBox();
+  persistNotesNow();
+  drawingState.pdfDoc?.destroy();
+  drawingState.pdfDoc = null;
+  drawingState.rawPdfBytes = null;
+  drawingState.currentFile = null;
+  if (viewerReturnFocus?.isConnected) viewerReturnFocus.focus();
+  viewerReturnFocus = null;
 }
 
 // 서버 메모가 늦게 도착해도, 그 사이 다른 도면으로 바뀌었거나 사용자가 이미 고친 게 있으면 덮어쓰지 않는다
 function applyServerNotes(file, noteRes) {
   if (drawingState.currentFile !== file || drawingState.dirty) return;
   if (!noteRes?.data || !Array.isArray(noteRes.data.pins)) return;
-  drawingState.notes = { pins: noteRes.data.pins, strokes: noteRes.data.strokes || {} };
-  store.set(`pdf_notes_${file.id}`, JSON.stringify(drawingState.notes));
-  $('pdfPageInfo').textContent = `${drawingState.pageNum} / ${drawingState.pageCount}쪽 · 마커 ${currentPagePins().length}개`;
+  drawingState.notes = normalizeNotes(noteRes.data);
+  persistNotesNow();
+  updatePageInfo();
   redrawPageInk();
   renderPagePins();
 }
@@ -392,38 +482,61 @@ function fromView({ x, y }, rot) {
   return { x, y };
 }
 
+let renderTask = null;
+let renderSeq = 0;
+
+// 확대·쪽 넘김을 빠르게 연달아 누르면 이전 그리기를 멈추고 마지막 것만 그린다(같은 캔버스에 두 번 그리면 pdf.js가 예외를 던진다)
 async function renderPdfPage() {
   if (!drawingState.pdfDoc) return;
-  const page = await drawingState.pdfDoc.getPage(drawingState.pageNum);
-  const wrapW = Math.max(320, $('pdfStageWrap').clientWidth - 24);
-  const rotation = (page.rotate + drawingState.rotation) % 360;
-  const unscaled = page.getViewport({ scale: 1, rotation });
-  const fitScale = (wrapW / unscaled.width) * drawingState.scale;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const viewport = page.getViewport({ scale: fitScale * dpr, rotation });
+  const my = ++renderSeq;
+  if (renderTask) {
+    renderTask.cancel();
+    await renderTask.promise.catch(() => {});
+    renderTask = null;
+  }
+  if (my !== renderSeq) return;
+  const doc = drawingState.pdfDoc;
+  try {
+    const page = await doc.getPage(drawingState.pageNum);
+    if (my !== renderSeq || doc !== drawingState.pdfDoc) return;
+    const wrapW = Math.max(320, $('pdfStageWrap').clientWidth - 24);
+    const rotation = (page.rotate + drawingState.rotation) % 360;
+    const unscaled = page.getViewport({ scale: 1, rotation });
+    const fitScale = (wrapW / unscaled.width) * drawingState.scale;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const viewport = page.getViewport({ scale: fitScale * dpr, rotation });
 
-  const pdfCanvas = $('pdfCanvas');
-  const cssW = Math.round(viewport.width / dpr);
-  const cssH = Math.round(viewport.height / dpr);
-  pdfCanvas.width = viewport.width;
-  pdfCanvas.height = viewport.height;
-  pdfCanvas.style.width = `${cssW}px`;
-  pdfCanvas.style.height = `${cssH}px`;
+    const pdfCanvas = $('pdfCanvas');
+    const cssW = Math.round(viewport.width / dpr);
+    const cssH = Math.round(viewport.height / dpr);
+    pdfCanvas.width = viewport.width;
+    pdfCanvas.height = viewport.height;
+    pdfCanvas.style.width = `${cssW}px`;
+    pdfCanvas.style.height = `${cssH}px`;
 
-  const inkCanvas = $('inkCanvas');
-  inkCanvas.width = cssW;
-  inkCanvas.height = cssH;
-  inkCanvas.style.width = `${cssW}px`;
-  inkCanvas.style.height = `${cssH}px`;
+    const inkCanvas = $('inkCanvas');
+    inkCanvas.width = cssW;
+    inkCanvas.height = cssH;
+    inkCanvas.style.width = `${cssW}px`;
+    inkCanvas.style.height = `${cssH}px`;
 
-  const pinLayer = $('pinLayer');
-  pinLayer.style.width = `${cssW}px`;
-  pinLayer.style.height = `${cssH}px`;
+    const pinLayer = $('pinLayer');
+    pinLayer.style.width = `${cssW}px`;
+    pinLayer.style.height = `${cssH}px`;
 
-  await page.render({ canvasContext: pdfCanvas.getContext('2d'), viewport }).promise;
-  $('pdfPageInfo').textContent = `${drawingState.pageNum} / ${drawingState.pageCount}쪽 · 마커 ${currentPagePins().length}개`;
-  redrawPageInk();
-  renderPagePins();
+    const task = page.render({ canvasContext: pdfCanvas.getContext('2d'), viewport });
+    renderTask = task;
+    await task.promise;
+    if (renderTask === task) renderTask = null;
+    if (my !== renderSeq) return;
+    updatePageInfo();
+    redrawPageInk();
+    renderPagePins();
+  } catch (err) {
+    if (err?.name === 'RenderingCancelledException' || my !== renderSeq) return;
+    console.warn('도면 그리기 실패', err);
+    $('pdfPageInfo').textContent = '이 쪽을 그리지 못했습니다. 확대·축소를 다시 눌러 주세요.';
+  }
 }
 
 function currentPagePins() {
@@ -534,7 +647,7 @@ function handleStageTapForPin(e) {
   drawingState.notes.pins.push(newPin);
   drawingState.dirty = true;
   renderPagePins();
-  $('pdfPageInfo').textContent = `${drawingState.pageNum} / ${drawingState.pageCount}쪽 · 마커 ${currentPagePins().length}개`;
+  updatePageInfo();
   openPinMemoBox(newPin.id);
   saveDrawingNotesQuiet();
 }
@@ -575,7 +688,7 @@ function deleteActivePin() {
   drawingState.notes.pins = drawingState.notes.pins.filter((p) => p.id !== drawingState.activePinId);
   drawingState.dirty = true;
   closePinMemoBox();
-  $('pdfPageInfo').textContent = `${drawingState.pageNum} / ${drawingState.pageCount}쪽 · 마커 ${currentPagePins().length}개`;
+  updatePageInfo();
   saveDrawingNotesQuiet();
 }
 
@@ -701,16 +814,23 @@ async function recognizeWithGoogleInk(strokes, width, height) {
       language: 'ko',
     }],
   };
-  const res = await fetch(GOOGLE_HANDWRITING_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const json = await res.json();
-  if (json && json[0] === 'SUCCESS' && Array.isArray(json[1]?.[0]?.[1])) {
-    return json[1][0][1].map((s) => String(s).trim()).filter(Boolean);
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), OCR_TIMEOUT_MS);   // 신호가 약하면 '판독 중'에 묶이지 않고 다음 방법으로 넘어간다
+  try {
+    const res = await fetch(GOOGLE_HANDWRITING_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: ctl.signal,
+    });
+    const json = await res.json();
+    if (json && json[0] === 'SUCCESS' && Array.isArray(json[1]?.[0]?.[1])) {
+      return json[1][0][1].map((s) => String(s).trim()).filter(Boolean);
+    }
+    return [];
+  } finally {
+    clearTimeout(timer);
   }
-  return [];
 }
 
 // 3순위 오프라인 대비: 글씨 영역만 자동으로 잘라내고(Bounding-Box Crop) 고해상도 대비 강화를 거친 정밀 OCR
@@ -786,11 +906,14 @@ function scheduleLiveHandwritingPreview() {
     try {
       const c = $('ocrPadCanvas');
       const list = await recognizeWithGoogleInk(ocrStrokes, c.width, c.height);
+      if (!$('ocrPadDialog').open || !ocrStrokes.length) return;   // 기다리는 사이 닫혔거나 지워졌다
       if (list.length > 0) {
         renderOcrCandidates(list);
         $('ocrStatus').textContent = `실시간 판독: 「${list[0]}」 — 위 후보를 바로 터치하거나 아래 확인 버튼을 누르세요.`;
       }
-    } catch { /* ignore live preview errors */ }
+    } catch (err) {
+      console.warn('실시간 판독 실패', err);   // 미리보기는 덤: [필체 판독하여 넣기]가 다른 방법으로 이어 간다
+    }
   }, 320);
 }
 
@@ -848,7 +971,8 @@ async function recognizeHandwritingToText() {
 
     applyOcrTextAndClose(recognized);
   } catch (err) {
-    $('ocrStatus').textContent = `판독 실패: ${err.message}`;
+    console.warn('필체 판독 실패', err);
+    $('ocrStatus').textContent = `판독 실패: ${friendlyError(err, '판독 엔진을 불러오지 못했습니다. 신호를 확인하거나 아래 칸에 키보드로 입력해 주세요.')}`;
   } finally {
     btn.disabled = false;
   }
@@ -878,10 +1002,20 @@ function initInkCanvasEvents() {
     redrawPageInk();
   });
 
+  // 전체를 다시 그리지 않고 새 구간만 잇는다: 필기가 많아도 손을 따라오는 속도가 느려지지 않는다
   c.addEventListener('pointermove', (e) => {
     if (!stroke) return;
-    stroke.push(pt(e));
-    redrawPageInk();
+    const prev = stroke[stroke.length - 1];
+    const p = pt(e);
+    stroke.push(p);
+    const ctx = c.getContext('2d');
+    inkStyle(ctx);
+    const a = toView(prev, drawingState.rotation);
+    const b = toView(p, drawingState.rotation);
+    ctx.beginPath();
+    ctx.moveTo(a.x * c.width, a.y * c.height);
+    ctx.lineTo(b.x * c.width, b.y * c.height);
+    ctx.stroke();
   });
 
   const end = () => {
@@ -893,15 +1027,19 @@ function initInkCanvasEvents() {
   c.addEventListener('pointercancel', end);
 }
 
+function inkStyle(ctx) {
+  ctx.strokeStyle = INK_COLOR;
+  ctx.lineWidth = 2.8;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+}
+
 function redrawPageInk() {
   const c = $('inkCanvas');
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, c.width, c.height);
   const strokes = drawingState.notes.strokes?.[String(drawingState.pageNum)] || [];
-  ctx.strokeStyle = '#E53935';
-  ctx.lineWidth = 2.8;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+  inkStyle(ctx);
   for (const s of strokes) {
     if (!s.length) continue;
     ctx.beginPath();
@@ -939,7 +1077,7 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType =
   ctx.scale(2, 2);
 
   // 1) 자유 펜 필기 그리기
-  ctx.strokeStyle = '#E53935';
+  ctx.strokeStyle = INK_COLOR;
   ctx.lineWidth = 3.0;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -961,7 +1099,7 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType =
 
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(229, 57, 53, 0.94)';
+    ctx.fillStyle = 'rgba(198, 40, 40, 0.94)';
     ctx.fill();
     ctx.lineWidth = 2.2;
     ctx.strokeStyle = '#FFFFFF';
@@ -986,7 +1124,7 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType =
 
       ctx.fillStyle = 'rgba(27, 42, 87, 0.94)';
       ctx.beginPath();
-      ctx.roundRect(bx, by, boxW, boxH, 5);
+      if (ctx.roundRect) ctx.roundRect(bx, by, boxW, boxH, 5); else ctx.rect(bx, by, boxW, boxH);   // 옛 WebView에는 roundRect가 없다
       ctx.fill();
 
       ctx.fillStyle = '#FFFFFF';
@@ -1018,21 +1156,35 @@ async function buildAnnotatedPdfBase64(onlyType = null) {
   return uint8ToBase64(outBytes);
 }
 
+// 폰 보관: 획마다·글자마다 불리므로 잠깐 모아서 한 번만 쓴다. 닫거나 서버에 보낼 때는 바로 쓴다(persistNotesNow)
 let saveNotesTimer = null;
+function persistNotesNow() {
+  clearTimeout(saveNotesTimer);
+  if (drawingState.currentFile) store.set(`pdf_notes_${drawingState.currentFile.id}`, JSON.stringify(drawingState.notes));
+}
 function saveDrawingNotesQuiet() {
   if (!drawingState.currentFile) return;
-  store.set(`pdf_notes_${drawingState.currentFile.id}`, JSON.stringify(drawingState.notes));
+  clearTimeout(saveNotesTimer);
+  saveNotesTimer = setTimeout(persistNotesNow, NOTES_SAVE_DELAY_MS);
 }
 
-async function saveDrawingNotesToServer(showAlert = true) {
+// 저장은 한 번에 하나만: 저장 중에 닫기를 눌러도 같은 저장을 기다린다
+let savingNotes = null;
+function saveDrawingNotesToServer(showAlert = true) {
+  savingNotes ??= doSaveDrawingNotes(showAlert).finally(() => { savingNotes = null; });
+  return savingNotes;
+}
+
+async function doSaveDrawingNotes(showAlert) {
   const file = drawingState.currentFile;
   if (!file) return;
   const btn = $('pdfSaveNotes');
   btn.disabled = true;
   btn.textContent = '저장중..';
-  store.set(`pdf_notes_${file.id}`, JSON.stringify(drawingState.notes));
+  persistNotesNow();
 
   const newFileName = buildSavedDrawingFileName(file.name, new Date());
+  let flattened = true;   // 메모를 PDF 그림에 합쳤는지(합치기 라이브러리를 못 받으면 원본 그대로 올린다)
 
   try {
     // 1) 원본 파일에도 야장 메모 JSON은 보존해 두고,
@@ -1041,10 +1193,13 @@ async function saveDrawingNotesToServer(showAlert = true) {
     if (drawingState.rawPdfBytes) {
       try {
         pdfBase64 = await buildAnnotatedPdfBase64();
-      } catch {
+      } catch (err) {
+        console.warn('메모 합치기 실패, 원본 그대로 저장', err);
+        flattened = false;
         pdfBase64 = uint8ToBase64(drawingState.rawPdfBytes);
       }
     }
+    if (!pdfBase64) throw new Error('도면이 아직 다 열리지 않았습니다. 도면이 보인 뒤 다시 저장해 주세요.');
 
     const res = await api('drawing_upload', {
       site: drawingState.site,
@@ -1069,13 +1224,20 @@ async function saveDrawingNotesToServer(showAlert = true) {
 
     drawingState.dirty = false;
     btn.textContent = '저장됨✓';
-    if (showAlert) alert(`'${newFileName}' 이름으로 도면 폴더에 새로 저장되었습니다!`);
-    setTimeout(() => { btn.textContent = '다른이름 저장'; }, 2200);
+    if (showAlert) {
+      alert(flattened
+        ? `'${newFileName}' 이름으로 도면 폴더에 새로 저장되었습니다!`
+        : `'${newFileName}' 이름으로 저장했지만, 합치기 기능 파일을 받지 못해 메모를 PDF 그림에 합치지는 못했습니다.\n메모 자체는 서버에 보관되어 다시 열면 보입니다.`);
+    }
   } catch (err) {
+    if (err.isAuth) { drawingState.dirty = false; signOut(); closePdfViewer(); return; }
     btn.textContent = '폰보관✓';
-    if (showAlert) alert(`신호가 약해 이 휴대폰에 먼저 보관했습니다: ${errorText(err)}`);
+    const reason = friendlyError(err, '메모를 PDF로 만들지 못했습니다.');
+    // 서버가 입력을 거부한 것(파일 이름·메모 크기 등)은 신호 문제가 아니므로 그 사유를 그대로 보여 준다
+    if (showAlert) alert(err.network ? `신호가 약해 이 휴대폰에 먼저 보관했습니다: ${reason}` : `서버에 저장하지 못해 이 휴대폰에만 보관했습니다: ${reason}`);
   } finally {
     btn.disabled = false;
+    setTimeout(() => { if (btn.textContent !== '저장중..') btn.textContent = '다른이름 저장'; }, BTN_RESET_MS);
   }
 }
 
@@ -1116,7 +1278,8 @@ async function saveTypedPdfs() {
         .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
       store.set(`drawing_folders_${drawingState.site}`, JSON.stringify(drawingState.folders));
     } catch (err) {
-      failed.push(`${t.name}(${errorText(err)})`);
+      if (err.isAuth) { btn.disabled = false; btn.textContent = '계측기별 PDF'; drawingState.dirty = false; signOut(); closePdfViewer(); return; }
+      failed.push(`${t.name}(${friendlyError(err, 'PDF를 만들지 못했습니다')})`);
     }
   }
   btn.disabled = false;
@@ -1140,10 +1303,14 @@ function initDrawingModule() {
     if (f) uploadDrawingPdf(f);
   });
 
-  $('pdfClose').addEventListener('click', async () => {
-    if (drawingState.dirty) await saveDrawingNotesToServer(false);
-    show($('pdfViewer'), false);
-    closePinMemoBox();
+  $('pdfClose').addEventListener('click', closePdfViewer);
+  // 안드로이드 뒤로가기·브라우저 뒤로가기: 뷰어가 열려 있으면 화면을 바꾸지 않고 뷰어만 닫는다
+  window.addEventListener('popstate', () => { if (!$('pdfViewer').classList.contains('hidden')) hideViewer(); });
+  // Esc: 메모 박스가 열려 있으면 그것부터, 아니면 뷰어를 닫는다(<dialog>가 열려 있으면 그 쪽이 먼저 받는다)
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || $('pdfViewer').classList.contains('hidden') || document.querySelector('dialog[open]')) return;
+    if (!$('pinMemoBox').classList.contains('hidden')) closePinMemoBox();
+    else closePdfViewer();
   });
   $('pdfPrevPage').addEventListener('click', () => {
     if (drawingState.pageNum > 1) {
@@ -1202,4 +1369,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, negateIfPlainNumber, toView, fromView };
+if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError };

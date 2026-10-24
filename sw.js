@@ -8,8 +8,13 @@ const SHELL = [
   `outbox.js?v=${V}`, `phonecopy.js?v=${V}`, `drawing.js?v=${V}`, `app.js?v=${V}`,
 ];
 
+// 설치할 때는 브라우저 캐시를 거치지 않고 새로 받는다: 묵은 index.html이 옛 ?v= 파일을 가리키면 오프라인에서 앱이 열리지 않는다
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => cache.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -31,8 +36,9 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   // 나머지(index.html, 로고 등)는 인터넷이 되면 항상 최신을 받고, 안 되면 저장분을 쓴다
+  // (주소 문자열로 다시 요청: 화면 이동(navigate) 요청 객체에 옵션을 얹으면 일부 브라우저가 예외를 던진다)
   event.respondWith(
-    fetch(req, { cache: 'no-cache' })
+    fetch(req.url, { cache: 'no-cache' })
       .then((res) => {
         if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((cache) => cache.put(req, copy)); }
         return res;

@@ -40,7 +40,10 @@ async function saveCopiesToPhone(photos, site) {
   for (const [i, photo] of photos.entries()) {
     const fileName = phoneFileName(site, now, i, 'image/jpeg');
     if (nativeBridge) {
-      nativeBridge.savePhoto(photo.base64, folder, fileName);
+      // 앱(Java)은 실패하면 false를 돌려준다. 한 장이 실패해도 나머지는 계속 저장한다
+      let ok = false;
+      try { ok = nativeBridge.savePhoto(photo.base64, folder, fileName); } catch (err) { console.warn('갤러리 저장 오류', err); }
+      if (!ok) console.warn(`갤러리 저장 실패: ${fileName}`);
       continue;
     }
     const blob = base64ToBlob(photo.base64);

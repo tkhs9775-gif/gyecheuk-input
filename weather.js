@@ -3,6 +3,7 @@
 // 이 파일은 app.js보다 먼저 읽히므로, 화면 요소($)와 state는 함수가 불릴 때만 쓴다.
 
 const WEATHER_TTL_MS = 30 * 60 * 1000;
+const WEATHER_TIMEOUT_MS = 15 * 1000;   // 신호가 약하면 '불러오는 중'에 묶이지 않고 안내로 바뀐다
 const PLACE_TOKEN = /^[가-힣0-9]+(?:동|읍|면|리)$/;
 const WEATHER_TEXT = [
   [[0], '☀ 맑음'], [[1, 2], '🌤 구름 조금'], [[3], '☁ 흐림'], [[45, 48], '🌫 안개'],
@@ -31,17 +32,29 @@ function weatherLine(w) {
 // 이 폰에서 지역을 직접 고쳐 둔 게 있으면 그것을 먼저 쓴다
 const placeKeyword = (siteName) => store.get(`place:${siteName}`) || siteToPlace(siteName);
 
+// 두 외부 서비스 공통: 시간 제한을 두고 JSON만 받는다(HTML 오류 페이지는 실패로 본다)
+async function fetchJson(url, what) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), WEATHER_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: ctl.signal });
+    if (!res.ok) throw new Error(`${what} 응답 오류 ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function geocode(keyword) {
   const saved = store.get(`geo:${keyword}`);
   if (saved) { try { return JSON.parse(saved); } catch { /* 깨졌으면 다시 찾는다 */ } }
   const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(keyword)}&format=json&countrycodes=kr&limit=1&accept-language=ko`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('위치를 찾지 못했습니다.');
-  const [hit] = await res.json();
+  const [hit] = await fetchJson(url, '위치 찾기');
   if (!hit) return null;
-  const parts = hit.display_name.split(',').map((s) => s.trim()).filter((s) => s && !/^\d+$/.test(s) && s !== '대한민국');
-  const label = [...new Set([parts.at(-1), parts.at(-2), parts[0]])].filter(Boolean).join(' ');
+  const parts = String(hit.display_name ?? '').split(',').map((s) => s.trim()).filter((s) => s && !/^\d+$/.test(s) && s !== '대한민국');
+  const label = [...new Set([parts.at(-1), parts.at(-2), parts[0]])].filter(Boolean).join(' ') || keyword;
   const place = { lat: Number(hit.lat), lon: Number(hit.lon), label };
+  if (!Number.isFinite(place.lat) || !Number.isFinite(place.lon)) return null;
   store.set(`geo:${keyword}`, JSON.stringify(place));
   return place;
 }
@@ -49,9 +62,7 @@ async function geocode(keyword) {
 async function fetchWeather(place) {
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}`
     + '&current=temperature_2m,weather_code&daily=precipitation_sum&past_days=1&forecast_days=1&timezone=Asia%2FSeoul';
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('날씨를 불러오지 못했습니다.');
-  const d = await res.json();
+  const d = await fetchJson(url, '날씨');
   const [yesterday, today] = d.daily.precipitation_sum;
   return { temp: d.current.temperature_2m, code: d.current.weather_code, today, yesterday };
 }
@@ -87,7 +98,8 @@ async function refreshWeather() {
     if (site !== state.site) return; // 그 사이 다른 현장을 골랐다
     state.weather = { record: weatherLine(data.w) };
     paintWeather(`${weatherText(data.w.code)} ${data.w.temp}°C`, `${data.place.label} · 오늘 강수 ${rain(data.w.today)} · 어제 강수 ${rain(data.w.yesterday)}`);
-  } catch {
+  } catch (err) {
+    console.warn('날씨 조회 실패', err);   // 날씨는 덤: 사용자에게는 카드 안 안내만 보이고 입력은 그대로 된다
     if (site === state.site) paintWeather(`${keyword} 날씨`, '지금은 날씨를 불러오지 못했습니다. 눌러서 지역을 확인하세요.');
   }
 }

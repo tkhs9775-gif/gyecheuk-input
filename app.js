@@ -9,6 +9,7 @@ const PHOTO_MAX_BYTES = 150 * 1024;
 const PHOTO_MIN_QUALITY = 0.4;
 const PHOTO_QUALITY_STEP = 0.1;
 const PHOTO_SHRINK = 0.85;
+const PHOTO_MIN_PX = 320;  // 이보다 작게는 줄이지 않는다(알아볼 수 없음)
 const MAX_PHOTOS = 10;
 const DRAFT_DELAY_MS = 500;
 const MIN_TIMEOUT_MS = 30 * 1000;
@@ -16,7 +17,7 @@ const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const BYTES_PER_MS = 15;   // 느린 신호를 초당 약 15KB로 보고 시간 제한을 잡는다
 const BUILD = new URL(document.currentScript.src).searchParams.get('v') ?? '-';
 const TABBED = ['home', 'drawing', 'shot', 'info'];
-const SERIES_COLORS = ['#2a78d6', '#eb6834', '#1baf7a']; // categorical slots 1-3 of the dataviz palette (validated)
+const TZ = 'Asia/Seoul';   // 서버(Code.gs)가 날짜를 한국 시간으로 해석하므로 폰 시간대와 무관하게 맞춘다
 const SURVEY = '측량';
 const ISSUE_KINDS = ['', '파손', '망실', '접근 불가', '작동 불량'];
 const MAX_SURVEY_FILES = 10;
@@ -41,10 +42,10 @@ const state = {
   issue: '',
   clientId: crypto.randomUUID(),
   shotId: crypto.randomUUID(),
-  statusTimer: null,
+  ready: false,   // 설정을 받아 화면을 그릴 수 있게 된 뒤에만 주소(#)에 따라 화면을 바꾼다
 };
 
-const FIELD_LABELS = { date: '날짜', site: '현장', user: '측정자', type: '계측기 종류', id: '계측기 ID', place: '위치', unit: '단위', value: '측정값', issue: '이상 상태', memo: '메모', photo: '사진', files: '파일' };
+const FIELD_LABELS = { date: '날짜', site: '현장', user: '측정자', type: '계측기 종류', id: '계측기 ID', place: '위치', unit: '단위', value: '측정값', issue: '이상 상태', memo: '메모', photo: '사진', files: '파일', clientId: '입력 번호', fileId: '파일', subdir: '폴더', data: '야장 메모(너무 큼)', base64: '이미지' };
 const SERVER_ERRORS = {
   bad_code: '접속 코드가 맞지 않습니다.',
   locked: '시도가 너무 많습니다. 10분 후 다시 해주세요.',
@@ -52,22 +53,50 @@ const SERVER_ERRORS = {
   expired: '입력한 지 24시간이 지나 앱에서는 고칠 수 없습니다. 관리자에게 문의해 주세요.',
   forbidden: '본인이 입력한 기록만 고칠 수 있습니다.',
   not_found: '기록을 찾을 수 없습니다. 이미 삭제됐을 수 있습니다.',
+  invalid: '입력 내용을 확인해 주세요.',
+  server: '서버가 잠시 바쁩니다. 잠시 후 다시 시도해 주세요.',
+  bad_action: '앱과 서버 버전이 맞지 않습니다. 정보 탭에서 새로고침해 주세요.',
 };
 
 // ---------- helpers ----------
 
 const show = (el, isOn) => el.classList.toggle('hidden', !isOn);
 
+// 상태 줄은 칸마다(#status, #shotStatus) 따로 지워진다
+const statusTimers = {};
 function setStatus(text, kind, id = 'status') {
-  clearTimeout(state.statusTimer);
+  clearTimeout(statusTimers[id]);
   const el = $(id);
   el.textContent = text;
   el.className = kind;
-  if (kind === 'ok') state.statusTimer = setTimeout(() => { el.className = ''; }, STATUS_MS);
+  if (kind === 'ok') statusTimers[id] = setTimeout(() => { el.className = ''; }, STATUS_MS);
 }
 
+// 요청이 진행되는 동안 scope 안의 버튼을 모두 잠근다: 두 번 눌러도 요청은 한 번, 눌린 상태가 눈에 보인다
+async function withBusy(scope, work) {
+  const buttons = [...scope.querySelectorAll('button')].filter((b) => !b.disabled);
+  for (const b of buttons) b.disabled = true;
+  scope.setAttribute('aria-busy', 'true');
+  try {
+    return await work();
+  } finally {
+    for (const b of buttons) b.disabled = false;
+    scope.removeAttribute('aria-busy');
+  }
+}
+
+// 접속 코드가 틀렸을 때: 열린 창을 닫고 코드를 지워 자동 전송(보관함)이 틀린 코드로 계속 시도해 서버를 잠그지 않게 한다
+function signOut() {
+  for (const d of document.querySelectorAll('dialog[open]')) d.close();
+  store.remove('code');
+  state.code = '';
+  showGate();
+}
+
+const networkError = (message) => Object.assign(new Error(message), { network: true });
+
 // One POST per call. A string body keeps it a "simple" request, so the browser skips the CORS preflight Apps Script cannot answer.
-// Network trouble (offline, timeout) is flagged err.network so callers can keep the input and retry later.
+// Network trouble (offline, timeout, non-JSON page) is flagged err.network so callers can keep the input and retry later.
 // The time limit grows with the body size: a slow signal needs longer for photos and survey files.
 async function api(action, payload = {}) {
   const body = JSON.stringify({ code: state.code, action, ...payload });
@@ -76,10 +105,12 @@ async function api(action, payload = {}) {
   let data;
   try {
     const res = await fetch(API_URL, { method: 'POST', body, signal: ctl.signal });
-    try { data = await res.json(); } catch { throw Object.assign(new Error('서버 응답을 읽을 수 없습니다.'), { network: true }); }
+    try { data = await res.json(); } catch { data = null; }
+    // Apps Script answers JSON even for its own errors; an HTML page (sign-in, quota, broken deployment) is not a verdict on the input.
+    if (!data || typeof data !== 'object') throw networkError('서버 응답이 올바르지 않습니다(배포 확인).');
   } catch (err) {
     if (err.network) throw err;
-    throw Object.assign(new Error('인터넷 연결을 확인하세요.'), { network: true });
+    throw networkError(err.name === 'AbortError' ? '서버 응답이 없어 중단했습니다. 신호를 확인하세요.' : '인터넷 연결을 확인하세요.');
   } finally {
     clearTimeout(timer);
   }
@@ -101,29 +132,35 @@ const instrumentsOf = (type) => siteInstruments().filter((i) => i.type === type)
 const selectedInstrument = () => state.config.instruments.find((i) => i.id === $('instrument').value);
 const decimalsOf = (n) => Math.min((String(n).split('.')[1] ?? '').length, MAX_DECIMALS);
 const shortDate = (iso) => `${iso.slice(5, 7)}/${iso.slice(8, 10)}`;
+const todayKst = () => new Date().toLocaleDateString('sv-SE', { timeZone: TZ });
 
 // ---------- loading page ----------
+
+let splashHideTimer = null;
 
 async function hideSplash() {
   const wait = SPLASH_MIN_MS - (Date.now() - openedAt);
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   const splash = $('splash');
   splash.classList.add('leaving');
-  setTimeout(() => show(splash, false), SPLASH_FADE_MS);
+  splashHideTimer = setTimeout(() => show(splash, false), SPLASH_FADE_MS);
 }
 
-function showSplashError(message) {
+// 접속 코드를 다시 넣거나 다시 시도할 때도 같은 로딩 화면이 보인다
+function showSplashLoading() {
+  clearTimeout(splashHideTimer);
   const splash = $('splash');
   splash.classList.remove('leaving');
   show(splash, true);
+  show($('splashError'), false);
+  show($('splashLoading'), true);
+}
+
+function showSplashError(message) {
+  showSplashLoading();
   $('splashMessage').textContent = message;
   show($('splashLoading'), false);
   show($('splashError'), true);
-}
-
-function showSplashLoading() {
-  show($('splashError'), false);
-  show($('splashLoading'), true);
 }
 
 // ---------- screens ----------
@@ -136,7 +173,8 @@ function showScreen(name) {
 }
 
 function route() {
-  if (!state.config.names.length) return;
+  if (!state.ready) return;
+  for (const d of document.querySelectorAll('dialog[open]')) d.close();   // 안드로이드 뒤로가기(주소 이동)로 화면이 바뀌면 떠 있던 창도 닫는다
   const name = { '#input': 'input', '#shot': 'shot', '#drawing': 'drawing', '#info': 'info' }[location.hash] ?? 'home';
   showScreen(name);
   if (name === 'drawing') loadDrawingTab();
@@ -145,17 +183,18 @@ function route() {
 
 function showGate() {
   showScreen('gate');
+  $('code').focus();
 }
 
 // ---------- recent list ----------
 
-function renderRecent(rows) {
+function renderRecent(rows, emptyText = '아직 입력한 내역이 없습니다. 아래 「계측·측량 입력」에서 시작해 주세요.') {
   for (const id of ['recentHome', 'recentInput']) {
     const ul = $(id);
     if (rows.length === 0) {
       const li = document.createElement('li');
       li.className = 'empty';
-      li.textContent = '아직 입력한 내역이 없습니다.';
+      li.textContent = emptyText;
       ul.replaceChildren(li);
       continue;
     }
@@ -180,7 +219,7 @@ function renderRecent(rows) {
       } else {
         const multi = r.values?.length > 1;
         val.className = multi ? 'val multi' : 'val';
-        val.textContent = multi ? r.values.join(' / ') : String(r.value);
+        val.textContent = multi ? r.values.join(' / ') : String(r.value ?? '-');
       }
       li.append(meta, val);
       return li;
@@ -188,17 +227,38 @@ function renderRecent(rows) {
   }
 }
 
+// 늦게 도착한 옛 응답이 새 목록을 덮어쓰지 않도록 요청마다 번호를 매긴다(측정자를 바꾸는 사이 등)
+let recentSeq = 0;
+let latestSeq = 0;
+
 async function loadRecent() {
   const user = $('user').value;
-  if (!user) return;
-  renderRecent((await api('recent', { user })).rows);
+  if (!user) {
+    renderRecent([], state.config.names.length ? '측정자를 먼저 골라 주세요.' : '측정자가 없습니다. ⚙ 버튼에서 측정자를 추가해 주세요.');
+    return;
+  }
+  const seq = ++recentSeq;
+  const { rows } = await api('recent', { user });
+  if (seq !== recentSeq) return;
+  renderRecent(Array.isArray(rows) ? rows : []);
 }
 
 async function loadLatest() {
-  state.latest = (await api('latest')).latest;
+  const seq = ++latestSeq;
+  const { latest } = await api('latest');
+  if (seq !== latestSeq) return;
+  state.latest = latest ?? {};
   store.set('latest', JSON.stringify(state.latest));
   updateValueInfo();
 }
+
+// 목록을 못 받아도 입력은 막지 않는다: 사유를 목록 자리에 보여 주고, 코드가 틀렸으면 접속 화면으로
+function listError(err) {
+  if (err.isAuth) signOut();
+  else renderRecent([], `최근 입력을 불러오지 못했습니다. ${errorText(err)}`);
+}
+
+const reloadLists = () => Promise.all([loadRecent(), loadLatest()]).catch(listError);
 
 function readCached(key) {
   try { return JSON.parse(store.get(key) ?? 'null'); } catch { return null; }
@@ -213,6 +273,7 @@ function renderTypes() {
     b.type = 'button';
     b.textContent = type;
     b.dataset.type = type;
+    b.setAttribute('aria-pressed', String(type === state.type));
     b.addEventListener('click', () => selectType(type));
     return b;
   }));
@@ -284,7 +345,7 @@ function updateValueInfo() {
     return;
   }
   const lastValues = last.values?.length ? last.values : [last.value];
-  let text = `전회 ${lastValues.slice(0, count).join(' / ')} ${unit} (${shortDate(last.date)})`;
+  let text = `전회 ${lastValues.slice(0, count).join(' / ')} ${unit}${last.date ? ` (${shortDate(last.date)})` : ''}`;
   const raws = count > 1 ? MULTI_IDS.slice(0, count).map((id) => $(id).value.trim()) : [$('value').value.trim()];
   if (lastValues.length >= count && raws.every((r) => r !== '' && Number.isFinite(Number(r)))) {
     const deltas = raws.map((r, i) => signed(Number(r) - lastValues[i], Math.max(decimalsOf(r), decimalsOf(lastValues[i]))));
@@ -316,27 +377,45 @@ function readForm() {
 
 // Phone photos are several MB; shrink to <= PHOTO_MAX_BYTES so a weak signal can still send them.
 // Lower quality first; if still too big at the floor, shrink the pixels and start over.
+// toBlob encodes off the main thread, so the screen keeps painting while 10 photos are processed.
+const toJpeg = (canvas, quality) => new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+
 async function compressPhoto(file) {
   let bitmap;
-  try { bitmap = await createImageBitmap(file); } catch { throw new Error('사진을 읽을 수 없습니다. 다른 사진을 고르세요.'); }
-  let scale = Math.min(1, PHOTO_MAX_PX / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement('canvas');
-  for (;;) {
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    for (let q = PHOTO_QUALITY; q >= PHOTO_MIN_QUALITY - 1e-9; q -= PHOTO_QUALITY_STEP) {
-      const base64 = canvas.toDataURL('image/jpeg', q).split(',')[1];
-      if (base64.length * 0.75 <= PHOTO_MAX_BYTES) return { base64 };
+  try { bitmap = await createImageBitmap(file); } catch { throw new Error(`'${file.name}' 사진을 읽을 수 없습니다(HEIC 등 지원되지 않는 형식). 다른 사진을 고르세요.`); }
+  try {
+    let scale = Math.min(1, PHOTO_MAX_PX / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('사진을 처리할 메모리가 부족합니다. 사진 수를 줄여 다시 해 주세요.');
+    for (;;) {
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      let blob = null;
+      for (let q = PHOTO_QUALITY; q >= PHOTO_MIN_QUALITY - 1e-9; q -= PHOTO_QUALITY_STEP) {
+        blob = await toJpeg(canvas, q);
+        if (blob && blob.size <= PHOTO_MAX_BYTES) return { base64: await readFileAsBase64(blob) };
+      }
+      // ponytail: 더 줄이면 알아볼 수 없으니 최저 품질 결과를 그대로 보낸다. 서버 상한(약 500KB)이 마지막 안전망
+      if (Math.max(canvas.width, canvas.height) <= PHOTO_MIN_PX) {
+        if (!blob) throw new Error(`'${file.name}' 사진을 변환하지 못했습니다. 다른 사진을 고르세요.`);
+        return { base64: await readFileAsBase64(blob) };
+      }
+      scale *= PHOTO_SHRINK;
     }
-    scale *= PHOTO_SHRINK;
+  } finally {
+    bitmap.close();
   }
 }
 
 // One at a time: compressing several full-size phone photos in parallel can exhaust memory.
-async function readPhotos(files) {
+async function readPhotos(files, onProgress) {
   const photos = [];
-  for (const file of files) photos.push(await compressPhoto(file));
+  for (const [i, file] of files.entries()) {
+    onProgress?.(i + 1, files.length);
+    photos.push(await compressPhoto(file));
+  }
   return photos;
 }
 
@@ -453,7 +532,7 @@ function makeFilePicker(box) {
 const readFileAsBase64 = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve(String(reader.result).split(',')[1]);
-  reader.onerror = () => reject(new Error(`'${file.name}' 파일을 읽을 수 없습니다.`));
+  reader.onerror = () => reject(new Error(`'${file.name ?? '사진'}' 파일을 읽을 수 없습니다. 파일을 다시 골라 주세요.`));
   reader.readAsDataURL(file);
 });
 
@@ -534,7 +613,7 @@ function restoreDraft() {
 
 function errorText(err) {
   if (err.fields) return '확인해 주세요: ' + err.fields.map((f) => FIELD_LABELS[f] ?? f).join(', ');
-  return err.message === 'Failed to fetch' ? '인터넷 연결을 확인하세요.' : err.message;
+  return err.message;
 }
 
 function fillSelect(el, items, wanted) {
@@ -560,8 +639,8 @@ function applyConfig({ sites, names, types, instruments, valueCounts }) {
 
 function changeSite(site) {
   state.site = site;
-  store.set('site', site);
-  renderPeople();
+  renderPeople();                 // 목록에 없는 이름이면 첫 현장으로 바로잡힌다
+  store.set('site', state.site);
   renderTypes();
   selectType(siteTypes()[0] ?? OTHER);
   refreshWeather();
@@ -598,36 +677,41 @@ async function managePeople(kind, op, name) {
   const p = PEOPLE[kind];
   if (op === 'remove' && !confirm(`${p.label} '${name}'을(를) 목록에서 삭제할까요?\n${p.note}`)) return false;
   $('manageError').textContent = '';
-  try {
-    applyConfig(await api(p[op], { name }));
-  } catch (err) {
-    if (err.isAuth) { $('manageDialog').close(); store.remove('code'); showGate(); return false; }
-    $('manageError').textContent = err.fields ? NAME_RULE : errorText(err);
-    return false;
-  }
-  if (kind === 'site') {
-    changeSite(op === 'add' ? name : state.site);
-  } else {
-    renderPeople();
-    if (op === 'add') $('user').value = name;
-    store.set('user', $('user').value);
-    loadRecent().catch((err) => setStatus(err.message, 'err'));
-  }
-  renderManage();
-  return true;
+  return withBusy($('manageDialog'), async () => {
+    try {
+      applyConfig(await api(p[op], { name }));
+    } catch (err) {
+      if (err.isAuth) { signOut(); return false; }
+      $('manageError').textContent = err.fields ? NAME_RULE : errorText(err);
+      return false;
+    }
+    if (kind === 'site') {
+      changeSite(op === 'add' ? name : state.site);
+    } else {
+      renderPeople();
+      if (op === 'add') $('user').value = name;
+      store.set('user', $('user').value);
+      loadRecent().catch(listError);
+    }
+    renderManage();
+    return true;
+  });
 }
 
 // Drive에 폴더만 만들고 현장 목록에 없는 이름을 찾아 눌러서 추가하게 한다
 async function scanDriveSites() {
   $('manageError').textContent = '';
+  $('siteFound').replaceChildren(Object.assign(document.createElement('li'), { className: 'empty', textContent: 'Drive 폴더를 확인하는 중...' }));
   let sites;
   try {
-    ({ sites } = await api('drive_sites'));
+    ({ sites } = await withBusy($('manageDialog'), () => api('drive_sites')));
   } catch (err) {
-    if (err.isAuth) { $('manageDialog').close(); store.remove('code'); showGate(); return; }
+    if (err.isAuth) { signOut(); return; }
+    $('siteFound').replaceChildren();
     $('manageError').textContent = errorText(err);
     return;
   }
+  if (!Array.isArray(sites)) sites = [];
   $('siteFound').replaceChildren(...(sites.length ? sites : ['']).map((name) => {
     const li = document.createElement('li');
     if (!name) { li.className = 'empty'; li.textContent = '새로 가져올 폴더가 없습니다.'; return li; }
@@ -666,48 +750,55 @@ async function addInstrument(e) {
     type: $('iType').value.trim(),
     unit: $('iUnit').value.trim(),
   };
-  try {
-    applyConfig(await api('add_instrument', { item }));
-  } catch (err) {
-    if (err.isAuth) { $('instDialog').close(); store.remove('code'); showGate(); return; }
-    $('instError').textContent = errorText(err);
-    return;
-  }
-  $('instDialog').close();
-  for (const id of ['iId', 'iPlace', 'iUnit']) $(id).value = '';
-  renderPeople();
-  renderTypes();
-  selectType(item.type);
-  $('instrument').value = item.id;
-  updateValueInfo();
+  if (!item.id || !item.type) { $('instError').textContent = '계측기 ID와 종류를 넣어 주세요.'; return; }
+  $('instError').textContent = '';
+  await withBusy($('instForm'), async () => {
+    try {
+      applyConfig(await api('add_instrument', { item }));
+    } catch (err) {
+      if (err.isAuth) { signOut(); return; }
+      $('instError').textContent = err.fields ? `${errorText(err)} (${NAME_RULE})` : errorText(err);
+      return;
+    }
+    $('instDialog').close();
+    for (const id of ['iId', 'iPlace', 'iUnit']) $(id).value = '';
+    renderPeople();
+    renderTypes();
+    selectType(item.type);
+    $('instrument').value = item.id;
+    updateValueInfo();
+  });
 }
+
+// 폰 사본은 덤이라 실패해도 저장 결과를 바꾸지 않는다. 사유는 콘솔에만 남긴다
+const keepCopies = (photos, site) => saveCopiesToPhone(photos, site).catch((err) => console.warn('폰 사본 저장 실패', err));
 
 // Photo without a measurement: any site, or none.
 async function saveShot(e) {
   e.preventDefault();
+  if ($('shotSave').disabled) return;
   const status = (text, kind) => setStatus(text, kind, 'shotStatus');
   if (pickers.shot.files().length === 0) { status('사진을 먼저 고르거나 찍어 주세요.', 'err'); return; }
-  const button = $('shotSave');
-  button.disabled = true;
-  status('저장 중...', 'ok');
-  try {
-    const files = [...pickers.shot.files()];
-    const entry = { clientId: state.shotId, site: $('shotSite').value, user: $('user').value, memo: $('shotMemo').value.trim() };
-    const label = `사진 ${files.length}장 · ${entry.site || '현장 무관'}`;
-    const photos = await readPhotos(files);   // 150KB 이하로 줄인 사진: 클라우드와 폰 사본이 같은 파일
-    const result = await submitOrQueue({ id: entry.clientId, action: 'photo', label, payload: { entry, photos } });
-    store.set('shotKeep', $('shotKeep').checked ? '1' : '0');
-    if ($('shotKeep').checked) saveCopiesToPhone(photos, entry.site).catch(() => {});
-    status(result === 'sent' ? '저장됨 ✓' : '신호가 약해 이 폰에 보관했습니다. 잡히면 자동으로 보냅니다.', 'ok');
-    state.shotId = crypto.randomUUID();
-    pickers.shot.clear();
-    $('shotMemo').value = '';
-  } catch (err) {
-    if (err.isAuth) { store.remove('code'); showGate(); return; }
-    status(`저장 실패: ${errorText(err)} 입력한 내용은 그대로 있습니다. 다시 저장을 눌러주세요.`, 'err');
-  } finally {
-    button.disabled = false;
-  }
+  await withBusy($('shot').querySelector('.bar-bottom'), async () => {
+    status('저장 중...', 'ok');
+    try {
+      const files = [...pickers.shot.files()];
+      const entry = { clientId: state.shotId, site: $('shotSite').value, user: $('user').value, memo: $('shotMemo').value.trim() };
+      const label = `사진 ${files.length}장 · ${entry.site || '현장 무관'}`;
+      const photos = await readPhotos(files, (i, n) => status(`사진 줄이는 중... (${i}/${n})`, 'ok'));   // 150KB 이하로 줄인 사진: 클라우드와 폰 사본이 같은 파일
+      status('저장 중...', 'ok');
+      const result = await submitOrQueue({ id: entry.clientId, action: 'photo', label, payload: { entry, photos } });
+      store.set('shotKeep', $('shotKeep').checked ? '1' : '0');
+      if ($('shotKeep').checked) keepCopies(photos, entry.site);
+      status(result === 'sent' ? '저장됨 ✓' : '신호가 약해 이 폰에 보관했습니다. 잡히면 자동으로 보냅니다.', 'ok');
+      state.shotId = crypto.randomUUID();
+      pickers.shot.clear();
+      $('shotMemo').value = '';
+    } catch (err) {
+      if (err.isAuth) { signOut(); return; }
+      status(`저장 실패: ${errorText(err)} 입력한 내용은 그대로 있습니다. 다시 저장을 눌러주세요.`, 'err');
+    }
+  });
 }
 
 // ---------- info tab ----------
@@ -716,163 +807,6 @@ function renderInfo() {
   $('appVersion').textContent = `v${BUILD}${window.AndroidGallery ? ' (안드로이드 앱)' : ''}`;
   $('adminInfo').textContent = state.config.admin || '과장 정준업(Master)';
   show($('downloadApk'), !window.AndroidGallery);
-}
-
-// ---------- trend tab (line chart of the entered values) ----------
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const CHART = { w: 320, h: 220, left: 46, right: 30, top: 12, bottom: 28 };
-const GRID_LINES = 4;
-const TABLE_ROWS = 8;
-const dayMs = (iso) => Date.parse(`${iso}T00:00:00Z`);
-const fmt = (v) => String(Number(v.toPrecision(12))); // drops float noise such as 10.479999999
-
-function svgEl(tag, attrs, text) {
-  const el = document.createElementNS(SVG_NS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-  if (text != null) el.textContent = text;
-  return el;
-}
-
-function span(text, className) {
-  const el = document.createElement('span');
-  el.textContent = text;
-  if (className) el.className = className;
-  return el;
-}
-
-// Date, then one keyed value per series: values lead, the series key is a short stroke in the series color.
-function showReadout(point, unit) {
-  const items = [Object.assign(document.createElement('b'), { textContent: shortDate(point.date) })];
-  point.values.forEach((v, i) => {
-    const wrap = document.createElement('span');
-    if (point.values.length > 1) {
-      const sw = span('', 'sw');
-      sw.style.background = SERIES_COLORS[i];
-      wrap.append(sw, `${i + 1}: `);
-    }
-    wrap.append(Object.assign(document.createElement('b'), { textContent: fmt(v) }));
-    items.push(wrap);
-  });
-  if (unit) items.push(span(unit));
-  $('trendRead').replaceChildren(...items);
-}
-
-function drawTrend(points, unit) {
-  const svg = $('trendSvg');
-  svg.replaceChildren();
-  const seriesCount = Math.max(...points.map((p) => p.values.length));
-  const all = points.flatMap((p) => p.values);
-  let low = Math.min(...all);
-  let high = Math.max(...all);
-  if (low === high) { low -= 1; high += 1; }
-  // Round axis ends to a 1/2/5 step so the gridline labels read as clean numbers.
-  const raw = (high - low) / GRID_LINES;
-  const mag = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw - 1e-12);
-  const lo = Math.floor(low / step + 1e-9) * step;
-  const hi = Math.ceil(high / step - 1e-9) * step;
-  const digits = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
-  const t0 = dayMs(points[0].date);
-  const t1 = dayMs(points[points.length - 1].date);
-  const plotW = CHART.w - CHART.left - CHART.right;
-  const plotH = CHART.h - CHART.top - CHART.bottom;
-  const px = (p) => CHART.left + (t1 === t0 ? plotW / 2 : ((dayMs(p.date) - t0) / (t1 - t0)) * plotW);
-  const py = (v) => CHART.top + ((hi - v) / (hi - lo)) * plotH;
-
-  for (let i = 0; i <= Math.round((hi - lo) / step); i += 1) {
-    const v = lo + i * step;
-    svg.append(svgEl('line', { x1: CHART.left, x2: CHART.w - CHART.right, y1: py(v), y2: py(v), stroke: '#E3E8F1', 'stroke-width': 1 }));
-    svg.append(svgEl('text', { x: CHART.left - 6, y: py(v) + 3.5, 'text-anchor': 'end', 'font-size': 10, fill: '#4A5568' }, v.toFixed(digits)));
-  }
-  const base = CHART.h - 8;
-  svg.append(svgEl('text', { x: px(points[0]), y: base, 'text-anchor': t1 === t0 ? 'middle' : 'start', 'font-size': 10, fill: '#4A5568' }, shortDate(points[0].date)));
-  if (t1 !== t0) svg.append(svgEl('text', { x: px(points[points.length - 1]), y: base, 'text-anchor': 'end', 'font-size': 10, fill: '#4A5568' }, shortDate(points[points.length - 1].date)));
-
-  for (let s = 0; s < seriesCount; s += 1) {
-    const mine = points.filter((p) => p.values[s] !== undefined);
-    const color = SERIES_COLORS[s];
-    if (mine.length > 1) {
-      svg.append(svgEl('polyline', { points: mine.map((p) => `${px(p)},${py(p.values[s])}`).join(' '), fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
-    }
-    for (const p of mine) svg.append(svgEl('circle', { cx: px(p), cy: py(p.values[s]), r: 3, fill: color, stroke: '#fff', 'stroke-width': 1.5 }));
-    // Direct label at the line end, in ink (not series color), so identity never depends on color alone.
-    const end = mine[mine.length - 1];
-    if (seriesCount > 1 && end) svg.append(svgEl('text', { x: px(end) + 7, y: py(end.values[s]) + 3.5, 'font-size': 11, 'font-weight': 700, fill: '#1B2A57' }, String(s + 1)));
-  }
-
-  // Hover / touch: a hairline snaps to the nearest date and the readout above lists every series there.
-  const line = svgEl('line', { y1: CHART.top, y2: CHART.top + plotH, stroke: '#4A5568', 'stroke-width': 1, 'stroke-dasharray': '3 3', visibility: 'hidden' });
-  const marks = Array.from({ length: seriesCount }, (_, s) => svgEl('circle', { r: 5, fill: SERIES_COLORS[s], stroke: '#fff', 'stroke-width': 2, visibility: 'hidden' }));
-  svg.append(line, ...marks);
-  const pick = (e) => {
-    const box = svg.getBoundingClientRect();
-    const x = ((e.clientX - box.left) / box.width) * CHART.w;
-    const nearest = points.reduce((best, p) => (Math.abs(px(p) - x) < Math.abs(px(best) - x) ? p : best));
-    line.setAttribute('x1', px(nearest));
-    line.setAttribute('x2', px(nearest));
-    line.setAttribute('visibility', 'visible');
-    marks.forEach((m, s) => {
-      const v = nearest.values[s];
-      m.setAttribute('visibility', v === undefined ? 'hidden' : 'visible');
-      if (v !== undefined) { m.setAttribute('cx', px(nearest)); m.setAttribute('cy', py(v)); }
-    });
-    showReadout(nearest, unit);
-  };
-  svg.onpointermove = pick;
-  svg.onpointerdown = pick;
-  showReadout(points[points.length - 1], unit);
-}
-
-function renderTrendTable(points, unit) {
-  const rows = points.slice(-TABLE_ROWS).reverse();
-  $('trendTable').replaceChildren(...rows.map((p) => {
-    const li = document.createElement('li');
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    const title = document.createElement('b');
-    title.textContent = shortDate(p.date);
-    meta.append(title);
-    const val = document.createElement('div');
-    val.className = p.values.length > 1 ? 'val multi' : 'val';
-    val.textContent = `${p.values.map(fmt).join(' / ')} ${unit}`.trim();
-    li.append(meta, val);
-    return li;
-  }));
-}
-
-function fillTrendSelect() {
-  const select = $('trendInst');
-  const wanted = select.value;
-  select.replaceChildren(...siteTypes().map((type) => {
-    const group = document.createElement('optgroup');
-    group.label = type;
-    group.append(...instrumentsOf(type).map((i) => new Option(i.place ? `${i.id} · ${i.place}` : i.id, i.id)));
-    return group;
-  }));
-  if ([...select.options].some((o) => o.value === wanted)) select.value = wanted;
-}
-
-async function loadTrend() {
-  fillTrendSelect();
-  const id = $('trendInst').value;
-  const note = $('trendNote');
-  const clear = () => { $('trendSvg').replaceChildren(); $('trendRead').replaceChildren(); $('trendTable').replaceChildren(); };
-  if (!id) { clear(); note.textContent = '이 현장에 등록된 계측기가 없습니다.'; return; }
-  note.textContent = '불러오는 중...';
-  try {
-    const { points } = await api('series', { site: state.site, id });
-    if ($('trendInst').value !== id) return; // the user picked another instrument meanwhile
-    if (points.length === 0) { clear(); note.textContent = '아직 입력된 기록이 없습니다.'; return; }
-    const unit = state.config.instruments.find((i) => i.id === id)?.unit ?? '';
-    drawTrend(points, unit);
-    renderTrendTable(points, unit);
-    note.textContent = `${points.length}건 · 그래프를 누르거나 끌면 값이 보입니다.`;
-  } catch (err) {
-    if (err.isAuth) { store.remove('code'); showGate(); return; }
-    clear();
-    note.textContent = errorText(err);
-  }
 }
 
 // ---------- start ----------
@@ -886,10 +820,10 @@ async function start() {
     store.set('cfg', JSON.stringify(state.config));
   } catch (err) {
     if (err.isAuth) {
-      store.remove('code');
-      showGate();
+      signOut();
       hideSplash();
       alert(err.message);
+      $('code').select();
       return;
     }
     // No signal: open with the lists saved last time so the work can still be typed in and kept on the phone.
@@ -901,27 +835,24 @@ async function start() {
     state.config = cached;
     state.offline = true;
   }
+  state.ready = true;
   renderPeople();
   refreshWeather();
-  $('today').textContent = new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
-  $('date').value = new Date().toLocaleDateString('sv-SE');
+  $('today').textContent = new Date().toLocaleDateString('ko-KR', { timeZone: TZ, month: 'long', day: 'numeric', weekday: 'short' });
+  $('date').value = todayKst();
 
   renderTypes();
   renderIssues();
   if (!restoreDraft()) selectType(siteTypes()[0] ?? OTHER);
   route();
-  try {
-    if (state.offline) {
-      state.latest = readCached('latest') ?? {};
-      updateValueInfo();
-    } else {
-      await Promise.all([loadRecent(), loadLatest()]);
-    }
-  } catch (err) {
-    setStatus(err.message, 'err');
-  } finally {
-    await hideSplash();
+  if (state.offline) {
+    state.latest = readCached('latest') ?? {};
+    updateValueInfo();
+    renderRecent([], '신호가 없어 최근 입력을 불러오지 못했습니다. 신호가 잡히면 새로고침해 주세요.');
+  } else {
+    await reloadLists();
   }
+  await hideSplash();
   renderOutbox();
   flushOutbox();
 }
@@ -930,14 +861,18 @@ async function start() {
 
 $('gateForm').addEventListener('submit', (e) => {
   e.preventDefault();
-  state.code = $('code').value;
-  store.set('code', state.code);
-  start();
+  const code = $('code').value.trim();
+  if (!code) { $('code').focus(); return; }
+  state.code = code;
+  store.set('code', code);
+  withBusy($('gateForm'), start);
 });
 
-$('retry').addEventListener('click', start);
+$('retry').addEventListener('click', () => withBusy($('splashError'), start));
 window.addEventListener('hashchange', route);
-$('user').addEventListener('change', () => { store.set('user', $('user').value); loadRecent().catch((err) => setStatus(err.message, 'err')); });
+// 바탕(어두운 부분)을 누르면 창이 닫힌다. Esc와 포커스 이동은 <dialog>가 알아서 한다
+for (const dialog of document.querySelectorAll('dialog')) dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+$('user').addEventListener('change', () => { store.set('user', $('user').value); loadRecent().catch(listError); });
 $('site').addEventListener('change', () => changeSite($('site').value));
 $('manage').addEventListener('click', openManage);
 $('weather').addEventListener('click', pickPlace);
@@ -978,44 +913,41 @@ $('input').addEventListener('change', autosaveDraft);
 
 $('input').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if ($('save').disabled) return;   // 저장 중에 다시 눌림
   const isSurvey = state.type === SURVEY;
   const problem = isSurvey ? surveyProblem() : '';
   if (problem) { setStatus(problem, 'err'); return; }
   if (!isSurvey && !confirmUnusual()) return;
-  const button = $('save');
-  button.disabled = true;
-  setStatus(isSurvey ? '파일 올리는 중... (파일이 크면 1분 정도 걸립니다)' : '저장 중...', 'ok');
-  try {
+  await withBusy($('input').querySelector('.bar-bottom'), async () => {
+    setStatus(isSurvey ? '파일 올리는 중... (파일이 크면 1분 정도 걸립니다)' : '저장 중...', 'ok');
     let result;
-    if (isSurvey) {
-      result = await submitOrQueue(surveyRequest());
-    } else {
-      const entry = readForm();
-      const photos = await readPhotos(pickers.entry.files());
-      const label = entry.issue ? `⚠ ${entry.issue} · ${entry.id}` : `${entry.date} ${entry.id}`;
-      result = await submitOrQueue({ id: entry.clientId, action: 'save', label, payload: { entry, photos } });
-      store.set('entryKeep', $('entryKeep').checked ? '1' : '0');
-      if (photos.length > 0 && $('entryKeep').checked) saveCopiesToPhone(photos, entry.site).catch(() => {});
-      // Not on the server yet: show this reading as the previous one so the next change is measured against it.
-      if (result === 'queued' && !entry.issue) state.latest[entry.id] = { value: entry.value, values: entry.values ?? [entry.value], date: entry.date };
+    try {
+      if (isSurvey) {
+        result = await submitOrQueue(surveyRequest());
+      } else {
+        const entry = readForm();
+        const photos = await readPhotos(pickers.entry.files(), (i, n) => setStatus(`사진 줄이는 중... (${i}/${n})`, 'ok'));
+        setStatus('저장 중...', 'ok');
+        const label = entry.issue ? `⚠ ${entry.issue} · ${entry.id}` : `${entry.date} ${entry.id}`;
+        result = await submitOrQueue({ id: entry.clientId, action: 'save', label, payload: { entry, photos } });
+        store.set('entryKeep', $('entryKeep').checked ? '1' : '0');
+        if (photos.length > 0 && $('entryKeep').checked) keepCopies(photos, entry.site);
+        // Not on the server yet: show this reading as the previous one so the next change is measured against it.
+        if (result === 'queued' && !entry.issue) state.latest[entry.id] = { value: entry.value, values: entry.values ?? [entry.value], date: entry.date };
+      }
+    } catch (err) {
+      if (err.isAuth) { signOut(); return; }
+      setStatus(err.fields ? errorText(err) : `저장 실패: ${errorText(err)} 입력한 값은 그대로 있습니다. 다시 저장을 눌러주세요.`, 'err');
+      return;
     }
+    // 저장은 끝났다: 아래는 뒷정리라 목록 갱신이 실패해도 '저장 실패'로 보이지 않는다
     setStatus(result === 'sent' ? '저장됨 ✓' : '신호가 약해 이 폰에 보관했습니다. 잡히면 자동으로 보냅니다.', 'ok');
     state.clientId = crypto.randomUUID();
     clearTimeout(draftTimer);
     store.remove('draft');
     clearEntryFields();
-    if (result === 'sent') await Promise.all([loadRecent(), loadLatest()]);
-  } catch (err) {
-    if (err.isAuth) { store.remove('code'); showGate(); return; }
-    if (err.fields) {
-      setStatus('확인해 주세요: ' + err.fields.map((f) => FIELD_LABELS[f] ?? f).join(', '), 'err');
-      return;
-    }
-    const reason = err.message === 'Failed to fetch' ? '인터넷 연결을 확인하세요.' : err.message;
-    setStatus(`저장 실패: ${reason} 입력한 값은 그대로 있습니다. 다시 저장을 눌러주세요.`, 'err');
-  } finally {
-    button.disabled = false;
-  }
+    if (result === 'sent') await reloadLists();
+  });
 });
 
 pickers.entry = makePicker($('photoBoxEntry'));
@@ -1030,7 +962,8 @@ if (window.AndroidGallery) {
 }
 initOutbox();
 if (typeof initDrawingModule === 'function') initDrawingModule();
-if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${BUILD}`).catch(() => {});
+// file:// (앱 안의 오프라인 사본)에서는 서비스 워커를 쓸 수 없다. 그래도 앱은 그대로 동작한다
+if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${BUILD}`).catch((err) => console.warn('서비스 워커 등록 실패', err));
 
 if (state.code) {
   start();

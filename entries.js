@@ -53,45 +53,44 @@ function openEdit(row) {
   $('editDialog').showModal();
 }
 
-function editErrorText(err) {
-  if (err.fields) return '확인해 주세요: ' + err.fields.map((f) => FIELD_LABELS[f] ?? f).join(', ');
-  return err.message === 'Failed to fetch' ? '인터넷 연결을 확인하세요.' : err.message;
-}
-
+// 홈에서 고쳐도 보이도록 맨 위 안내 줄(flash)로 알리고 최근 목록·전회값을 새로 읽는다
 async function finishEdit(message) {
   $('editDialog').close();
   editing = null;
-  setStatus(message, 'ok');
-  await Promise.all([loadRecent(), loadLatest()]).catch((err) => setStatus(err.message, 'err'));
+  flash(`✓ ${message}`);
+  await reloadLists();
+}
+
+// 수정·삭제 요청 한 번: 진행 중에는 창의 버튼이 모두 잠긴다. 24시간·본인 확인은 서버가 최종 판단한다
+async function requestEdit(action, payload, doneMessage) {
+  await withBusy($('editForm'), async () => {
+    try {
+      await api(action, { user: $('user').value, ...payload });
+    } catch (err) {
+      if (err.isAuth) { signOut(); return; }
+      $('editError').textContent = errorText(err);
+      return;
+    }
+    await finishEdit(doneMessage);
+  });
 }
 
 async function saveEdit(e) {
   e.preventDefault();
-  if (!editing) return;
+  if (!editing || $('editForm').getAttribute('aria-busy')) return;
   const isIssue = !!editing.issue;
   const count = Math.max(editing.values?.length ?? 1, 1);
   const values = isIssue ? [] : EDIT_IDS.slice(0, count).map((id) => ($(id).value.trim() === '' ? null : Number($(id).value)));
-  try {
-    await api('edit', { user: $('user').value, entry: { clientId: editing.clientId, values, issue: editing.issue || '', date: $('editDate').value, memo: $('editMemo').value.trim() } });
-  } catch (err) {
-    if (err.isAuth) { $('editDialog').close(); store.remove('code'); showGate(); return; }
-    $('editError').textContent = editErrorText(err);
-    return;
-  }
-  await finishEdit('수정됨 ✓');
+  if (values.some((v) => v === null || !Number.isFinite(v))) { $('editError').textContent = '값을 모두 숫자로 넣어 주세요.'; return; }
+  $('editError').textContent = '';
+  await requestEdit('edit', { entry: { clientId: editing.clientId, values, issue: editing.issue || '', date: $('editDate').value, memo: $('editMemo').value.trim() } }, '수정됨');
 }
 
 async function removeEntry() {
-  if (!editing) return;
-  if (!confirm(`${editing.id} (${editing.date}) 기록을 삭제할까요?\n시트에는 '삭제' 표시로 남고, 그래프와 전회값에서는 빠집니다.`)) return;
-  try {
-    await api('delete', { user: $('user').value, clientId: editing.clientId });
-  } catch (err) {
-    if (err.isAuth) { $('editDialog').close(); store.remove('code'); showGate(); return; }
-    $('editError').textContent = editErrorText(err);
-    return;
-  }
-  await finishEdit('삭제됨 ✓');
+  if (!editing || $('editForm').getAttribute('aria-busy')) return;
+  if (!confirm(`${editing.id} (${editing.date}) 기록을 삭제할까요?\n시트에는 '삭제' 표시로 남고, 전회값·최근 목록·그래프에서는 빠집니다.`)) return;
+  $('editError').textContent = '';
+  await requestEdit('delete', { clientId: editing.clientId }, '삭제됨');
 }
 
 if (typeof module !== 'undefined') module.exports = { unusualChange };

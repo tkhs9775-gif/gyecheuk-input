@@ -77,9 +77,11 @@ html, body { overflow-x: clip; }   /* html에도 걸어야 body가 자기 안쪽
 }
 .pdf-viewer:not(.hidden) { animation: ios-push-full .42s cubic-bezier(.32, .72, 0, 1) both; }
 @media (prefers-reduced-motion: reduce) {
-  .screen:not(.hidden), #drawingFilesView:not(.hidden), #drawingSitesView:not(.hidden), .pdf-viewer:not(.hidden) { animation: none; }
+  .screen:not(.hidden), #drawingFilesView:not(.hidden), #drawingSitesView:not(.hidden), .pdf-viewer:not(.hidden), .pdf-pin { animation: none; }
+  .gate-badge, .gate-card-anim { animation: fade-only .4s ease-out both; }
+  .btn, .chips button, .list li.tap { transition: none; }
 }
-.screen { max-width: 520px; margin: 0 auto; padding: 16px 16px 140px; }
+.screen { max-width: 520px; margin: 0 auto; padding: calc(16px + env(safe-area-inset-top)) 16px 140px; }
 .title { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.3; }
 .section { margin: 24px 4px 8px; font-size: 15px; color: var(--muted); }
 .muted { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -89,8 +91,6 @@ html, body { overflow-x: clip; }   /* html에도 걸어야 body가 자기 안쪽
 
 .top { display: flex; justify-content: space-between; gap: 12px; }
 .pill { min-height: 48px; padding: 0 16px; border: 1px solid var(--line); border-radius: 24px; background: var(--card); font-size: 15px; font-weight: 500; display: flex; align-items: center; min-width: 0; }
-.site { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; line-height: 48px; }
-.site:empty { visibility: hidden; }
 select.pill { max-width: 45%; font-size: 16px; }   /* 16px 미만이면 아이폰이 누를 때 화면을 확대해 밀린 채 남는다 */
 
 .tile { display: flex; flex-direction: column; justify-content: space-between; gap: 24px; min-height: 112px; margin-top: 16px; padding: 16px; border-radius: 20px; background: var(--accent); color: #fff; font-size: 18px; font-weight: 700; }
@@ -104,7 +104,12 @@ input[type="file"]::file-selector-button { min-height: 40px; margin-right: 12px;
 .select-card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 10px 16px 6px; }
 .select-card .label { margin-bottom: 0; }
 select#instrument, select#shotSite { border: 0; padding: 0; min-height: 36px; font-size: 18px; font-weight: 500; background: transparent; }
-input:focus, select:focus, button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+input:focus, select:focus, button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+/* 눌린 느낌: 버튼·칩·목록 줄 */
+.btn, .chips button, .list li.tap { transition: transform .08s ease, background-color .08s ease; }
+.btn:active:not(:disabled) { transform: scale(.98); }
+.chips button:active:not(:disabled) { background: var(--chip); }
+.list li.tap:active { background: var(--chip); }
 
 .value-row { display: flex; align-items: baseline; gap: 8px; }
 #value { width: 100%; min-width: 0; height: 72px; padding: 0 0 4px; border: 0; border-bottom: 3px solid var(--accent); border-radius: 0; background: transparent; font-size: 56px; font-weight: 700; font-variant-numeric: tabular-nums; outline-offset: 4px; }
@@ -121,7 +126,7 @@ input:focus, select:focus, button:focus-visible, a:focus-visible { outline: 3px 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 8px; }
 .chips button { flex: none; min-height: 48px; padding: 0 20px; border-radius: 24px; border: 1px solid #C5CFDF; background: var(--card); font-size: 16px; font-weight: 500; }
 .chips button[aria-pressed="true"] { border: 1.5px solid var(--accent); background: var(--chip); font-weight: 700; }
-.issue-chips button { min-height: 42px; padding: 0 16px; font-size: 15px; }
+.issue-chips button { min-height: 44px; padding: 0 16px; font-size: 15px; }
 .issue-chips button.warn[aria-pressed="true"] { border-color: var(--err); background: var(--err-bg); color: var(--err); }
 .list .val.issue { font-size: 16px; color: var(--err); background: var(--err-bg); padding: 4px 10px; border-radius: 12px; }
 
@@ -155,7 +160,7 @@ a.apk-link { display: grid; place-items: center; }
 }
 .pdf-topbar {
   min-height: 54px;
-  padding: 4px 8px;
+  padding: calc(4px + env(safe-area-inset-top)) 8px 4px;
   background: #1B2A57;
   display: flex;
   align-items: center;
@@ -163,14 +168,19 @@ a.apk-link { display: grid; place-items: center; }
   gap: 6px;
   flex-shrink: 0;
 }
-.pdf-topbar .icon-btn { color: #FFF; width: 40px; height: 40px; }
+.pdf-topbar .icon-btn { color: #FFF; width: 44px; height: 44px; }
 .pdf-title-wrap { min-width: 0; flex: 1; }
 .pdf-title-wrap strong { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pdf-title-wrap small { font-size: 11px; color: #CBD5E0; }
 .pdf-top-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 4px; max-width: 72%; }
+/* 눈에 보이는 크기는 그대로 두고 손가락이 닿는 범위를 44px 이상으로 넓힌다 */
+.pdf-sm-btn, .pdf-save-btn, .del-pin-btn, .close-pin-btn, .files button { position: relative; }
+.pdf-sm-btn::before, .pdf-save-btn::before, .del-pin-btn::before, .close-pin-btn::before { content: ""; position: absolute; inset: -2px; }
+.files button::before, .pdf-pin::before { content: ""; position: absolute; inset: -6px; }
+.thumbs button::before { content: ""; position: absolute; inset: -8px; }
 .pdf-sm-btn {
-  min-width: 34px;
-  height: 34px;
+  min-width: 40px;
+  height: 40px;
   padding: 0 8px;
   border-radius: 8px;
   border: 1px solid #4A63A3;
@@ -182,7 +192,7 @@ a.apk-link { display: grid; place-items: center; }
   flex-shrink: 0;
 }
 .pdf-save-btn {
-  height: 34px;
+  height: 40px;
   padding: 0 12px;
   border-radius: 8px;
   border: 0;
@@ -238,7 +248,7 @@ a.apk-link { display: grid; place-items: center; }
   margin-left: -16px;
   margin-top: -16px;
   border-radius: 50%;
-  background: rgba(229, 57, 53, 0.92);
+  background: rgba(198, 40, 40, 0.92);   /* 흰 글자 대비 4.5:1 이상 */
   border: 2.5px solid #FFFFFF;
   color: #FFFFFF;
   font-size: 13px;
@@ -293,10 +303,11 @@ a.apk-link { display: grid; place-items: center; }
 .pin-legend {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 .pin-legend-item {
-  height: 30px;
+  position: relative;
+  height: 36px;
   padding: 0 12px;
   border-radius: 15px;
   border: 1.5px solid rgba(255,255,255,0.7);
@@ -308,6 +319,7 @@ a.apk-link { display: grid; place-items: center; }
   white-space: nowrap;
   box-shadow: 0 3px 10px rgba(0,0,0,0.3);
 }
+.pin-legend-item::before { content: ""; position: absolute; inset: -4px 0; }   /* 세로 간격 8px 안에서 닿는 범위 44px */
 .pin-legend-item[aria-pressed="true"] {
   background: #1F62A8;
   border-color: #FFF;
@@ -414,8 +426,8 @@ a.apk-link { display: grid; place-items: center; }
   font-size: 14px;
 }
 .del-pin-btn, .close-pin-btn {
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 0 12px;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: #FFF;
@@ -425,7 +437,7 @@ a.apk-link { display: grid; place-items: center; }
 .del-pin-btn { color: var(--err); border-color: var(--err); }
 #pinMemoKeyboard {
   flex: 1;
-  min-height: 42px;
+  min-height: 44px;
   padding: 0 12px;
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -456,17 +468,12 @@ a.apk-link { display: grid; place-items: center; }
   padding: 4px 0;
 }
 .ocr-candidates button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 14px;
   font-size: 15px;
   font-weight: 700;
 }
 
-.chart-card { padding: 12px; }
-#trendSvg { display: block; width: 100%; height: auto; touch-action: pan-y; }
-.readout { min-height: 24px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.readout b { color: var(--text); font-size: 18px; }
-.readout .sw { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 12px 16px; margin: 12px 0 0; }
 .kv dt { color: var(--muted); font-size: 14px; }
 .kv dd { margin: 0; font-weight: 600; word-break: keep-all; overflow-wrap: anywhere; }
@@ -483,11 +490,11 @@ a.apk-link { display: grid; place-items: center; }
 .weather .w-sub { display: block; margin-top: 2px; font-size: 14px; color: var(--muted); }
 .weather-line { margin: 0 0 8px 4px; }
 .list li.tap { cursor: pointer; }
-.netbar { position: sticky; top: 0; z-index: 8; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px 12px; font-size: 14px; font-weight: 600; text-align: center; background: var(--chip); color: var(--text); }
+.netbar { position: sticky; top: 0; z-index: 8; display: flex; align-items: center; justify-content: center; gap: 10px; padding: calc(6px + env(safe-area-inset-top)) 12px 6px; font-size: 14px; font-weight: 600; text-align: center; background: var(--chip); color: var(--text); }
 .netbar.warn { background: #FFF1CC; color: #5C4300; }
 .netbar.err { background: var(--err-bg); color: var(--err); }
 .netbar.ok { background: var(--ok-bg); color: var(--ok); }
-.netbtn { flex: none; min-height: 32px; padding: 0 14px; border: 1.5px solid currentColor; border-radius: 16px; background: transparent; color: inherit; font-weight: 700; }
+.netbtn { flex: none; min-height: 44px; padding: 0 14px; border: 1.5px solid currentColor; border-radius: 16px; background: transparent; color: inherit; font-weight: 700; }
 .keep { display: flex; align-items: flex-start; gap: 12px; margin: 16px 4px 0; }
 .keep input { width: 24px; height: 24px; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
 .keep small { display: block; margin-top: 2px; font-size: 13px; color: var(--muted); font-weight: 400; }
@@ -502,19 +509,22 @@ a.apk-link { display: grid; place-items: center; }
 .thumbs button { position: absolute; top: -6px; right: -6px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 14px; background: var(--text); color: #fff; font-size: 14px; line-height: 28px; }
 .dlg .section { margin: 12px 4px 6px; }
 .mlist li { padding: 2px 6px 2px 16px; margin-bottom: 4px; }
-.mlist .del { min-height: 40px; padding: 0 14px; border: 0; border-radius: 20px; background: transparent; color: var(--err); font-weight: 700; }
+.mlist .del { min-height: 44px; padding: 0 14px; border: 0; border-radius: 20px; background: transparent; color: var(--err); font-weight: 700; }
 .addrow { margin: 4px 0 8px; }
 .addrow input { flex: 1; min-width: 0; }
 .addrow .btn { flex: none; padding: 0 22px; }
 .add-inst { width: 100%; margin-top: 8px; }
-.tile.alt { min-height: 88px; background: var(--card); color: var(--accent); border: 1.5px solid var(--accent); }
 
-dialog { width: min(92vw, 488px); max-height: 90vh; overflow: auto; padding: 0; border: 0; border-radius: 24px; background: var(--card); color: var(--text); }
+dialog { width: min(92vw, 488px); max-height: 90vh; max-height: 90dvh; overflow: auto; padding: 0; border: 0; border-radius: 24px; background: var(--card); color: var(--text); }
 dialog::backdrop { background: rgba(27, 42, 87, .45); }
 .dlg { padding: 20px; }
 .dlg-title { margin: 0 0 4px; font-size: 20px; }
 .dlg-err { min-height: 20px; margin: 8px 0; font-size: 15px; font-weight: 600; color: var(--err); }
-.btn:disabled { opacity: .55; }
+.btn:disabled { opacity: .55; cursor: default; }
+/* 요청이 진행 중인 묶음(aria-busy): 주 버튼이 천천히 깜빡여 눌린 것이 전해진다 */
+[aria-busy="true"] .btn.primary { animation: busy-pulse 1.1s ease-in-out infinite; }
+@keyframes busy-pulse { 50% { opacity: .8; } }
+@media (prefers-reduced-motion: reduce) { [aria-busy="true"] .btn.primary { animation: none; } }
 
 .bar-bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--card); border-top: 1px solid #E3E8F1; }
 .bar-bottom > * { max-width: 488px; margin-inline: auto; }
@@ -525,8 +535,8 @@ dialog::backdrop { background: rgba(27, 42, 87, .45); }
 .list { list-style: none; margin: 0; padding: 0; }
 .list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--card); border: 1px solid #E3E8F1; border-radius: 16px; padding: 12px 16px; margin-bottom: 8px; }
 .list .meta { min-width: 0; }
-.list .meta b { display: block; font-size: 18px; }
-.list .meta small { color: var(--muted); font-size: 14px; }
+.list .meta b { display: block; font-size: 18px; overflow-wrap: anywhere; }
+.list .meta small { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
 .list .val { font-size: 22px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .list .empty { color: var(--muted); justify-content: flex-start; }
 

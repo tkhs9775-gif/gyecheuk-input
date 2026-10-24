@@ -9,7 +9,7 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=36">
+<link rel="stylesheet" href="style.css?v=37">
 <title>키움이엔씨</title>
 </head>
 <body>
@@ -46,7 +46,7 @@
   </div>
   <form id="gateForm" class="card gate-card-anim">
     <label class="field"><span class="label">보안 접속 코드</span>
-      <input id="code" type="password" autocomplete="current-password" placeholder="접속 코드를 입력하세요">
+      <input id="code" type="password" autocomplete="current-password" placeholder="접속 코드를 입력하세요" required>
     </label>
     <button type="submit" class="btn primary wide">연결 및 시작하기</button>
   </form>
@@ -123,7 +123,7 @@
   <div id="valueCard" class="card">
     <label class="label" for="value">측정값</label>
     <div id="singleRow" class="value-row">
-      <input id="value" type="number" step="any" inputmode="decimal" placeholder="0.0">
+      <input id="value" type="number" step="any" inputmode="decimal" enterkeyhint="done" placeholder="0.0">
       <span id="unit" class="unit"></span>
     </div>
     <div id="multiRow" class="multi hidden">
@@ -189,15 +189,15 @@
   </div>
 </form>
 
-<dialog id="manageDialog">
+<dialog id="manageDialog" aria-labelledby="manageTitle">
   <div class="dlg">
-    <h2 class="dlg-title">현장·측정자 관리</h2>
+    <h2 id="manageTitle" class="dlg-title">현장·측정자 관리</h2>
     <p class="muted">삭제해도 이미 저장된 기록은 그대로 남습니다.</p>
 
     <h3 class="section">현장</h3>
     <ul id="siteList" class="list mlist"></ul>
     <form id="siteForm" class="row addrow" novalidate>
-      <input id="siteNew" type="text" maxlength="100" placeholder="새 현장 이름" autocomplete="off">
+      <input id="siteNew" type="text" maxlength="100" placeholder="새 현장 이름" aria-label="새 현장 이름" autocomplete="off">
       <button type="submit" class="btn primary small">추가</button>
     </form>
     <button id="siteScan" type="button" class="btn outline small">Drive 폴더에서 현장 가져오기</button>
@@ -206,7 +206,7 @@
     <h3 class="section">측정자</h3>
     <ul id="userList" class="list mlist"></ul>
     <form id="userForm" class="row addrow" novalidate>
-      <input id="userNew" type="text" maxlength="100" placeholder="새 측정자 이름" autocomplete="off">
+      <input id="userNew" type="text" maxlength="100" placeholder="새 측정자 이름" aria-label="새 측정자 이름" autocomplete="off">
       <button type="submit" class="btn primary small">추가</button>
     </form>
 
@@ -215,9 +215,9 @@
   </div>
 </dialog>
 
-<dialog id="editDialog">
+<dialog id="editDialog" aria-labelledby="editTitle">
   <form id="editForm" class="dlg" novalidate>
-    <h2 class="dlg-title">입력 수정</h2>
+    <h2 id="editTitle" class="dlg-title">입력 수정</h2>
     <p id="editInfo" class="muted"></p>
     <label class="field"><span class="label">값 1</span><input id="ev0" type="number" step="any" inputmode="decimal"></label>
     <label class="field"><span class="label">값 2</span><input id="ev1" type="number" step="any" inputmode="decimal"></label>
@@ -233,9 +233,9 @@
   </form>
 </dialog>
 
-<dialog id="outboxDialog">
+<dialog id="outboxDialog" aria-labelledby="outboxTitle">
   <div class="dlg">
-    <h2 class="dlg-title">전송 대기 입력</h2>
+    <h2 id="outboxTitle" class="dlg-title">전송 대기 입력</h2>
     <p class="muted">신호가 약해 아직 보내지 못한 입력입니다. 이 폰에 보관돼 있고, 신호가 잡히면 자동으로 보냅니다.</p>
     <ul id="outboxList" class="list mlist"></ul>
     <div class="row">
@@ -245,9 +245,9 @@
   </div>
 </dialog>
 
-<dialog id="instDialog">
+<dialog id="instDialog" aria-labelledby="instTitle">
   <form id="instForm" class="dlg" novalidate>
-    <h2 class="dlg-title">계측기 추가</h2>
+    <h2 id="instTitle" class="dlg-title">계측기 추가</h2>
     <p id="instSite" class="muted"></p>
     <label class="field"><span class="label">계측기 ID</span>
       <input id="iId" type="text" maxlength="100" autocapitalize="characters" autocomplete="off">
@@ -285,7 +285,7 @@
       <h1 id="drawingSiteTitle" class="title">도면 폴더</h1>
     </div>
     <div class="row between" style="margin: 8px 0 12px;">
-      <span id="drawingFolderNote" class="muted">PDF를 터치하면 전체화면 야장으로 열립니다.</span>
+      <span id="drawingFolderNote" class="muted" role="status">PDF를 터치하면 전체화면 야장으로 열립니다.</span>
       <button id="btnUploadDrawing" type="button" class="btn outline small">＋ PDF 도면 추가</button>
       <input id="inputDrawingPdf" type="file" accept="application/pdf,.pdf" hidden>
     </div>
@@ -294,7 +294,7 @@
 </main>
 
 <!-- PDF 전체화면 야장 오버레이 -->
-<div id="pdfViewer" class="pdf-viewer hidden" role="dialog" aria-label="도면 야장">
+<div id="pdfViewer" class="pdf-viewer hidden" role="dialog" aria-modal="true" aria-label="도면 야장" tabindex="-1">
   <header class="pdf-topbar">
     <button id="pdfClose" type="button" class="icon-btn" aria-label="닫기">
       <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
@@ -348,17 +348,17 @@
     <p class="pin-memo-hint">💡 아래 메모 칸을 <b>한 번 더 터치</b>하면 펜으로 손글씨를 써서 텍스트(OCR)로 자동 변환할 수 있습니다.</p>
     <div id="pinMemoDisplay" class="pin-memo-display" tabindex="0" role="button" aria-label="메모 칸 (터치하면 손글씨 펜 입력 열기)"></div>
     <div class="row" style="margin-top: 8px;">
-      <input id="pinMemoKeyboard" type="text" placeholder="키보드로 직접 수정할 수도 있습니다">
+      <input id="pinMemoKeyboard" type="text" maxlength="200" placeholder="키보드로 직접 수정할 수도 있습니다" aria-label="메모 (키보드 입력)">
       <button id="pinMemoOpenPad" type="button" class="btn primary small">✍️ 펜 필기(OCR)</button>
     </div>
   </div>
 </div>
 
 <!-- 손글씨(펜 필체) 입력 → OCR 텍스트 자동 변환 모달 -->
-<dialog id="ocrPadDialog">
+<dialog id="ocrPadDialog" aria-labelledby="ocrTitle">
   <div class="dlg ocr-dlg">
     <div class="row between">
-      <h2 class="dlg-title">✍️ 손글씨 펜 입력 (OCR 자동 판독)</h2>
+      <h2 id="ocrTitle" class="dlg-title">✍️ 손글씨 펜 입력 (OCR 자동 판독)</h2>
       <button id="ocrPadClose" type="button" class="btn outline small">닫기</button>
     </div>
     <p class="muted">아래 칸에 손가락이나 펜으로 글씨·숫자를 크게 적어주세요. 판독을 누르면 텍스트로 바꿔 메모에 넣어줍니다.</p>
@@ -366,7 +366,7 @@
       <canvas id="ocrPadCanvas" width="600" height="240"></canvas>
     </div>
     <div id="ocrCandidates" class="chips ocr-candidates hidden" role="group" aria-label="판독 후보 선택"></div>
-    <p id="ocrStatus" class="muted" style="min-height: 20px; margin: 6px 0;"></p>
+    <p id="ocrStatus" class="muted" role="status" style="min-height: 20px; margin: 6px 0;"></p>
     <div class="row">
       <button id="ocrPadUndo" type="button" class="btn outline">한 획 취소</button>
       <button id="ocrPadClear" type="button" class="btn outline">다 지우기</button>
@@ -404,13 +404,13 @@
   </a>
 </nav>
 
-<script src="config.js?v=36"></script>
-<script src="weather.js?v=36"></script>
-<script src="entries.js?v=36"></script>
-<script src="push.js?v=36"></script>
-<script src="outbox.js?v=36"></script>
-<script src="phonecopy.js?v=36"></script>
-<script src="drawing.js?v=36"></script>
-<script src="app.js?v=36"></script>
+<script src="config.js?v=37"></script>
+<script src="weather.js?v=37"></script>
+<script src="entries.js?v=37"></script>
+<script src="push.js?v=37"></script>
+<script src="outbox.js?v=37"></script>
+<script src="phonecopy.js?v=37"></script>
+<script src="drawing.js?v=37"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>

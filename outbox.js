@@ -38,11 +38,21 @@ const outboxPut = (item) => runStore('readwrite', (s) => s.put(item));
 const outboxDelete = (id) => runStore('readwrite', (s) => s.delete(id));
 const outboxAll = async () => (await runStore('readonly', (s) => s.getAll())).sort((a, b) => a.createdAt - b.createdAt);
 
-// 보내기에 실패했을 때: 'stop' 지금은 멈추고 나중에 다시 / 'retry' 이 항목만 횟수를 올리고 다음으로 / 'failed' 고칠 수 없으니 보관함에 실패로 표시
+// 서버가 입력 자체를 거부한 것: 다시 보내도 결과가 같으므로 바로 실패로 표시한다
+const PERMANENT_ERRORS = ['invalid', 'bad_code', 'forbidden', 'expired', 'not_found', 'duplicate', 'bad_action'];
+
+// 보내기에 실패했을 때: 'stop' 지금은 멈추고 나중에 다시(신호 없음·잠김) / 'retry' 서버가 잠시 바쁜 것('server')이라 횟수를 올리고 다음 기회에 다시 / 'failed' 고칠 수 없으니 보관함에 실패로 표시
 function classifyFailure(err, tries) {
   if (err.network || err.code === 'locked') return 'stop';
-  if (err.fields || err.code === 'invalid') return 'failed';
+  if (err.fields || PERMANENT_ERRORS.includes(err.code)) return 'failed';
   return tries + 1 >= MAX_SERVER_TRIES ? 'failed' : 'retry';
+}
+
+// 보관함 창에서 항목 아래에 보이는 상태 글
+function outboxItemText(item) {
+  if (item.state === 'failed') return `${STATE_TEXT.failed} · ${item.error ?? ''}`;
+  if (item.tries > 0) return `다시 보낼 예정 (${item.tries}회 실패 · ${item.error ?? ''})`;
+  return STATE_TEXT.wait;
 }
 
 // 측량 파일은 보관할 때는 File 그대로 두고, 보낼 때 base64로 바꾼다(15MB를 미리 부풀려 두지 않으려고)
@@ -93,24 +103,27 @@ async function doFlush() {
       await outboxDelete(item.id);
       sent += 1;
     } catch (err) {
-      if (err.isAuth) { store.remove('code'); showGate(); break; }
+      if (err.isAuth) { signOut(); break; }
       const verdict = classifyFailure(err, item.tries);
       if (verdict === 'stop') break;
-      await outboxPut({ ...item, tries: item.tries + 1, state: verdict === 'failed' ? 'failed' : 'wait', error: errorText(err) }).catch(() => {});
+      await outboxPut({ ...item, tries: item.tries + 1, state: verdict === 'failed' ? 'failed' : 'wait', error: errorText(err) })
+        .catch((e) => console.warn('보관함 상태 저장 실패', e));
     }
   }
   if (sent > 0) {
     flash(`✓ 보관해 둔 입력 ${sent}건을 보냈습니다`);
-    Promise.all([loadRecent(), loadLatest()]).catch(() => {});
+    reloadLists();
   }
   await renderOutbox();
   return sent;
 }
 
+// 맨 위 안내 줄에 잠깐 보이는 알림(다른 알릴 것이 없을 때만 보인다)
 function flash(text) {
   flashText = text;
   clearTimeout(flashTimer);
   flashTimer = setTimeout(() => { flashText = ''; renderOutbox(); }, FLASH_MS);
+  renderOutbox();
 }
 
 // ---------- 화면: 맨 위 안내 줄과 보관함 창 ----------
@@ -156,7 +169,7 @@ function renderOutboxList(items) {
     const title = document.createElement('b');
     title.textContent = item.label;
     const sub = document.createElement('small');
-    sub.textContent = item.state === 'failed' ? `${STATE_TEXT.failed} · ${item.error ?? ''}` : STATE_TEXT.wait;
+    sub.textContent = outboxItemText(item);
     meta.append(title, sub);
     const del = document.createElement('button');
     del.type = 'button';
@@ -172,12 +185,16 @@ function renderOutboxList(items) {
   }));
 }
 
+// 실패로 표시된 것까지 모두 다시 보낸다. 보내는 동안 창의 버튼은 잠긴다
 async function retryAll() {
-  try {
-    for (const item of await outboxAll()) await outboxPut({ ...item, state: 'wait', tries: 0, error: '' });
-  } catch { /* 무시 */ }
-  await renderOutbox();
-  await flushOutbox();
+  await withBusy($('outboxDialog'), async () => {
+    try {
+      for (const item of await outboxAll()) await outboxPut({ ...item, state: 'wait', tries: 0, error: '' });
+    } catch (err) { console.warn('보관함 초기화 실패', err); }
+    await renderOutbox();
+    await flushOutbox();
+    if (navigator.onLine === false) flash('📡 신호가 없어 보내지 못했습니다. 잡히면 자동으로 보냅니다');
+  });
 }
 
 function initOutbox() {
@@ -195,4 +212,4 @@ function initOutbox() {
   renderOutbox();
 }
 
-if (typeof module !== 'undefined') module.exports = { classifyFailure, netBarContent, MAX_SERVER_TRIES };
+if (typeof module !== 'undefined') module.exports = { classifyFailure, netBarContent, outboxItemText, MAX_SERVER_TRIES };
