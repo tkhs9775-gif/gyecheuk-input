@@ -419,7 +419,8 @@ async function openPdfFieldbook(file) {
     if (seq !== openSeq) return;
     drawingState.rawPdfBytes = bytes.slice();
 
-    const pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+    // isEvalSupported:false — pdf.js 3.x 는 PDF 글꼴로 임의 JS를 실행당할 수 있다(CVE-2024-4367). 4.2.67 이상으로 올려도 이 줄은 둔다
+    const pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported: false }).promise;
     if (seq !== openSeq) { pdfDoc.destroy(); return; }
     drawingState.pdfDoc = pdfDoc;
     drawingState.pageCount = pdfDoc.numPages;

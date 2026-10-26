@@ -25,6 +25,7 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 
 import com.google.firebase.messaging.FirebaseMessaging;
 
@@ -154,11 +155,18 @@ public class MainActivity extends Activity {
             }
             startActivityForResult(contentIntent, REQ_FILE_CHOOSER);
         } catch (Exception e) {
-            if (fileCallback != null) {
-                fileCallback.onReceiveValue(null);
-                fileCallback = null;
-            }
+            cancelChooser("촬영·파일 선택 창을 열 수 없습니다. 다시 시도해 주세요.");
         }
+    }
+
+    // 선택 창을 못 열었을 때: 웹 쪽 대기를 풀고, 조용히 끝나지 않게 이유를 띄운다
+    private void cancelChooser(String message) {
+        if (fileCallback != null) {
+            fileCallback.onReceiveValue(null);
+            fileCallback = null;
+        }
+        cameraPhotoUri = null;
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
     private Intent createCameraIntent() {
@@ -181,6 +189,10 @@ public class MainActivity extends Activity {
         if (requestCode == REQ_CAMERA_PERM && pendingChooserParams != null) {
             WebChromeClient.FileChooserParams p = pendingChooserParams;
             pendingChooserParams = null;
+            if (grantResults.length == 0 || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                cancelChooser("카메라 권한이 없어 촬영할 수 없습니다. 설정 > 앱 > 권한에서 카메라를 허용하거나 '갤러리·파일'로 올려 주세요.");
+                return;
+            }
             launchChooser(p);
         }
     }
