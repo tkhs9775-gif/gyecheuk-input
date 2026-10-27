@@ -21,10 +21,12 @@ const INK_COLOR = '#C62828';   // 흰 글자가 4.5:1 이상 읽히는 빨강(�
 
 // CDN 라이브러리는 탭을 열 때 받는다. 한 번 실패한 주소는 다음에 다시 받을 수 있게 기억에서 지운다
 const scriptLoads = new Map();
-function loadScriptOnce(src) {
+// integrity를 주면 CDN 파일이 한 글자라도 바뀌었을 때 실행하지 않는다
+function loadScriptOnce(src, integrity = '') {
   if (!scriptLoads.has(src)) {
     scriptLoads.set(src, new Promise((resolve, reject) => {
       const s = document.createElement('script');
+      if (integrity) Object.assign(s, { integrity, crossOrigin: 'anonymous' });
       s.src = src;
       s.onload = resolve;
       s.onerror = () => {
@@ -40,8 +42,8 @@ function loadScriptOnce(src) {
   return scriptLoads.get(src);
 }
 
-async function ensureLib(src, globalName) {
-  if (!window[globalName]) await loadScriptOnce(src);
+async function ensureLib(src, globalName, integrity = '') {
+  if (!window[globalName]) await loadScriptOnce(src, integrity);
   if (!window[globalName]) throw new Error('도면 기능 파일이 올바르지 않습니다. 정보 탭에서 새로고침해 주세요.');
   return window[globalName];
 }
@@ -63,13 +65,12 @@ function friendlyError(err, fallback) {
 
 const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
-// 저장분(폰·서버)이 깨져 있어도 화면이 멈추지 않게 모양을 맞춘다. sourceId(저장본의 원본 도면)·gps(Pro 기준점)는 있을 때만 둔다
+// 저장분(폰·서버)이 깨져 있어도 화면이 멈추지 않게 모양을 맞춘다. sourceId(저장본의 원본 도면)는 있을 때만 둔다
 function normalizeNotes(data) {
   const pins = Array.isArray(data?.pins) ? data.pins.filter((p) => p && typeof p === 'object' && p.id) : [];
   const strokes = isPlainObject(data?.strokes) ? data.strokes : {};
   const out = { pins, strokes };
   if (typeof data?.sourceId === 'string' && data.sourceId) out.sourceId = data.sourceId;
-  if (isPlainObject(data?.gps)) out.gps = data.gps;
   return out;
 }
 
@@ -564,7 +565,6 @@ async function renderPdfPage() {
     updatePageInfo();
     redrawPageInk();
     renderPagePins();
-    if (typeof refreshGps === 'function') refreshGps();
   } catch (err) {
     if (err?.name === 'RenderingCancelledException' || my !== renderSeq) return;
     console.warn('도면 그리기 실패', err);
@@ -1340,7 +1340,8 @@ function initDrawingModule() {
 
   $('pdfClose').addEventListener('click', closePdfViewer);
   // 안드로이드 뒤로가기·브라우저 뒤로가기: 뷰어가 열려 있으면 화면을 바꾸지 않고 뷰어만 닫는다
-  window.addEventListener('popstate', () => { if (!$('pdfViewer').classList.contains('hidden')) hideViewer(); });
+  // 지도(Pro)만 닫힌 뒤로가기는 아직 뷰어 칸(pdfViewer)에 있으므로 뷰어를 닫지 않는다
+  window.addEventListener('popstate', () => { if (!$('pdfViewer').classList.contains('hidden') && !history.state?.pdfViewer) hideViewer(); });
   // Esc: 메모 박스가 열려 있으면 그것부터, 아니면 뷰어를 닫는다(<dialog>가 열려 있으면 그 쪽이 먼저 받는다)
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || $('pdfViewer').classList.contains('hidden') || document.querySelector('dialog[open]')) return;
