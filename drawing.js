@@ -65,12 +65,13 @@ function friendlyError(err, fallback) {
 
 const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
-// 저장분(폰·서버)이 깨져 있어도 화면이 멈추지 않게 모양을 맞춘다. sourceId(저장본의 원본 도면)는 있을 때만 둔다
+// 저장분(폰·서버)이 깨져 있어도 화면이 멈추지 않게 모양을 맞춘다. sourceId(저장본의 원본 도면)·gps(Pro 기준점)는 있을 때만 둔다
 function normalizeNotes(data) {
   const pins = Array.isArray(data?.pins) ? data.pins.filter((p) => p && typeof p === 'object' && p.id) : [];
   const strokes = isPlainObject(data?.strokes) ? data.strokes : {};
   const out = { pins, strokes };
   if (typeof data?.sourceId === 'string' && data.sourceId) out.sourceId = data.sourceId;
+  if (isPlainObject(data?.gps)) out.gps = data.gps;
   return out;
 }
 
@@ -565,6 +566,7 @@ async function renderPdfPage() {
     updatePageInfo();
     redrawPageInk();
     renderPagePins();
+    if (typeof refreshGps === 'function') refreshGps();
   } catch (err) {
     if (err?.name === 'RenderingCancelledException' || my !== renderSeq) return;
     console.warn('도면 그리기 실패', err);

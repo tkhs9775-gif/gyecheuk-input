@@ -9,7 +9,7 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=40">
+<link rel="stylesheet" href="style.css?v=41">
 <title>키움이엔씨</title>
 </head>
 <body>
@@ -301,7 +301,7 @@
     </button>
     <div class="pdf-title-wrap">
       <strong>내 위치</strong>
-      <small id="gpsMsg" role="status" aria-live="polite"></small>
+      <small id="gpsMapMsg" role="status" aria-live="polite"></small>
     </div>
     <button id="gpsRecenter" type="button" class="pdf-save-btn">📍 내 위치로</button>
   </header>
@@ -324,17 +324,28 @@
       <button id="pdfZoomOut" type="button" class="pdf-sm-btn" aria-label="축소">－</button>
       <button id="pdfZoomIn" type="button" class="pdf-sm-btn" aria-label="확대">＋</button>
       <button id="pdfRotate" type="button" class="pdf-sm-btn" aria-label="도면 회전">⟳</button>
-      <button id="pdfGps" type="button" class="pdf-sm-btn hidden" aria-label="지도에서 내 위치(GPS) 보기">📍</button>
+      <button id="pdfGps" type="button" class="pdf-sm-btn hidden" aria-pressed="false" aria-label="도면 위 내 위치(GPS)">📍</button>
       <button id="pdfSaveNotes" type="button" class="pdf-save-btn">다른이름 저장</button>
       <button id="pdfSaveTyped" type="button" class="pdf-save-btn">계측기별 PDF</button>
     </div>
   </header>
+  <!-- Pro 전용 안내 줄: 위쪽 버튼을 가리지 않게 머리줄 바로 아래에 자리를 차지한다 -->
+  <div id="gpsPanel" class="gps-panel hidden" role="status" aria-live="polite">
+    <p id="gpsMsg"></p>
+    <div class="row">
+      <button id="gpsOpenMap" type="button" class="close-pin-btn">🗺 지도</button>
+      <button id="gpsRecal" type="button" class="close-pin-btn">기준점 다시</button>
+      <button id="gpsOff" type="button" class="close-pin-btn">끄기</button>
+    </div>
+  </div>
 
   <div id="pdfStageWrap" class="pdf-stage-wrap">
     <div id="pdfStage" class="pdf-stage">
       <canvas id="pdfCanvas"></canvas>
       <canvas id="inkCanvas" class="ink-canvas"></canvas>
       <div id="pinLayer" class="pin-layer"></div>
+      <!-- Pro 전용: 내 위치(파란 점). 기준점을 맞추는 동안만 터치를 받는다 -->
+      <div id="gpsLayer" class="gps-layer"><div id="gpsDot" class="gps-dot hidden" aria-label="내 위치"></div></div>
     </div>
   </div>
 
@@ -421,14 +432,14 @@
   </a>
 </nav>
 
-<script src="config.js?v=40"></script>
-<script src="weather.js?v=40"></script>
-<script src="entries.js?v=40"></script>
-<script src="push.js?v=40"></script>
-<script src="outbox.js?v=40"></script>
-<script src="phonecopy.js?v=40"></script>
-<script src="drawing.js?v=40"></script>
-<script src="gps.js?v=40"></script>
-<script src="app.js?v=40"></script>
+<script src="config.js?v=41"></script>
+<script src="weather.js?v=41"></script>
+<script src="entries.js?v=41"></script>
+<script src="push.js?v=41"></script>
+<script src="outbox.js?v=41"></script>
+<script src="phonecopy.js?v=41"></script>
+<script src="drawing.js?v=41"></script>
+<script src="gps.js?v=41"></script>
+<script src="app.js?v=41"></script>
 </body>
 </html>
