@@ -18,6 +18,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
+import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.JsResult;
 import android.webkit.ValueCallback;
@@ -40,6 +41,9 @@ public class MainActivity extends Activity {
     private static final int REQ_FILE_CHOOSER = 1001;
     private static final int REQ_CAMERA_PERM = 1002;
     private static final int REQ_NOTIFY_PERM = 1003;
+    private static final int REQ_CAMERA = 1004;
+    private static final int REQ_LOCATION_PERM = 1005;
+    private static final int MAX_BURST = 50;   // 웹 화면·서버의 사진 한도(MAX_PHOTOS)와 같다
     // 직원용/감독판 APK마다 시작 화면이 다르다 (app/build.gradle 의 productFlavors)
     private static final String LIVE_URL = BuildConfig.LIVE_URL;
     private static final String LOCAL_URL = BuildConfig.LOCAL_URL;
@@ -48,6 +52,9 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraPhotoUri;
     private WebChromeClient.FileChooserParams pendingChooserParams;
+    private final ArrayList<Uri> burstShots = new ArrayList<>();   // 연속 촬영으로 지금까지 찍은 사진
+    private String pendingGeoOrigin;
+    private GeolocationPermissions.Callback pendingGeoCallback;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -70,6 +77,10 @@ public class MainActivity extends Activity {
 
         webView.addJavascriptInterface(new GalleryBridge(), "AndroidGallery");
         webView.addJavascriptInterface(new PushBridge(), "AndroidPush");
+        if (BuildConfig.IS_PRO) {
+            s.setGeolocationEnabled(true);
+            webView.addJavascriptInterface(new ProBridge(), "AndroidPro");
+        }
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFY_PERM);
         }
@@ -105,6 +116,23 @@ public class MainActivity extends Activity {
                     .setOnCancelListener(d -> result.cancel())
                     .show();
                 return true;
+            }
+
+            // Pro 앱의 우리 화면(GitHub Pages 또는 앱 안 사본)에만 위치를 준다. 휴대폰 위치 권한이 없으면 먼저 묻는다
+            @Override
+            public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                boolean ours = BuildConfig.IS_PRO && origin != null && (LIVE_URL.startsWith(origin) || origin.startsWith("file"));
+                if (!ours) {
+                    callback.invoke(origin, false, false);
+                    return;
+                }
+                if (hasLocationPermission()) {
+                    callback.invoke(origin, true, false);
+                    return;
+                }
+                pendingGeoOrigin = origin;
+                pendingGeoCallback = callback;
+                requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LOCATION_PERM);
             }
 
             @Override
@@ -143,11 +171,8 @@ public class MainActivity extends Activity {
     private void launchChooser(WebChromeClient.FileChooserParams params) {
         try {
             if (params.isCaptureEnabled()) {
-                Intent camIntent = createCameraIntent();
-                if (camIntent != null) {
-                    startActivityForResult(camIntent, REQ_FILE_CHOOSER);
-                    return;
-                }
+                burstShots.clear();
+                if (launchCamera()) return;
             }
             Intent contentIntent = params.createIntent();
             if (params.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
@@ -169,6 +194,46 @@ public class MainActivity extends Activity {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
+    private boolean launchCamera() {
+        Intent camIntent = createCameraIntent();
+        if (camIntent == null) return false;
+        startActivityForResult(camIntent, REQ_CAMERA);
+        return true;
+    }
+
+    // 연속 촬영: 한 장 찍으면 카메라를 바로 다시 연다. 카메라에서 뒤로가기(취소)를 누르면 지금까지 찍은 사진을 한꺼번에 웹 화면에 넘긴다.
+    // ponytail: 촬영 중 휴대폰 메모리가 모자라 이 앱이 닫히면 웹 쪽 대기가 사라져 찍은 사진이 넘어가지 않는다(파일은 앱 캐시에 남음). 실제로 생기면 찍을 때마다 갤러리에도 저장한다
+    private void onCameraResult(int resultCode) {
+        if (fileCallback == null) {
+            burstShots.clear();
+            cameraPhotoUri = null;
+            return;
+        }
+        if (resultCode == Activity.RESULT_OK && cameraPhotoUri != null) {
+            burstShots.add(cameraPhotoUri);
+            cameraPhotoUri = null;
+            if (burstShots.size() < MAX_BURST) {
+                try {
+                    if (launchCamera()) {
+                        Toast.makeText(this, burstShots.size() + "장 찍음 · 계속 찍거나, 다 찍었으면 뒤로가기", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                } catch (Exception e) {
+                    // 카메라를 다시 못 열면 찍은 것까지 넘긴다
+                }
+            }
+        }
+        cameraPhotoUri = null;
+        fileCallback.onReceiveValue(burstShots.isEmpty() ? null : burstShots.toArray(new Uri[0]));
+        fileCallback = null;
+        burstShots.clear();
+    }
+
+    private boolean hasLocationPermission() {
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
     private Intent createCameraIntent() {
         try {
             File photoFile = new File(getCacheDir(), "shot_" + System.currentTimeMillis() + ".jpg");
@@ -186,6 +251,14 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_LOCATION_PERM && pendingGeoCallback != null) {
+            boolean granted = false;
+            for (int r : grantResults) granted |= r == PackageManager.PERMISSION_GRANTED;
+            pendingGeoCallback.invoke(pendingGeoOrigin, granted, false);
+            pendingGeoCallback = null;
+            pendingGeoOrigin = null;
+            return;
+        }
         if (requestCode == REQ_CAMERA_PERM && pendingChooserParams != null) {
             WebChromeClient.FileChooserParams p = pendingChooserParams;
             pendingChooserParams = null;
@@ -200,6 +273,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_CAMERA) {
+            onCameraResult(resultCode);
+            return;
+        }
         if (requestCode != REQ_FILE_CHOOSER || fileCallback == null) return;
 
         Uri[] results = null;
@@ -214,13 +291,10 @@ public class MainActivity extends Activity {
                 results = uris.toArray(new Uri[0]);
             } else if (data != null && data.getData() != null) {
                 results = new Uri[]{data.getData()};
-            } else if (cameraPhotoUri != null) {
-                results = new Uri[]{cameraPhotoUri};
             }
         }
         fileCallback.onReceiveValue(results);
         fileCallback = null;
-        cameraPhotoUri = null;
     }
 
     @Override
@@ -237,6 +311,14 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String getToken() {
             return getSharedPreferences(PushService.PREFS, MODE_PRIVATE).getString(PushService.KEY_TOKEN, "");
+        }
+    }
+
+    // Pro 앱인지 웹 화면이 알 수 있게 한다(도면 위 내 위치 버튼을 보여 줄지)
+    public class ProBridge {
+        @JavascriptInterface
+        public boolean isPro() {
+            return BuildConfig.IS_PRO;
         }
     }
 

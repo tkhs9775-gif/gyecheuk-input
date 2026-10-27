@@ -41,21 +41,24 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
 
-      - name: Build Release APKs (직원용 + 대표님 감독판)
+      - name: Build Release APKs (직원용 + Pro)
         working-directory: android
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-        run: gradle assembleStaffRelease --no-daemon   # 감독판(ceo)은 푸시 설정이 없어 당분간 빌드하지 않는다
+        run: gradle assembleStaffRelease assembleProRelease --no-daemon   # 감독판(ceo)은 푸시 설정이 없어 당분간 빌드하지 않는다
 
       - name: Rename APKs
         run: |
           cp android/app/build/outputs/apk/staff/release/app-staff-release.apk gyecheuk-input.apk
+          cp android/app/build/outputs/apk/pro/release/app-pro-release.apk gyecheuk-input-pro.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: gyecheuk-input-apk
-          path: gyecheuk-input.apk
+          path: |
+            gyecheuk-input.apk
+            gyecheuk-input-pro.apk
 
       - name: Publish to GitHub Release (latest)
         uses: softprops/action-gh-release@v2
@@ -66,7 +69,10 @@ jobs:
             휴대폰에서 아래 `gyecheuk-input.apk`를 눌러 바로 설치하세요.
             - 사진 촬영 시 휴대폰 갤러리의 `Pictures/계측사진/<현장명>/` 폴더에 자동으로 분류 저장됩니다.
             - 구글 드라이브 로그인 없이 접속 코드만으로 바로 작동합니다.
+            - `gyecheuk-input-pro.apk`는 Pro판입니다(직원용 기능 전부 + 도면 위 내 위치 GPS). 직원용 위에 덮어 설치됩니다.
 
             대표님용 감독판은 `kiwoom-ceo.apk`를 설치하세요. (직원용 앱과 따로 설치되며, 읽기 전용입니다.)
-          files: gyecheuk-input.apk
+          files: |
+            gyecheuk-input.apk
+            gyecheuk-input-pro.apk
           prerelease: false

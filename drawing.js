@@ -61,18 +61,37 @@ function friendlyError(err, fallback) {
   return /[가-힣]/.test(message) ? message : fallback;
 }
 
-// 저장분(폰·서버)이 깨져 있어도 화면이 멈추지 않게 모양을 맞춘다
+const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+// 저장분(폰·서버)이 깨져 있어도 화면이 멈추지 않게 모양을 맞춘다. sourceId(저장본의 원본 도면)·gps(Pro 기준점)는 있을 때만 둔다
 function normalizeNotes(data) {
   const pins = Array.isArray(data?.pins) ? data.pins.filter((p) => p && typeof p === 'object' && p.id) : [];
-  const strokes = data?.strokes && typeof data.strokes === 'object' && !Array.isArray(data.strokes) ? data.strokes : {};
-  return { pins, strokes };
+  const strokes = isPlainObject(data?.strokes) ? data.strokes : {};
+  const out = { pins, strokes };
+  if (typeof data?.sourceId === 'string' && data.sourceId) out.sourceId = data.sourceId;
+  if (isPlainObject(data?.gps)) out.gps = data.gps;
+  return out;
+}
+
+const DATE_TAG = /_\d{4}-?\d{2}-?\d{2}\([일월화수목금토]\)$/;
+const stemOf = (name) => String(name || '').replace(/\.pdf$/i, '').trim();
+
+// 저장본(원본이름_날짜(요).pdf)은 동그라미가 이미 PDF 그림 속에 들어 있다. 그 위에 메모를 또 띄우면 두 겹이 되고, 다시 저장하면 계속 쌓인다.
+// 그래서 같은 폴더의 원본(메모에 적어 둔 sourceId, 없으면 날짜 꼬리표를 뗀 이름)을 찾아 그것을 바탕으로 그린다. 못 찾으면 null(그 파일 그대로)
+function sourceFileOf(file, notes, files) {
+  const others = (files || []).filter((f) => f && f.id !== file.id);
+  const byId = notes?.sourceId && others.find((f) => f.id === notes.sourceId);
+  if (byId) return byId;
+  const stem = stemOf(file.name);
+  if (!DATE_TAG.test(stem)) return null;
+  const base = stem.replace(DATE_TAG, '').trim();
+  return others.find((f) => stemOf(f.name) === base) || null;
 }
 
 // 원본 파일명에서 확장자(.pdf)와 기존 날짜 꼬리표(_YYYY-MM-DD(요) 또는 _YYYYMMDD(요))를 떼고
 // '원본이름_YYYY-MM-DD(요일한글자).pdf' 형태의 새 파일명을 만든다.
 function buildSavedDrawingFileName(originalName, now = new Date()) {
-  const withoutExt = String(originalName || '도면').replace(/\.pdf$/i, '').trim();
-  const baseName = withoutExt.replace(/_\d{4}-?\d{2}-?\d{2}\([일월화수목금토]\)$/, '').trim() || '도면';
+  const baseName = stemOf(originalName || '도면').replace(DATE_TAG, '').trim() || '도면';
   const ymdStr = now.toLocaleDateString('sv-SE');
   const dayChar = WEEKDAYS_KO[now.getDay()];
   return `${baseName}_${ymdStr}(${dayChar}).pdf`;
@@ -85,6 +104,7 @@ const PIN_TYPES = [
   { code: 'S', name: '변형률계' },
   { code: 'L', name: '하중계' },
   { code: 'C', name: '균열' },
+  { code: 'P', name: '측량' },
 ];
 const pinTypeName = (code) => PIN_TYPES.find((t) => t.code === code)?.name || '';
 
@@ -100,6 +120,7 @@ const drawingState = {
   folders: [],            // 원본별 폴더(계측기별 PDF 묶음): [{ name, files }]
   openFolders: new Set(), // 펼쳐 둔 폴더 이름
   currentFile: null,
+  sourceFile: null,       // 저장본을 열었을 때 바탕으로 그린 원본 도면(없으면 null = 연 파일 그대로)
   rawPdfBytes: null,
   pdfDoc: null,
   pageNum: 1,
@@ -363,6 +384,23 @@ async function uploadDrawingPdf(file) {
 
 // ---------- 3단계: PDF 전체화면 야장 뷰어 ----------
 
+// 폰 보관분 → 미리 받는 중인 것 → 옛 보관 방식 → 서버 순으로 PDF 바이트를 구한다
+async function loadPdfBytes(fileId) {
+  let bytes = await getCachedPdfBytes(fileId);
+  if (!bytes && prefetchInFlight.has(fileId)) {   // 미리 받는 중이면 다시 받지 않고 그것을 기다린다
+    await prefetchInFlight.get(fileId);
+    bytes = await getCachedPdfBytes(fileId);
+  }
+  if (bytes) return bytes;
+  const legacyB64 = store.get(`pdf_b64_${fileId}`);
+  if (legacyB64) return b64ToUint8(legacyB64);
+  const dl = await api('drive_download', { fileId });
+  if (typeof dl.base64 !== 'string' || !dl.base64) throw new Error('서버에서 도면 내용을 받지 못했습니다.');
+  bytes = b64ToUint8(dl.base64);
+  putCachedPdfBytes(fileId, bytes);
+  return bytes;
+}
+
 let openSeq = 0;              // 도면을 연달아 두 번 누르면 먼저 것은 버린다
 let viewerReturnFocus = null; // 뷰어를 닫으면 열기 전에 있던 자리(도면 줄)로 포커스를 돌려준다
 let closingViewer = false;
@@ -381,6 +419,7 @@ async function openPdfFieldbook(file) {
   drawingState.activePinId = null;
   drawingState.dirty = false;
   drawingState.notes = normalizeNotes(readCached(`pdf_notes_${file.id}`));
+  drawingState.sourceFile = sourceFileOf(file, drawingState.notes, drawingState.files);
   setPinMode(false);
   setPenMode(false);
   closePinMemoBox();
@@ -399,23 +438,13 @@ async function openPdfFieldbook(file) {
   const notesPromise = api('drawing_notes_get', { fileId: file.id }).catch((err) => { console.warn('야장 메모 조회 실패', err); return null; });
 
   try {
-    const [pdfjsLib, cachedBytes] = await Promise.all([ensurePdfJs(), getCachedPdfBytes(file.id)]);
-    let bytes = cachedBytes;
-    if (!bytes && prefetchInFlight.has(file.id)) {   // 미리 받는 중이면 다시 받지 않고 그것을 기다린다
-      await prefetchInFlight.get(file.id);
-      bytes = await getCachedPdfBytes(file.id);
-    }
-    if (!bytes) {
-      const legacyB64 = store.get(`pdf_b64_${file.id}`);
-      if (legacyB64) {
-        bytes = b64ToUint8(legacyB64);
-      } else {
-        const dl = await api('drive_download', { fileId: file.id });
-        if (typeof dl.base64 !== 'string' || !dl.base64) throw new Error('서버에서 도면 내용을 받지 못했습니다.');
-        bytes = b64ToUint8(dl.base64);
-      }
-      putCachedPdfBytes(file.id, bytes);
-    }
+    const source = drawingState.sourceFile;
+    const [pdfjsLib, sourceBytes] = await Promise.all([
+      ensurePdfJs(),
+      source ? loadPdfBytes(source.id).catch((err) => { console.warn('원본 도면을 받지 못해 저장본 그대로 엽니다', err); return null; }) : null,
+    ]);
+    if (source && !sourceBytes && seq === openSeq) drawingState.sourceFile = null;
+    const bytes = sourceBytes || await loadPdfBytes(file.id);
     if (seq !== openSeq) return;
     drawingState.rawPdfBytes = bytes.slice();
 
@@ -454,6 +483,8 @@ async function hideViewer() {
   drawingState.pdfDoc = null;
   drawingState.rawPdfBytes = null;
   drawingState.currentFile = null;
+  drawingState.sourceFile = null;
+  if (typeof stopGps === 'function') stopGps();
   if (viewerReturnFocus?.isConnected) viewerReturnFocus.focus();
   viewerReturnFocus = null;
 }
@@ -533,6 +564,7 @@ async function renderPdfPage() {
     updatePageInfo();
     redrawPageInk();
     renderPagePins();
+    if (typeof refreshGps === 'function') refreshGps();
   } catch (err) {
     if (err?.name === 'RenderingCancelledException' || my !== renderSeq) return;
     console.warn('도면 그리기 실패', err);
@@ -1202,6 +1234,8 @@ async function doSaveDrawingNotes(showAlert) {
     }
     if (!pdfBase64) throw new Error('도면이 아직 다 열리지 않았습니다. 도면이 보인 뒤 다시 저장해 주세요.');
 
+    // 새 저장본의 메모에 바탕 원본을 적어 둔다: 저장본을 다시 열어도 원본 위에 동그라미 한 겹만 그린다
+    const savedNotes = { ...drawingState.notes, sourceId: (drawingState.sourceFile || file).id };
     const res = await api('drawing_upload', {
       site: drawingState.site,
       file: {
@@ -1209,7 +1243,7 @@ async function doSaveDrawingNotes(showAlert) {
         base64: pdfBase64,
         replaceSameName: true,
         user: $('user')?.value || '',
-        notes: drawingState.notes,
+        notes: savedNotes,
       },
     });
 
@@ -1218,7 +1252,7 @@ async function doSaveDrawingNotes(showAlert) {
       if (pdfBase64) putCachedPdfBytes(res.file.id, b64ToUint8(pdfBase64));
       drawingState.files = [res.file, ...drawingState.files.filter((f) => f.name !== res.file.name && f.id !== res.file.id)];
       store.set(`drawings_${drawingState.site}`, JSON.stringify(drawingState.files));
-      store.set(`pdf_notes_${res.file.id}`, JSON.stringify(drawingState.notes));
+      store.set(`pdf_notes_${res.file.id}`, JSON.stringify(savedNotes));
       $('pdfTitle').textContent = res.file.name;
       renderDrawingFiles();
     }
@@ -1370,4 +1404,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError };
+if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, PIN_TYPES };

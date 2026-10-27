@@ -10,7 +10,7 @@ const PHOTO_MIN_QUALITY = 0.4;
 const PHOTO_QUALITY_STEP = 0.1;
 const PHOTO_SHRINK = 0.85;
 const PHOTO_MIN_PX = 320;  // 이보다 작게는 줄이지 않는다(알아볼 수 없음)
-const MAX_PHOTOS = 10;
+const MAX_PHOTOS = 50;   // 서버(Code.gs) MAX_PHOTOS와 같다
 const DRAFT_DELAY_MS = 500;
 const MIN_TIMEOUT_MS = 30 * 1000;
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
@@ -377,7 +377,7 @@ function readForm() {
 
 // Phone photos are several MB; shrink to <= PHOTO_MAX_BYTES so a weak signal can still send them.
 // Lower quality first; if still too big at the floor, shrink the pixels and start over.
-// toBlob encodes off the main thread, so the screen keeps painting while 10 photos are processed.
+// toBlob encodes off the main thread, so the screen keeps painting while many photos are processed.
 const toJpeg = (canvas, quality) => new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
 
 async function compressPhoto(file) {
@@ -419,10 +419,33 @@ async function readPhotos(files, onProgress) {
   return photos;
 }
 
-// Photo chooser: camera button (one shot per tap, tap again for more) + gallery/file button (many at once).
-// The browser's own picker is what asks the phone for storage/gallery access; a web page cannot request it directly.
+// 미리보기는 작게 줄인 사본으로: 원본 사진(장당 수 MB) 50장을 그대로 띄우면 폰 메모리가 모자라 화면이 멈춘다
+const THUMB_PX = 176;   // 88px 칸 × 2(고해상도 화면)
+async function thumbUrl(file) {
+  try {
+    const bitmap = await createImageBitmap(file, { resizeWidth: THUMB_PX, resizeQuality: 'medium' });
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const blob = await toJpeg(canvas, PHOTO_QUALITY);
+    if (blob) return URL.createObjectURL(blob);
+  } catch (err) {
+    console.warn('미리보기 줄이기 실패, 원본으로 보여 줌', err);
+  }
+  return URL.createObjectURL(file);
+}
+// 한 장씩 차례로 줄인다: 50장을 한꺼번에 풀면 그 순간 메모리가 모자란다
+let thumbQueue = Promise.resolve();
+const queueThumb = (file) => (thumbQueue = thumbQueue.then(() => thumbUrl(file)));
+
+// Photo chooser: camera button + gallery/file button (many at once).
+// 안드로이드 앱에서는 촬영 버튼이 연속 촬영: 찍을 때마다 카메라가 다시 열리고, 뒤로가기를 누르면 찍은 사진이 한꺼번에 들어온다(MainActivity).
+// 브라우저에서는 한 번에 한 장. The browser's own picker is what asks the phone for storage/gallery access; a web page cannot request it directly.
 function makePicker(box) {
   let files = [];
+  const previews = new Map();   // 사진 파일 → 줄인 미리보기 주소(약속). 사진을 빼도 남은 사진은 다시 줄이지 않는다
   const thumbs = document.createElement('ul');
   thumbs.className = 'thumbs';
 
@@ -446,7 +469,7 @@ function makePicker(box) {
     });
     return input;
   };
-  const cam = makeInput({});
+  const cam = makeInput({ multiple: true });   // 연속 촬영한 여러 장을 한 번에 받는다
   cam.setAttribute('capture', 'environment');
   const gallery = makeInput({ multiple: true });
 
@@ -458,12 +481,15 @@ function makePicker(box) {
   }
 
   function render() {
-    for (const img of thumbs.querySelectorAll('img')) URL.revokeObjectURL(img.src);
+    for (const [file, url] of previews) {
+      if (!files.includes(file)) { url.then((u) => URL.revokeObjectURL(u)); previews.delete(file); }
+    }
     thumbs.replaceChildren(...files.map((file, i) => {
       const li = document.createElement('li');
       const img = document.createElement('img');
       img.alt = file.name;
-      img.src = URL.createObjectURL(file);
+      if (!previews.has(file)) previews.set(file, queueThumb(file));
+      previews.get(file).then((u) => { img.src = u; });
       const x = document.createElement('button');
       x.type = 'button';
       x.textContent = '✕';
@@ -804,7 +830,7 @@ async function saveShot(e) {
 // ---------- info tab ----------
 
 function renderInfo() {
-  $('appVersion').textContent = `v${BUILD}${window.AndroidGallery ? ' (안드로이드 앱)' : ''}`;
+  $('appVersion').textContent = `v${BUILD}${window.AndroidGallery ? ` (안드로이드 앱${isProApp() ? ' Pro' : ''})` : ''}`;
   $('adminInfo').textContent = state.config.admin || '과장 정준업(Master)';
   show($('downloadApk'), !window.AndroidGallery);
 }
@@ -962,6 +988,7 @@ if (window.AndroidGallery) {
 }
 initOutbox();
 if (typeof initDrawingModule === 'function') initDrawingModule();
+initGps();
 // file:// (앱 안의 오프라인 사본)에서는 서비스 워커를 쓸 수 없다. 그래도 앱은 그대로 동작한다
 if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${BUILD}`).catch((err) => console.warn('서비스 워커 등록 실패', err));
 

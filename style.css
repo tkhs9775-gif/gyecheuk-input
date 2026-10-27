@@ -284,6 +284,55 @@ a.apk-link { display: grid; place-items: center; }
 }
 @keyframes pin-pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
+/* Pro 전용: 도면 위 내 위치. 지름(--acc)은 GPS 오차 원, 가운데 점은 크기 고정 */
+.gps-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.gps-layer.calibrating {
+  pointer-events: auto;
+  cursor: crosshair;
+  outline: 3px dashed #1E88E5;
+  outline-offset: -3px;
+}
+.gps-dot {
+  position: absolute;
+  width: var(--acc, 0%);
+  aspect-ratio: 1;
+  min-width: 18px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(30, 136, 229, 0.18);
+  border: 1.5px solid rgba(30, 136, 229, 0.6);
+  pointer-events: none;
+  z-index: 4;
+}
+.gps-dot::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #1E88E5;
+  border: 3px solid #FFFFFF;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.45);
+}
+.gps-panel {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  background: #24366E;
+  color: #FFF;
+  border-bottom: 1px solid #4A63A3;
+}
+.gps-panel p { margin: 0 0 8px; font-size: 14px; font-weight: 600; line-height: 1.4; }
+.gps-panel .row { justify-content: flex-end; gap: 8px; }
+.gps-panel .close-pin-btn { color: #1B2A57; }
+.pdf-sm-btn[aria-pressed="true"] { background: #1E88E5; color: #FFF; }
+
 /* 왼쪽 하단 동그란 원(마커) 버튼 그룹 */
 .pdf-fab-group {
   position: fixed;
