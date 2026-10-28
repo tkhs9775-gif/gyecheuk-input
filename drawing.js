@@ -358,17 +358,33 @@ function renderDrawingFiles() {
   ul.replaceChildren(...files.map((f) => drawingFileRow(f)), ...folders.flatMap(drawingFolderRows));
 }
 
+const IMAGE_DRAWING_RE = /\.(jpe?g|png)$/i;
+const PDF_MAX_PAGE_PT = 14400;   // PDF 한 쪽의 최대 가로·세로
+
+// JPG·PNG 도면은 그림 한 장짜리 PDF로 바꿔 올린다. 이후 보기·동그라미·저장·내 위치는 PDF 도면과 똑같이 돈다
+async function imageToPdfBase64(file) {
+  const PDFLib = await ensurePdfLib();
+  const doc = await PDFLib.PDFDocument.create();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const img = /\.png$/i.test(file.name) ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+  const { width, height } = img.scale(Math.min(1, PDF_MAX_PAGE_PT / Math.max(img.width, img.height)));
+  doc.addPage([width, height]).drawImage(img, { x: 0, y: 0, width, height });
+  return uint8ToBase64(await doc.save());
+}
+
 async function uploadDrawingPdf(file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith('.pdf')) { alert('PDF 파일(.pdf)만 도면으로 올릴 수 있습니다.'); return; }
+  const isImage = IMAGE_DRAWING_RE.test(file.name);
+  if (!isImage && !file.name.toLowerCase().endsWith('.pdf')) { alert('PDF·JPG·PNG 파일만 도면으로 올릴 수 있습니다.'); return; }
   if (file.size === 0) { alert('비어 있는 파일입니다. 다른 파일을 골라 주세요.'); return; }
-  if (file.size > MAX_DRAWING_BYTES) { alert(`도면 PDF는 ${MAX_DRAWING_BYTES / MB}MB 이하만 올릴 수 있습니다. (이 파일 ${fmtSize(file.size)})`); return; }
+  if (file.size > MAX_DRAWING_BYTES) { alert(`도면 파일은 ${MAX_DRAWING_BYTES / MB}MB 이하만 올릴 수 있습니다. (이 파일 ${fmtSize(file.size)})`); return; }
   const btn = $('btnUploadDrawing');
   btn.disabled = true;
   $('drawingFolderNote').textContent = `'${file.name}' 도면을 클라우드 폴더에 올리는 중... (파일이 크면 1분 정도 걸립니다)`;
   try {
-    const base64 = await readFileAsBase64(file);
-    const res = await api('drawing_upload', { site: drawingState.site, file: { name: file.name, base64 } });
+    const base64 = isImage ? await imageToPdfBase64(file) : await readFileAsBase64(file);
+    const name = isImage ? file.name.replace(IMAGE_DRAWING_RE, '.pdf') : file.name;
+    const res = await api('drawing_upload', { site: drawingState.site, file: { name, base64 } });
     if (res.file) {
       await putCachedPdfBytes(res.file.id, b64ToUint8(base64));
       drawingState.files.unshift(res.file);
@@ -1210,6 +1226,58 @@ function saveDrawingNotesToServer(showAlert = true) {
   return savingNotes;
 }
 
+const PHONE_SAVE_KEY = 'drawingPhoneSave';   // 'always'면 묻지 않고 폰에도 저장
+
+// 클라우드 저장 결과(message)를 보여 주며 이 폰에도 저장할지 묻는다. files: [{ name, base64, folder }]
+async function askPhoneSave(message, files) {
+  if (!files.length) { alert(message); return; }
+  if (store.get(PHONE_SAVE_KEY) !== 'always') {
+    const dlg = $('phoneSaveDialog');
+    $('phoneSaveMsg').textContent = `${message}\n\n이 폰에도 ${files.length > 1 ? `${files.length}개 모두 ` : ''}저장할까요?`;
+    $('phoneSaveYes').textContent = files.length > 1 ? `폰에도 ${files.length}개 저장` : '폰에도 저장';
+    $('phoneSaveAlways').checked = false;
+    dlg.returnValue = '';   // 바탕을 눌러 닫으면 '안 함'
+    dlg.showModal();
+    await new Promise((resolve) => dlg.addEventListener('close', resolve, { once: true }));
+    if (dlg.returnValue !== 'yes') return;
+    if ($('phoneSaveAlways').checked) { store.set(PHONE_SAVE_KEY, 'always'); $('drawingPhoneAlways').checked = true; }
+    message = '';
+  }
+  const { saved, total } = await savePdfsToPhone(files, drawingState.site, pdfToJpegs);
+  const where = window.AndroidGallery ? `갤러리 「계측사진/${phoneAlbumFolder(drawingState.site)}/${DRAWING_ALBUM}」 폴더(JPG 그림)` : '다운로드 폴더';
+  const result = saved === total ? `폰에 ${saved}개 저장했습니다: ${where}` : `폰에 ${total}개 중 ${saved}개만 저장했습니다: ${where}`;
+  alert([message, result].filter(Boolean).join('\n\n'));
+}
+
+const PHONE_JPEG_LONG_PX = 3000;   // 갤러리에 저장할 도면 그림의 긴 변(작은 글씨도 확대하면 읽히는 정도)
+const PHONE_JPEG_QUALITY = 0.85;
+
+// 앱의 갤러리 저장은 JPG만 받으므로 PDF를 쪽마다 JPG(base64)로 그린다
+async function pdfToJpegs(base64) {
+  await ensurePdfJs();
+  const doc = await pdfjsLib.getDocument({ data: b64ToUint8(base64), isEvalSupported: false }).promise;
+  try {
+    const out = [];
+    for (let n = 1; n <= doc.numPages; n += 1) {
+      const page = await doc.getPage(n);
+      const unscaled = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: PHONE_JPEG_LONG_PX / Math.max(unscaled.width, unscaled.height) });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';   // JPG는 투명이 없어 빈 곳이 검게 나오지 않도록 흰 바탕
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      out.push(canvas.toDataURL('image/jpeg', PHONE_JPEG_QUALITY).split(',')[1]);
+      canvas.width = 0;   // 큰 그림 메모리 바로 해제
+    }
+    return out;
+  } finally {
+    doc.destroy();
+  }
+}
+
 async function doSaveDrawingNotes(showAlert) {
   const file = drawingState.currentFile;
   if (!file) return;
@@ -1220,11 +1288,12 @@ async function doSaveDrawingNotes(showAlert) {
 
   const newFileName = buildSavedDrawingFileName(file.name, new Date());
   let flattened = true;   // 메모를 PDF 그림에 합쳤는지(합치기 라이브러리를 못 받으면 원본 그대로 올린다)
+  let pdfBase64 = store.get(`pdf_b64_${file.id}`);
+  const phoneFiles = () => (pdfBase64 ? [{ name: newFileName, base64: pdfBase64, folder: '' }] : []);
 
   try {
     // 1) 원본 파일에도 야장 메모 JSON은 보존해 두고,
     // 2) '원본이름_수정날짜(요일한글자).pdf' 로 야장 메모가 합쳐진 새 PDF를 다른 이름으로 저장!
-    let pdfBase64 = store.get(`pdf_b64_${file.id}`);
     if (drawingState.rawPdfBytes) {
       try {
         pdfBase64 = await buildAnnotatedPdfBase64();
@@ -1262,16 +1331,16 @@ async function doSaveDrawingNotes(showAlert) {
     drawingState.dirty = false;
     btn.textContent = '저장됨✓';
     if (showAlert) {
-      alert(flattened
+      askPhoneSave(flattened
         ? `'${newFileName}' 이름으로 도면 폴더에 새로 저장되었습니다!`
-        : `'${newFileName}' 이름으로 저장했지만, 합치기 기능 파일을 받지 못해 메모를 PDF 그림에 합치지는 못했습니다.\n메모 자체는 서버에 보관되어 다시 열면 보입니다.`);
+        : `'${newFileName}' 이름으로 저장했지만, 합치기 기능 파일을 받지 못해 메모를 PDF 그림에 합치지는 못했습니다.\n메모 자체는 서버에 보관되어 다시 열면 보입니다.`, phoneFiles());
     }
   } catch (err) {
     if (err.isAuth) { drawingState.dirty = false; signOut(); closePdfViewer(); return; }
     btn.textContent = '폰보관✓';
     const reason = friendlyError(err, '메모를 PDF로 만들지 못했습니다.');
     // 서버가 입력을 거부한 것(파일 이름·메모 크기 등)은 신호 문제가 아니므로 그 사유를 그대로 보여 준다
-    if (showAlert) alert(err.network ? `신호가 약해 이 휴대폰에 먼저 보관했습니다: ${reason}` : `서버에 저장하지 못해 이 휴대폰에만 보관했습니다: ${reason}`);
+    if (showAlert) askPhoneSave(err.network ? `신호가 약해 이 휴대폰에 먼저 보관했습니다: ${reason}` : `서버에 저장하지 못해 이 휴대폰에만 보관했습니다: ${reason}`, phoneFiles());
   } finally {
     btn.disabled = false;
     setTimeout(() => { if (btn.textContent !== '저장중..') btn.textContent = '다른이름 저장'; }, BTN_RESET_MS);
@@ -1295,11 +1364,13 @@ async function saveTypedPdfs() {
   const savePath = `${folderName}/${EXTERNAL_DIR}`;   // 원본 폴더 안의 외부계측기 폴더
   const saved = [];
   const failed = [];
+  const phoneFiles = [];   // 클라우드에 못 올린 것도 PDF를 만들었으면 폰에는 저장할 수 있다
   for (const t of types) {
     btn.textContent = `${t.name} 저장중..`;
     const name = buildSavedDrawingFileName(file.name, new Date()).replace(/(_\d{4}-\d{2}-\d{2}\([일월화수목금토]\)\.pdf)$/, `_${t.name}$1`);
     try {
       const base64 = await buildAnnotatedPdfBase64(t.code);
+      phoneFiles.push({ name, base64, folder: savePath });
       const res = await api('drawing_upload', {
         site: drawingState.site,
         file: { name, base64, replaceSameName: true, subdir: savePath, user: $('user')?.value || '' },
@@ -1322,17 +1393,19 @@ async function saveTypedPdfs() {
   btn.disabled = false;
   btn.textContent = '계측기별 PDF';
   const untyped = pins.filter((p) => !p.type).length;
-  alert([
-    saved.length ? `'${folderName}' 폴더에 ${saved.length}개 저장: ${saved.join(', ')}` : '저장된 파일이 없습니다',
+  askPhoneSave([
+    saved.length ? `'${folderName}' 폴더에 ${saved.length}개 저장: ${saved.join(', ')}` : '클라우드에 저장된 파일이 없습니다',
     failed.length ? `실패: ${failed.join(', ')}` : '',
     untyped ? `종류 없는 메모 ${untyped}개는 계측기별 PDF에 들어가지 않습니다` : '',
-  ].filter(Boolean).join('\n'));
+  ].filter(Boolean).join('\n'), phoneFiles);
 }
 
 function initDrawingModule() {
   renderPinLegend();
   $('pdfSaveTyped').addEventListener('click', saveTypedPdfs);
   $('drawingBackSites').addEventListener('click', loadDrawingTab);
+  // 안드로이드 앱의 파일 선택 창은 accept의 첫 형식(PDF)만 보여 줄 수 있어 앱에서는 모든 파일을 보이고 uploadDrawingPdf가 거른다
+  if (window.AndroidGallery) $('inputDrawingPdf').removeAttribute('accept');
   $('btnUploadDrawing').addEventListener('click', () => $('inputDrawingPdf').click());
   $('inputDrawingPdf').addEventListener('change', (e) => {
     const f = e.target.files?.[0];
@@ -1378,6 +1451,8 @@ function initDrawingModule() {
     renderPdfPage();
   });
   $('pdfSaveNotes').addEventListener('click', () => saveDrawingNotesToServer(true));
+  $('drawingPhoneAlways').checked = store.get(PHONE_SAVE_KEY) === 'always';
+  $('drawingPhoneAlways').addEventListener('change', (e) => (e.target.checked ? store.set(PHONE_SAVE_KEY, 'always') : store.remove(PHONE_SAVE_KEY)));
 
   $('btnPinMode').addEventListener('click', () => setPinMode(!drawingState.pinMode));
   $('btnPenMode').addEventListener('click', () => setPenMode(!drawingState.penMode));

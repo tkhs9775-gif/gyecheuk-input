@@ -9,7 +9,7 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=41">
+<link rel="stylesheet" href="style.css?v=42">
 <title>키움이엔씨</title>
 </head>
 <body>
@@ -245,6 +245,21 @@
   </div>
 </dialog>
 
+<dialog id="phoneSaveDialog" aria-labelledby="phoneSaveTitle">
+  <form method="dialog" class="dlg">
+    <h2 id="phoneSaveTitle" class="dlg-title">도면 저장</h2>
+    <p id="phoneSaveMsg" style="white-space: pre-line"></p>
+    <label class="keep" style="margin-bottom: 14px">
+      <input id="phoneSaveAlways" type="checkbox">
+      <span>다음부터 묻지 않고 항상 폰에도 저장</span>
+    </label>
+    <div class="row">
+      <button value="no" class="btn outline">안 함</button>
+      <button id="phoneSaveYes" value="yes" class="btn primary grow">폰에도 저장</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="instDialog" aria-labelledby="instTitle">
   <form id="instForm" class="dlg" novalidate>
     <h2 id="instTitle" class="dlg-title">계측기 추가</h2>
@@ -286,8 +301,8 @@
     </div>
     <div class="row between" style="margin: 8px 0 12px;">
       <span id="drawingFolderNote" class="muted" role="status">PDF를 터치하면 전체화면 야장으로 열립니다.</span>
-      <button id="btnUploadDrawing" type="button" class="btn outline small">＋ PDF 도면 추가</button>
-      <input id="inputDrawingPdf" type="file" accept="application/pdf,.pdf" hidden>
+      <button id="btnUploadDrawing" type="button" class="btn outline small">＋ 도면 추가 (PDF·JPG)</button>
+      <input id="inputDrawingPdf" type="file" accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png" hidden>
     </div>
     <ul id="drawingFileList" class="list"></ul>
   </div>
@@ -411,6 +426,10 @@
   </dl>
   <button id="openManage" type="button" class="btn outline wide">현장·측정자 관리</button>
   <button id="reloadApp" type="button" class="btn outline wide">최신 버전으로 새로고침</button>
+  <label class="keep">
+    <input id="drawingPhoneAlways" type="checkbox">
+    <span>도면 저장할 때 폰에도 항상 저장<small>끄면 저장할 때마다 물어봅니다</small></span>
+  </label>
   <a id="downloadApk" href="https://github.com/tkhs9775-gif/gyecheuk-input/releases/download/latest/gyecheuk-input.apk" class="btn outline wide apk-link">📱 안드로이드 앱(APK) 내려받기</a>
 </main>
 
@@ -432,14 +451,14 @@
   </a>
 </nav>
 
-<script src="config.js?v=41"></script>
-<script src="weather.js?v=41"></script>
-<script src="entries.js?v=41"></script>
-<script src="push.js?v=41"></script>
-<script src="outbox.js?v=41"></script>
-<script src="phonecopy.js?v=41"></script>
-<script src="drawing.js?v=41"></script>
-<script src="gps.js?v=41"></script>
-<script src="app.js?v=41"></script>
+<script src="config.js?v=42"></script>
+<script src="weather.js?v=42"></script>
+<script src="entries.js?v=42"></script>
+<script src="push.js?v=42"></script>
+<script src="outbox.js?v=42"></script>
+<script src="phonecopy.js?v=42"></script>
+<script src="drawing.js?v=42"></script>
+<script src="gps.js?v=42"></script>
+<script src="app.js?v=42"></script>
 </body>
 </html>

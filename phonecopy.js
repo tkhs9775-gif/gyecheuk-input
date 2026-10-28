@@ -23,11 +23,55 @@ function phoneAlbumFolder(site) {
 }
 
 // 클라우드로 보내는 것과 같은 압축본(150KB 이하 JPEG, base64)을 파일 조각으로 되돌린다
-function base64ToBlob(base64) {
+function base64ToBlob(base64, mime = 'image/jpeg') {
   const bin = atob(base64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: 'image/jpeg' });
+  return new Blob([bytes], { type: mime });
+}
+
+// 브라우저에서 파일을 다운로드 폴더로 내려받는다
+function downloadBlob(blob, fileName) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 30000);
+}
+
+const DRAWING_ALBUM = '도면';
+
+// 도면 PDF를 이 폰에도 저장한다. files: [{ name, base64, folder }] (folder는 현장 폴더 아래 하위 폴더, 없으면 '')
+// - 안드로이드 앱: 앱의 사진 저장 기능은 JPG만 받으므로 쪽마다 JPG로 바꿔(toJpegs) 갤러리 '계측사진/<현장>/도면/<folder>/'에 저장
+//   (새 APK 없이 화면 새로고침만으로 되게 하려고 기존 savePhoto를 쓴다)
+// - 브라우저: PDF 그대로 다운로드 폴더에. { saved, total } 파일 수를 돌려준다
+async function savePdfsToPhone(files, site, toJpegs) {
+  const bridge = typeof window !== 'undefined' && window.AndroidGallery && typeof window.AndroidGallery.savePhoto === 'function'
+    ? window.AndroidGallery
+    : null;
+  let saved = 0;
+  let total = 0;
+  for (const [i, f] of files.entries()) {
+    if (bridge) {
+      const folder = [phoneAlbumFolder(site), DRAWING_ALBUM, f.folder].filter(Boolean).join('/');
+      const stem = f.name.replace(/\.pdf$/i, '');
+      let pages = [];
+      try { pages = await toJpegs(f.base64); } catch (err) { console.warn('도면 그림 만들기 실패', err); total += 1; continue; }
+      total += pages.length;
+      for (const [p, jpg] of pages.entries()) {
+        const name = pages.length > 1 ? `${stem}_${p + 1}쪽.jpg` : `${stem}.jpg`;
+        try { if (bridge.savePhoto(jpg, folder, name)) saved += 1; } catch (err) { console.warn('갤러리 저장 오류', err); }
+      }
+      continue;
+    }
+    total += 1;
+    downloadBlob(base64ToBlob(f.base64, 'application/pdf'), f.name);
+    saved += 1;
+    if (i < files.length - 1) await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_GAP_MS));
+  }
+  return { saved, total };
 }
 
 // photos: readPhotos()가 만든 [{ base64 }]. 원본이 아니라 압축본을 저장하므로 폰과 클라우드의 파일이 같다
@@ -46,14 +90,7 @@ async function saveCopiesToPhone(photos, site) {
       if (!ok) console.warn(`갤러리 저장 실패: ${fileName}`);
       continue;
     }
-    const blob = base64ToBlob(photo.base64);
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = fileName;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(link.href), 30000);
+    downloadBlob(base64ToBlob(photo.base64), fileName);
     if (i < photos.length - 1) await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_GAP_MS));
   }
 }
