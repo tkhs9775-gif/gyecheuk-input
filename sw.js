@@ -5,7 +5,7 @@ const CACHE = `shell-${V}`;
 const SHELL = [
   './', 'index.html', 'logo.png', 'manifest.json',
   `style.css?v=${V}`, `config.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
-  `outbox.js?v=${V}`, `phonecopy.js?v=${V}`, `drawing.js?v=${V}`, `gps.js?v=${V}`, `app.js?v=${V}`,
+  `outbox.js?v=${V}`, `phonecopy.js?v=${V}`, `drawing.js?v=${V}`, `gps.js?v=${V}`, `gallery.js?v=${V}`, `app.js?v=${V}`,
 ];
 
 // 설치할 때는 브라우저 캐시를 거치지 않고 새로 받는다: 묵은 index.html이 옛 ?v= 파일을 가리키면 오프라인에서 앱이 열리지 않는다

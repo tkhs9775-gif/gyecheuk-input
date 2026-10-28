@@ -16,7 +16,7 @@ const MIN_TIMEOUT_MS = 30 * 1000;
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const BYTES_PER_MS = 15;   // 느린 신호를 초당 약 15KB로 보고 시간 제한을 잡는다
 const BUILD = new URL(document.currentScript.src).searchParams.get('v') ?? '-';
-const TABBED = ['home', 'drawing', 'shot', 'info'];
+const TABBED = ['home', 'drawing', 'shot', 'gallery', 'info'];
 const TZ = 'Asia/Seoul';   // 서버(Code.gs)가 날짜를 한국 시간으로 해석하므로 폰 시간대와 무관하게 맞춘다
 const SURVEY = '측량';
 const ISSUE_KINDS = ['', '파손', '망실', '접근 불가', '작동 불량'];
@@ -166,19 +166,21 @@ function showSplashError(message) {
 // ---------- screens ----------
 
 function showScreen(name) {
-  for (const id of ['gate', 'home', 'input', 'shot', 'drawing', 'info']) show($(id), id === name);
+  for (const id of ['gate', 'home', 'input', 'shot', 'gallery', 'drawing', 'info']) show($(id), id === name);
   show($('tabbar'), TABBED.includes(name));
-  for (const a of $('tabbar').children) a.setAttribute('aria-current', a.dataset.screen === name ? 'page' : 'false');
+  for (const a of $('tabbar').children) a.setAttribute('aria-current', a.dataset.screen === (name === 'gallery' ? 'shot' : name) ? 'page' : 'false');
   window.scrollTo(0, 0);
 }
 
 function route() {
   if (!state.ready) return;
   for (const d of document.querySelectorAll('dialog[open]')) d.close();   // 안드로이드 뒤로가기(주소 이동)로 화면이 바뀌면 떠 있던 창도 닫는다
-  const name = { '#input': 'input', '#shot': 'shot', '#drawing': 'drawing', '#info': 'info' }[location.hash] ?? 'home';
+  const name = { '#input': 'input', '#shot': 'shot', '#gallery': 'gallery', '#drawing': 'drawing', '#info': 'info' }[location.hash] ?? 'home';
+  hidePhotoViewer();
   showScreen(name);
   if (name === 'drawing') loadDrawingTab();
   if (name === 'info') renderInfo();
+  if (name === 'gallery') loadGallery();
 }
 
 function showGate() {
@@ -989,6 +991,7 @@ if (window.AndroidGallery) {
 initOutbox();
 if (typeof initDrawingModule === 'function') initDrawingModule();
 initGps();
+initGallery();
 // file:// (앱 안의 오프라인 사본)에서는 서비스 워커를 쓸 수 없다. 그래도 앱은 그대로 동작한다
 if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${BUILD}`).catch((err) => console.warn('서비스 워커 등록 실패', err));
 

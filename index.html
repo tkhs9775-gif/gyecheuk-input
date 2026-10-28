@@ -9,7 +9,7 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=42">
+<link rel="stylesheet" href="style.css?v=43">
 <title>키움이엔씨</title>
 </head>
 <body>
@@ -167,6 +167,10 @@
     </a>
     <h1 class="title">사진만 찍기</h1>
   </div>
+  <nav class="seg" aria-label="사진">
+    <a href="#shot" aria-current="page">📷 찍기</a>
+    <a href="#gallery">🖼 갤러리</a>
+  </nav>
   <p class="muted">계측값 없이 사진만 올립니다. 다른 현장이나 기타 사진도 됩니다.</p>
 
   <label class="field select-card"><span class="label">현장</span>
@@ -284,6 +288,37 @@
     </div>
   </form>
 </dialog>
+
+<main id="gallery" class="screen hidden">
+  <div class="bar-top">
+    <a id="galleryBack" href="#home" class="icon-btn" aria-label="뒤로">
+      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+    </a>
+    <h1 id="galleryTitle" class="title">갤러리</h1>
+  </div>
+  <nav class="seg" aria-label="사진">
+    <a href="#shot">📷 찍기</a>
+    <a href="#gallery" aria-current="page">🖼 갤러리</a>
+  </nav>
+  <p id="galleryNote" class="muted" role="status"></p>
+  <div id="galleryAlbums" class="g-albums"></div>
+  <div id="galleryPhotos" class="hidden"></div>
+  <button id="galleryMore" type="button" class="btn outline wide hidden">사진 더 보기</button>
+</main>
+
+<div id="photoViewer" class="photo-viewer hidden" role="dialog" aria-modal="true" aria-label="사진 크게 보기">
+  <div class="pv-top">
+    <button id="pvClose" type="button" class="icon-btn" aria-label="닫기">
+      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+    </button>
+    <span id="pvCount"></span>
+    <button id="pvSave" type="button" class="pv-btn">폰에 저장</button>
+  </div>
+  <div id="pvStage" class="pv-stage"><img id="pvImg" alt="" draggable="false"></div>
+  <p id="pvInfo" class="pv-bottom"></p>
+  <button id="pvPrev" type="button" class="pv-nav prev" aria-label="이전 사진">‹</button>
+  <button id="pvNext" type="button" class="pv-nav next" aria-label="다음 사진">›</button>
+</div>
 
 <main id="drawing" class="screen hidden">
   <div id="drawingSitesView">
@@ -451,14 +486,15 @@
   </a>
 </nav>
 
-<script src="config.js?v=42"></script>
-<script src="weather.js?v=42"></script>
-<script src="entries.js?v=42"></script>
-<script src="push.js?v=42"></script>
-<script src="outbox.js?v=42"></script>
-<script src="phonecopy.js?v=42"></script>
-<script src="drawing.js?v=42"></script>
-<script src="gps.js?v=42"></script>
-<script src="app.js?v=42"></script>
+<script src="config.js?v=43"></script>
+<script src="weather.js?v=43"></script>
+<script src="entries.js?v=43"></script>
+<script src="push.js?v=43"></script>
+<script src="outbox.js?v=43"></script>
+<script src="phonecopy.js?v=43"></script>
+<script src="drawing.js?v=43"></script>
+<script src="gps.js?v=43"></script>
+<script src="gallery.js?v=43"></script>
+<script src="app.js?v=43"></script>
 </body>
 </html>
