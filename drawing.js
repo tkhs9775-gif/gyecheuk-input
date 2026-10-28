@@ -419,6 +419,9 @@ async function loadPdfBytes(fileId) {
   return bytes;
 }
 
+// 현장 폴더 바로 아래 도면 + 원본별 폴더 안의 도면(원본이 폴더 안에 있어도 저장본의 바탕으로 찾을 수 있게)
+const allDrawingFiles = () => [...drawingState.files, ...(drawingState.folders || []).flatMap((f) => f.files || [])];
+
 let openSeq = 0;              // 도면을 연달아 두 번 누르면 먼저 것은 버린다
 let viewerReturnFocus = null; // 뷰어를 닫으면 열기 전에 있던 자리(도면 줄)로 포커스를 돌려준다
 let closingViewer = false;
@@ -437,7 +440,9 @@ async function openPdfFieldbook(file) {
   drawingState.activePinId = null;
   drawingState.dirty = false;
   drawingState.notes = normalizeNotes(readCached(`pdf_notes_${file.id}`));
-  drawingState.sourceFile = sourceFileOf(file, drawingState.notes, drawingState.files);
+  drawingState.sourceFile = sourceFileOf(file, drawingState.notes, allDrawingFiles());
+  // 다른 폰(또는 PC)에서 저장한 저장본은 이 폰에 메모가 없어 원본 표시(sourceId)를 모른다 → 서버 메모를 받아 본 뒤 원본을 정한다
+  const askServerForSource = !drawingState.notes.sourceId && DATE_TAG.test(stemOf(file.name));
   setPinMode(false);
   setPenMode(false);
   closePinMemoBox();
@@ -456,6 +461,11 @@ async function openPdfFieldbook(file) {
   const notesPromise = api('drawing_notes_get', { fileId: file.id }).catch((err) => { console.warn('야장 메모 조회 실패', err); return null; });
 
   try {
+    if (askServerForSource) {
+      const serverNotes = await notesPromise;
+      if (seq !== openSeq) return;
+      if (serverNotes?.data?.sourceId) drawingState.sourceFile = sourceFileOf(file, normalizeNotes(serverNotes.data), allDrawingFiles()) || drawingState.sourceFile;
+    }
     const source = drawingState.sourceFile;
     const [pdfjsLib, sourceBytes] = await Promise.all([
       ensurePdfJs(),
