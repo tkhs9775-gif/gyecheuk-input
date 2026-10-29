@@ -142,6 +142,7 @@ const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.35;            // ＋/－ 한 번에 바뀌는 배율
 const TAP_SLOP_PX = 14;            // 이만큼까지 손가락이 흔들려도 '찍기'로 본다
+const GHOST_CLICK_MS = 700;        // 손가락을 뗀 뒤 브라우저가 만드는 click이 올 수 있는 시간
 const MAX_CANVAS_PX = 12000000;    // 도면 캔버스 최대 화소 수. 그리는 동안 숨은 캔버스가 하나 더 있으므로 폰 메모리 한도의 절반 아래로
 
 const EXTERNAL_DIR = '외부계측기';
@@ -726,8 +727,24 @@ function onStageUp(e) {
   if (g.pts.size === 0) g.start = null;
   // 도면 위를 찍었을 때만(바깥 회색 여백은 아님). 이미 있는 동그라미는 그 동그라미가 받는다
   if (e.type === 'pointerup' && s && !g.moved && drawingState.pinMode && s.target.closest('#pdfStage')) {
+    swallowNextClick(e.clientX, e.clientY);
     handleStageTapForPin({ clientX: s.x, clientY: s.y, target: s.target });
   }
+}
+
+// 손가락을 떼면 브라우저가 그 자리에 click을 하나 더 만든다. 그때는 이미 번호창이 떠 있어서, click이 창 바탕에 떨어지면 창이 바로 닫히고(번호창이 안 뜸)
+// [확인] 자리에 떨어지면 미리 채운 번호로 동그라미가 바로 생겼다. 찍은 직후 GHOST_CLICK_MS 안에 손가락 자리(x, y)에 오는 click 하나만 버린다
+// (키보드 Enter로 [확인]을 누를 때 생기는 click이나 다른 자리를 누른 것은 그대로 둔다)
+function swallowNextClick(x, y) {
+  const eat = (ev) => {
+    if (Math.hypot(ev.clientX - x, ev.clientY - y) > TAP_SLOP_PX * 2) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    done();
+  };
+  const done = () => { window.removeEventListener('click', eat, true); clearTimeout(timer); };
+  const timer = setTimeout(done, GHOST_CLICK_MS);
+  window.addEventListener('click', eat, true);
 }
 
 function initStageGestures() {
@@ -1408,9 +1425,13 @@ async function askPhoneSave(message, files) {
     if ($('phoneSaveAlways').checked) { store.set(PHONE_SAVE_KEY, 'always'); $('drawingPhoneAlways').checked = true; }
     message = '';
   }
-  const { saved, total } = await savePdfsToPhone(files, drawingState.site, pdfToJpegs);
+  const { saved, total, same } = await savePdfsToPhone(files, drawingState.site, pdfToJpegs);
   const where = window.AndroidGallery ? `갤러리 「계측사진/${phoneAlbumFolder(drawingState.site)}/${DRAWING_ALBUM}」 폴더(JPG 그림)` : '다운로드 폴더';
-  const result = saved === total ? `폰에 ${saved}개 저장했습니다: ${where}` : `폰에 ${total}개 중 ${saved}개만 저장했습니다: ${where}`;
+  const fresh = saved - same;
+  const result = [
+    saved === total ? (fresh ? `폰에 ${fresh}개 저장했습니다: ${where}` : '') : `폰에 ${total}개 중 ${saved}개만 저장했습니다: ${where}`,
+    same ? `${same}개는 폰에 같은 그림이 이미 있어 다시 저장하지 않았습니다(겹침 방지)` : '',
+  ].filter(Boolean).join('\n');
   alert([message, result].filter(Boolean).join('\n\n'));
 }
 

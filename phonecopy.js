@@ -43,16 +43,44 @@ function downloadBlob(blob, fileName) {
 
 const DRAWING_ALBUM = '도면';
 
+// 폰 갤러리에 같은 이름으로 다시 저장하면 안드로이드가 지우지 않고 '이름 (1).jpg'로 하나 더 만든다.
+// 그래서 폴더/이름마다 마지막에 저장한 그림의 지문(해시)을 이 폰에 적어 두고, 그림이 같으면 다시 저장하지 않는다.
+// ponytail: 갤러리에서 손으로 지운 파일도 '있음'으로 본다. 이름에 날짜가 들어 있어 다음 날엔 새로 저장된다
+const PHONE_SAVED_KEY = 'phoneSavedSigs';
+const MAX_PHONE_SAVED = 500;
+
+// 문자열 지문(FNV-1a 32비트) + 길이. 같은 쪽을 같은 메모로 그리면 같은 JPG가 나오므로 같은 값이 된다
+function fingerprint(text) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${text.length}:${h.toString(16)}`;
+}
+
+function readPhoneSaved() {
+  try { return JSON.parse(localStorage.getItem(PHONE_SAVED_KEY) || '{}') || {}; } catch { return {}; }
+}
+
+function writePhoneSaved(map) {
+  const keys = Object.keys(map);
+  const kept = Object.fromEntries(keys.slice(Math.max(0, keys.length - MAX_PHONE_SAVED)).map((k) => [k, map[k]]));   // 오래된 것부터 버린다
+  try { localStorage.setItem(PHONE_SAVED_KEY, JSON.stringify(kept)); } catch { /* 못 적어도 저장 자체는 된다 */ }
+}
+
 // 도면 PDF를 이 폰에도 저장한다. files: [{ name, base64, folder }] (folder는 현장 폴더 아래 하위 폴더, 없으면 '')
 // - 안드로이드 앱: 앱의 사진 저장 기능은 JPG만 받으므로 쪽마다 JPG로 바꿔(toJpegs) 갤러리 '계측사진/<현장>/도면/<folder>/'에 저장
 //   (새 APK 없이 화면 새로고침만으로 되게 하려고 기존 savePhoto를 쓴다)
-// - 브라우저: PDF 그대로 다운로드 폴더에. { saved, total } 파일 수를 돌려준다
+// - 브라우저: PDF 그대로 다운로드 폴더에. { saved, total, same } 파일 수를 돌려준다(same: 폰에 같은 그림이 이미 있어 건너뛴 수, saved에 포함)
 async function savePdfsToPhone(files, site, toJpegs) {
   const bridge = typeof window !== 'undefined' && window.AndroidGallery && typeof window.AndroidGallery.savePhoto === 'function'
     ? window.AndroidGallery
     : null;
   let saved = 0;
   let total = 0;
+  let same = 0;
+  const done = readPhoneSaved();
   for (const [i, f] of files.entries()) {
     if (bridge) {
       const folder = [phoneAlbumFolder(site), DRAWING_ALBUM, f.folder].filter(Boolean).join('/');
@@ -62,8 +90,18 @@ async function savePdfsToPhone(files, site, toJpegs) {
       total += pages.length;
       for (const [p, jpg] of pages.entries()) {
         const name = pages.length > 1 ? `${stem}_${p + 1}쪽.jpg` : `${stem}.jpg`;
-        try { if (bridge.savePhoto(jpg, folder, name)) saved += 1; } catch (err) { console.warn('갤러리 저장 오류', err); }
+        const key = `${folder}/${name}`;
+        const sig = fingerprint(jpg);
+        if (done[key] === sig) { saved += 1; same += 1; continue; }
+        try {
+          if (bridge.savePhoto(jpg, folder, name)) {
+            saved += 1;
+            delete done[key];   // 새로 적어 맨 뒤(가장 최근)로
+            done[key] = sig;
+          }
+        } catch (err) { console.warn('갤러리 저장 오류', err); }
       }
+      writePhoneSaved(done);
       continue;
     }
     total += 1;
@@ -71,7 +109,7 @@ async function savePdfsToPhone(files, site, toJpegs) {
     saved += 1;
     if (i < files.length - 1) await new Promise((resolve) => setTimeout(resolve, DOWNLOAD_GAP_MS));
   }
-  return { saved, total };
+  return { saved, total, same };
 }
 
 // photos: readPhotos()가 만든 [{ base64 }]. 원본이 아니라 압축본을 저장하므로 폰과 클라우드의 파일이 같다
@@ -95,4 +133,4 @@ async function saveCopiesToPhone(photos, site) {
   }
 }
 
-if (typeof module !== 'undefined') module.exports = { safeFilePart, phoneFileName, phoneAlbumFolder, base64ToBlob };
+if (typeof module !== 'undefined') module.exports = { safeFilePart, phoneFileName, phoneAlbumFolder, base64ToBlob, savePdfsToPhone, fingerprint };
