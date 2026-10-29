@@ -138,6 +138,12 @@ const drawingState = {
   dirty: false,
 };
 
+const MIN_ZOOM = 0.75;
+const MAX_ZOOM = 4;
+const ZOOM_STEP = 0.35;            // ＋/－ 한 번에 바뀌는 배율
+const TAP_SLOP_PX = 14;            // 이만큼까지 손가락이 흔들려도 '찍기'로 본다
+const MAX_CANVAS_PX = 16000000;    // 도면 캔버스 최대 화소 수(폰 메모리 한도 아래)
+
 const EXTERNAL_DIR = '외부계측기';
 const PDF_CACHE_DB = 'gyecheuk_pdf_cache';
 const PDF_CACHE_STORE = 'pdfs';
@@ -564,7 +570,8 @@ async function renderPdfPage() {
     const rotation = (page.rotate + drawingState.rotation) % 360;
     const unscaled = page.getViewport({ scale: 1, rotation });
     const fitScale = (wrapW / unscaled.width) * drawingState.scale;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // 많이 확대해도 캔버스가 폰 메모리 한도를 넘지 않게 선명도(dpr)를 낮춘다
+    const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_CANVAS_PX / (unscaled.width * unscaled.height * fitScale * fitScale)));
     const viewport = page.getViewport({ scale: fitScale * dpr, rotation });
 
     const pdfCanvas = $('pdfCanvas');
@@ -603,6 +610,114 @@ async function renderPdfPage() {
 
 function currentPagePins() {
   return (drawingState.notes.pins || []).filter((p) => p.page === drawingState.pageNum);
+}
+
+// ---------- 확대한 도면을 손가락으로 다루기 ----------
+// 도면 칸의 끌기·확대는 브라우저에 맡기지 않고 직접 처리한다(.pdf-stage-wrap { touch-action: none }).
+// 확대하면 화면이 사방으로 움직일 수 있어, 찍을 때 손가락이 조금만 흔들려도 브라우저가 '끌기'로 보고 터치를 버렸기 때문.
+// 한 손가락: TAP_SLOP_PX 이하로 움직였다 떼면 찍기, 더 움직이면 끌어서 이동. 두 손가락: 벌리거나 오므려 확대·축소(손가락 사이가 제자리)
+const stageGesture = { pts: new Map(), start: null, moved: false, pinch: null };
+const midOf = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+const distOf = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) || 1;
+const clampScale = (s) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, s));
+
+// 화면 좌표가 도면의 어디(가로·세로 비율)인지
+function stageFraction(clientX, clientY) {
+  const r = $('pdfStage').getBoundingClientRect();
+  return { fx: (clientX - r.left) / (r.width || 1), fy: (clientY - r.top) / (r.height || 1) };
+}
+
+// 배율을 바꾸고, 바꾸기 전에 (fx, fy)였던 도면 위치가 다시 화면의 (clientX, clientY)에 오도록 스크롤한다
+async function zoomStageTo(scale, { fx, fy }, clientX, clientY) {
+  $('pdfStage').style.transform = '';
+  const next = clampScale(scale);
+  if (next === drawingState.scale) return;
+  drawingState.scale = next;
+  await renderPdfPage();
+  const wrap = $('pdfStageWrap');
+  const r = $('pdfStage').getBoundingClientRect();
+  wrap.scrollLeft += r.left + fx * r.width - clientX;
+  wrap.scrollTop += r.top + fy * r.height - clientY;
+}
+
+// ＋/－ 버튼: 지금 보고 있는 화면 가운데를 기준으로
+function zoomStageBy(step) {
+  const r = $('pdfStageWrap').getBoundingClientRect();
+  const cx = r.left + r.width / 2;
+  const cy = r.top + r.height / 2;
+  return zoomStageTo(drawingState.scale + step, stageFraction(cx, cy), cx, cy);
+}
+
+function onStageDown(e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (drawingState.penMode && e.target === $('inkCanvas')) return;   // 펜은 잉크 캔버스가 받는다
+  if (e.target.closest('#gpsLayer.calibrating')) return;              // GPS 기준점 찍기는 gps.js가 받는다
+  const g = stageGesture;
+  g.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (g.pts.size === 1) {
+    const wrap = $('pdfStageWrap');
+    g.start = { x: e.clientX, y: e.clientY, left: wrap.scrollLeft, top: wrap.scrollTop, target: e.target };
+    g.moved = false;
+    return;
+  }
+  if (g.pts.size !== 2) return;
+  g.moved = true;   // 두 손가락이면 찍기가 아니다
+  const [a, b] = [...g.pts.values()];
+  const mid = midOf(a, b);
+  const at = stageFraction(mid.x, mid.y);
+  g.pinch = { ...at, dist: distOf(a, b), mid, now: mid, factor: 1 };
+  $('pdfStage').style.transformOrigin = `${at.fx * 100}% ${at.fy * 100}%`;
+}
+
+function onStageMove(e) {
+  const g = stageGesture;
+  if (!g.pts.has(e.pointerId)) return;
+  g.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (g.pinch) {
+    if (g.pts.size < 2) return;
+    const [a, b] = [...g.pts.values()];
+    const p = g.pinch;
+    p.now = midOf(a, b);
+    p.factor = clampScale(drawingState.scale * (distOf(a, b) / p.dist)) / drawingState.scale;
+    // 손을 떼기 전까지는 그림만 늘려 보여 주고(빠름), 뗄 때 그 배율로 다시 그린다
+    $('pdfStage').style.transform = `translate(${p.now.x - p.mid.x}px, ${p.now.y - p.mid.y}px) scale(${p.factor})`;
+    return;
+  }
+  if (!g.start) return;   // 두 손가락 확대 뒤 남은 손가락
+  const dx = e.clientX - g.start.x;
+  const dy = e.clientY - g.start.y;
+  if (!g.moved && Math.hypot(dx, dy) <= TAP_SLOP_PX) return;
+  g.moved = true;
+  const wrap = $('pdfStageWrap');
+  wrap.scrollLeft = g.start.left - dx;
+  wrap.scrollTop = g.start.top - dy;
+}
+
+function onStageUp(e) {
+  const g = stageGesture;
+  if (!g.pts.delete(e.pointerId)) return;
+  if (g.pinch) {
+    if (g.pts.size >= 2) return;
+    const p = g.pinch;
+    g.pinch = null;
+    g.start = null;
+    zoomStageTo(drawingState.scale * p.factor, p, p.now.x, p.now.y);
+    return;
+  }
+  const s = g.start;
+  if (g.pts.size === 0) g.start = null;
+  // 도면 위를 찍었을 때만(바깥 회색 여백은 아님). 이미 있는 동그라미는 그 동그라미가 받는다
+  if (e.type === 'pointerup' && s && !g.moved && drawingState.pinMode && s.target.closest('#pdfStage')) {
+    handleStageTapForPin({ clientX: s.x, clientY: s.y, target: s.target });
+  }
+}
+
+function initStageGestures() {
+  const wrap = $('pdfStageWrap');
+  wrap.addEventListener('pointerdown', onStageDown);
+  wrap.addEventListener('pointermove', onStageMove);
+  wrap.addEventListener('pointerup', onStageUp);
+  wrap.addEventListener('pointercancel', onStageUp);
 }
 
 // ---------- 4단계: 왼쪽 하단 동그란 원(마커) 모드 & 메모 박스 ----------
@@ -1469,14 +1584,9 @@ function initDrawingModule() {
       renderPdfPage();
     }
   });
-  $('pdfZoomIn').addEventListener('click', () => {
-    drawingState.scale = Math.min(3.0, drawingState.scale + 0.35);
-    renderPdfPage();
-  });
-  $('pdfZoomOut').addEventListener('click', () => {
-    drawingState.scale = Math.max(0.75, drawingState.scale - 0.35);
-    renderPdfPage();
-  });
+  $('pdfZoomIn').addEventListener('click', () => zoomStageBy(ZOOM_STEP));
+  $('pdfZoomOut').addEventListener('click', () => zoomStageBy(-ZOOM_STEP));
+  initStageGestures();
   $('pdfRotate').addEventListener('click', () => {
     drawingState.rotation = (drawingState.rotation + 90) % 360;
     closePinMemoBox();
@@ -1496,7 +1606,6 @@ function initDrawingModule() {
     saveDrawingNotesQuiet();
   });
 
-  $('pinLayer').addEventListener('click', handleStageTapForPin);
   $('pinNumCancel').addEventListener('click', () => $('pinNumDialog').close('cancel'));
   $('pinMemoClose').addEventListener('click', closePinMemoBox);
   $('pinMemoDelete').addEventListener('click', deleteActivePin);

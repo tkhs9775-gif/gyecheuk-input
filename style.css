@@ -212,6 +212,7 @@ a.apk-link { display: grid; place-items: center; }
   padding: 12px;
   background: #2D3748;
   position: relative;
+  touch-action: none;   /* 끌기·두 손가락 확대·찍기는 drawing.js가 직접 처리 */
 }
 .pdf-stage {
   position: relative;
