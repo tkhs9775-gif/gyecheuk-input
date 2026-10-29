@@ -798,6 +798,13 @@ async function addInstrument(e) {
   });
 }
 
+// submitOrQueue 결과별 안내
+const SAVED_TEXT = {
+  sent: '저장됨 ✓',
+  background: '저장됨 ✓ 사진·파일은 뒤에서 올립니다(맨 위 줄에서 확인, 앱을 닫아도 다음에 열 때 이어서 보냄)',
+  queued: '신호가 약해 이 폰에 보관했습니다. 잡히면 자동으로 보냅니다.',
+};
+
 // 폰 사본은 덤이라 실패해도 저장 결과를 바꾸지 않는다. 사유는 콘솔에만 남긴다
 const keepCopies = (photos, site) => saveCopiesToPhone(photos, site).catch((err) => console.warn('폰 사본 저장 실패', err));
 
@@ -815,10 +822,10 @@ async function saveShot(e) {
       const label = `사진 ${files.length}장 · ${entry.site || '현장 무관'}`;
       const photos = await readPhotos(files, (i, n) => status(`사진 줄이는 중... (${i}/${n})`, 'ok'));   // 150KB 이하로 줄인 사진: 클라우드와 폰 사본이 같은 파일
       status('저장 중...', 'ok');
-      const result = await submitOrQueue({ id: entry.clientId, action: 'photo', label, payload: { entry, photos } });
+      const result = await submitOrQueue({ id: entry.clientId, action: 'photo', label, payload: { entry, photos } }, true);
       store.set('shotKeep', $('shotKeep').checked ? '1' : '0');
       if ($('shotKeep').checked) keepCopies(photos, entry.site);
-      status(result === 'sent' ? '저장됨 ✓' : '신호가 약해 이 폰에 보관했습니다. 잡히면 자동으로 보냅니다.', 'ok');
+      status(SAVED_TEXT[result], 'ok');
       state.shotId = crypto.randomUUID();
       pickers.shot.clear();
       $('shotMemo').value = '';
@@ -839,13 +846,80 @@ function renderInfo() {
 
 // ---------- start ----------
 
-async function start() {
-  showSplashLoading();
+// 설정·전회값·내 최근 입력을 서버에서 받는다. 새 서버는 boot 한 번(요청마다 1.5초 안팎), boot를 모르는 옛 서버는 config만 받고 나머지는 따로.
+// 받는 사이 측정자를 바꾸거나 저장해서 더 새 목록을 부르면 그쪽이 이기도록 순번을 미리 올려 둔다
+async function fetchBoot() {
+  const user = store.get('user') || '';
+  const seq = { latest: ++latestSeq, recent: ++recentSeq, user };
   try {
-    state.config = await api('config');
-    registerPush();
-    state.offline = false;
-    store.set('cfg', JSON.stringify(state.config));
+    const res = await api('boot', { user });
+    if (res.config && Array.isArray(res.config.sites)) return { ...res, seq };
+  } catch (err) {
+    if (err.code !== 'bad_action') throw err;
+  }
+  return { config: await api('config'), seq };
+}
+
+async function applyLists({ latest, rows, seq }) {
+  if (!latest || !rows) { await reloadLists(); return; }   // 옛 서버
+  if (seq.latest === latestSeq) {
+    state.latest = latest;
+    store.set('latest', JSON.stringify(latest));
+    updateValueInfo();
+  }
+  if (seq.recent !== recentSeq) return;
+  if (seq.user === $('user').value) renderRecent(rows);
+  else await loadRecent().catch(listError);
+}
+
+// 화면을 목록으로 채운다. 서버 응답 전(지난번 목록)과 후에 모두 쓰인다
+function openApp() {
+  state.ready = true;
+  renderPeople();
+  refreshWeather();
+  $('today').textContent = new Date().toLocaleDateString('ko-KR', { timeZone: TZ, month: 'long', day: 'numeric', weekday: 'short' });
+  $('date').value = todayKst();
+  renderTypes();
+  renderIssues();
+  if (!restoreDraft()) selectType(siteTypes()[0] ?? OTHER);
+  route();
+}
+
+// 뒤에서 받은 목록이 지난번과 다를 때만 다시 그린다. 고르던 종류·계측기와 적던 값은 그대로 둔다
+function refreshConfig(config) {
+  const changed = JSON.stringify(config) !== JSON.stringify(state.config);
+  state.config = config;
+  store.set('cfg', JSON.stringify(config));
+  if (!changed) return;
+  const inst = $('instrument').value;
+  renderPeople();
+  renderTypes();
+  selectType([...siteTypes(), SURVEY, OTHER].includes(state.type) ? state.type : siteTypes()[0] ?? OTHER);
+  if ([...$('instrument').options].some((o) => o.value === inst)) {
+    $('instrument').value = inst;
+    updateValueInfo();
+  }
+}
+
+async function start(fresh = false) {
+  // 지난번 목록이 있으면 서버를 기다리지 않고 바로 연다(신호가 없어도 입력은 폰에 보관된다). 최신 목록은 뒤에서 받아 바꿔 넣는다.
+  // 접속 코드를 새로 넣었을 때(fresh)는 코드가 맞는지부터 확인한다
+  const cached = fresh ? null : readCached('cfg');
+  if (cached) {
+    state.config = cached;
+    state.latest = readCached('latest') ?? {};
+    openApp();
+    updateValueInfo();
+    renderRecent([], '최근 입력을 불러오는 중...');
+    await hideSplash();
+    renderOutbox();
+    refreshInBackground();
+    return;
+  }
+  showSplashLoading();
+  let boot;
+  try {
+    boot = await fetchBoot();
   } catch (err) {
     if (err.isAuth) {
       signOut();
@@ -854,33 +928,32 @@ async function start() {
       $('code').select();
       return;
     }
-    // No signal: open with the lists saved last time so the work can still be typed in and kept on the phone.
-    const cached = err.network ? readCached('cfg') : null;
-    if (!cached) {
-      showSplashError(err.network ? '서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요.' : err.message);
-      return;
-    }
-    state.config = cached;
-    state.offline = true;
+    showSplashError(err.network ? '서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요.' : err.message);
+    return;
   }
-  state.ready = true;
-  renderPeople();
-  refreshWeather();
-  $('today').textContent = new Date().toLocaleDateString('ko-KR', { timeZone: TZ, month: 'long', day: 'numeric', weekday: 'short' });
-  $('date').value = todayKst();
-
-  renderTypes();
-  renderIssues();
-  if (!restoreDraft()) selectType(siteTypes()[0] ?? OTHER);
-  route();
-  if (state.offline) {
-    state.latest = readCached('latest') ?? {};
-    updateValueInfo();
-    renderRecent([], '신호가 없어 최근 입력을 불러오지 못했습니다. 신호가 잡히면 새로고침해 주세요.');
-  } else {
-    await reloadLists();
-  }
+  state.config = boot.config;
+  store.set('cfg', JSON.stringify(boot.config));
+  state.offline = false;
+  registerPush();
+  openApp();
+  await applyLists(boot);
   await hideSplash();
+  renderOutbox();
+  flushOutbox();
+}
+
+async function refreshInBackground() {
+  try {
+    const boot = await fetchBoot();
+    state.offline = false;
+    refreshConfig(boot.config);
+    registerPush();
+    await applyLists(boot);
+  } catch (err) {
+    if (err.isAuth) { signOut(); alert(err.message); return; }
+    if (err.network) state.offline = true;
+    renderRecent([], err.network ? '신호가 없어 최근 입력을 불러오지 못했습니다. 신호가 잡히면 새로고침해 주세요.' : `최근 입력을 불러오지 못했습니다. ${errorText(err)}`);
+  }
   renderOutbox();
   flushOutbox();
 }
@@ -893,7 +966,7 @@ $('gateForm').addEventListener('submit', (e) => {
   if (!code) { $('code').focus(); return; }
   state.code = code;
   store.set('code', code);
-  withBusy($('gateForm'), start);
+  withBusy($('gateForm'), () => start(true));
 });
 
 $('retry').addEventListener('click', () => withBusy($('splashError'), start));
@@ -947,21 +1020,22 @@ $('input').addEventListener('submit', async (e) => {
   if (problem) { setStatus(problem, 'err'); return; }
   if (!isSurvey && !confirmUnusual()) return;
   await withBusy($('input').querySelector('.bar-bottom'), async () => {
-    setStatus(isSurvey ? '파일 올리는 중... (파일이 크면 1분 정도 걸립니다)' : '저장 중...', 'ok');
+    setStatus('저장 중...', 'ok');
     let result;
     try {
       if (isSurvey) {
-        result = await submitOrQueue(surveyRequest());
+        result = await submitOrQueue(surveyRequest(), true);
       } else {
         const entry = readForm();
         const photos = await readPhotos(pickers.entry.files(), (i, n) => setStatus(`사진 줄이는 중... (${i}/${n})`, 'ok'));
         setStatus('저장 중...', 'ok');
         const label = entry.issue ? `⚠ ${entry.issue} · ${entry.id}` : `${entry.date} ${entry.id}`;
-        result = await submitOrQueue({ id: entry.clientId, action: 'save', label, payload: { entry, photos } });
+        // 사진이 있으면 뒤에서 보낸다. 값만 있으면 2초 안팎이라 기다려서, 서버가 거부하면 입력을 그대로 두고 고치게 한다
+        result = await submitOrQueue({ id: entry.clientId, action: 'save', label, payload: { entry, photos } }, photos.length > 0);
         store.set('entryKeep', $('entryKeep').checked ? '1' : '0');
         if (photos.length > 0 && $('entryKeep').checked) keepCopies(photos, entry.site);
         // Not on the server yet: show this reading as the previous one so the next change is measured against it.
-        if (result === 'queued' && !entry.issue) state.latest[entry.id] = { value: entry.value, values: entry.values ?? [entry.value], date: entry.date };
+        if (result !== 'sent' && !entry.issue) state.latest[entry.id] = { value: entry.value, values: entry.values ?? [entry.value], date: entry.date };
       }
     } catch (err) {
       if (err.isAuth) { signOut(); return; }
@@ -969,7 +1043,7 @@ $('input').addEventListener('submit', async (e) => {
       return;
     }
     // 저장은 끝났다: 아래는 뒷정리라 목록 갱신이 실패해도 '저장 실패'로 보이지 않는다
-    setStatus(result === 'sent' ? '저장됨 ✓' : '신호가 약해 이 폰에 보관했습니다. 잡히면 자동으로 보냅니다.', 'ok');
+    setStatus(SAVED_TEXT[result], 'ok');
     state.clientId = crypto.randomUUID();
     clearTimeout(draftTimer);
     store.remove('draft');

@@ -68,8 +68,16 @@ async function requestBody(item) {
 
 // 바로 보내 보고, 신호 문제로 못 보내면 이 폰에 보관한다. 'sent' 또는 'queued'를 돌려주고,
 // 서버가 거부한 경우(입력 오류 등)는 그대로 던져서 화면이 고치게 한다.
-async function submitOrQueue(req) {
+// background: 사진·파일처럼 수십 초 걸리는 저장은 보관함에 먼저 넣고 바로 'background'를 돌려준다. 전송은 보관함이 뒤에서 한다
+// (앱을 닫아도 다음에 열 때 이어서 보낸다. 서버가 거부하면 맨 위 줄에 '전송하지 못한 입력'으로 남는다)
+async function submitOrQueue(req, background = false) {
   const item = { ...req, createdAt: Date.now(), tries: 0, state: 'wait' };
+  // 보관함(IndexedDB)을 못 쓰는 폰이면 예전처럼 기다려서 보낸다. 신호가 없으면 아래에서 'queued'
+  if (background && navigator.onLine !== false && await outboxPut(item).then(() => true, () => false)) {
+    renderOutbox();
+    flushOutbox();
+    return 'background';
+  }
   if (navigator.onLine !== false) {
     try {
       await api(item.action, await requestBody(item));
@@ -87,9 +95,21 @@ async function submitOrQueue(req) {
   return 'queued';
 }
 
+// 보내는 도중에 새 항목이 들어오면(사진 저장을 연달아) 이번 차례가 끝난 뒤 한 번 더 돈다. 안 그러면 30초 뒤에야 보낸다
+let flushAgain = false;
 function flushOutbox() {
   if (!state.code) return Promise.resolve(0);
-  flushing ??= doFlush().finally(() => { flushing = null; });
+  if (flushing) {
+    flushAgain = true;
+    return flushing;
+  }
+  flushing = doFlush().finally(() => {
+    flushing = null;
+    if (flushAgain) {
+      flushAgain = false;
+      flushOutbox();
+    }
+  });
   return flushing;
 }
 
@@ -111,7 +131,7 @@ async function doFlush() {
     }
   }
   if (sent > 0) {
-    flash(`✓ 보관해 둔 입력 ${sent}건을 보냈습니다`);
+    flash(`✓ 입력 ${sent}건을 서버에 올렸습니다`);
     reloadLists();
   }
   await renderOutbox();
