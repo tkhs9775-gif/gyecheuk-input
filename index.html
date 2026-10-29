@@ -9,7 +9,7 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=44">
+<link rel="stylesheet" href="style.css?v=45">
 <title>키움이엔씨</title>
 </head>
 <body>
@@ -264,6 +264,19 @@
   </form>
 </dialog>
 
+<dialog id="pinNumDialog" aria-labelledby="pinNumTitle">
+  <form method="dialog" class="dlg">
+    <h2 id="pinNumTitle" class="dlg-title">계측기 번호</h2>
+    <label class="field"><span id="pinNumLabel" class="label"></span>
+      <input id="pinNumInput" type="text" inputmode="numeric" maxlength="6" autocomplete="off" enterkeyhint="done">
+    </label>
+    <div class="row">
+      <button id="pinNumCancel" type="button" class="btn outline">취소</button>
+      <button value="ok" class="btn primary grow">확인</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="instDialog" aria-labelledby="instTitle">
   <form id="instForm" class="dlg" novalidate>
     <h2 id="instTitle" class="dlg-title">계측기 추가</h2>
@@ -486,15 +499,15 @@
   </a>
 </nav>
 
-<script src="config.js?v=44"></script>
-<script src="weather.js?v=44"></script>
-<script src="entries.js?v=44"></script>
-<script src="push.js?v=44"></script>
-<script src="outbox.js?v=44"></script>
-<script src="phonecopy.js?v=44"></script>
-<script src="drawing.js?v=44"></script>
-<script src="gps.js?v=44"></script>
-<script src="gallery.js?v=44"></script>
-<script src="app.js?v=44"></script>
+<script src="config.js?v=45"></script>
+<script src="weather.js?v=45"></script>
+<script src="entries.js?v=45"></script>
+<script src="push.js?v=45"></script>
+<script src="outbox.js?v=45"></script>
+<script src="phonecopy.js?v=45"></script>
+<script src="drawing.js?v=45"></script>
+<script src="gps.js?v=45"></script>
+<script src="gallery.js?v=45"></script>
+<script src="app.js?v=45"></script>
 </body>
 </html>

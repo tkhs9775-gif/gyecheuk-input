@@ -107,6 +107,7 @@ const PIN_TYPES = [
   { code: 'L', name: '하중계' },
   { code: 'C', name: '균열' },
   { code: 'P', name: '측량' },
+  { code: 'E', name: '기타' },
 ];
 const pinTypeName = (code) => PIN_TYPES.find((t) => t.code === code)?.name || '';
 
@@ -620,10 +621,25 @@ function refreshPinModeLabel() {
   $('pinModeLabel').textContent = drawingState.pinMode ? onText : '동그라미 메모';
 }
 
-// 같은 쪽·같은 종류끼리 번호를 센다. 보기 필터와 상관없이 번호가 고정된다
+// 찍을 때 넣은 계측기 번호(pin.num)를 쓴다. 번호가 없는 옛 메모는 같은 쪽·같은 종류끼리 센 순서 번호
 function pinLabel(pin) {
+  if (pin.num) return `${pin.type || ''}${pin.num}`;
   const same = (drawingState.notes.pins || []).filter((p) => p.page === pin.page && (p.type || '') === (pin.type || ''));
   return `${pin.type || ''}${same.indexOf(pin) + 1}`;
+}
+
+// 동그라미를 찍기 전에 계측기 번호를 묻는다. 종류 글자(W·H…)는 고정이고 번호만 넣는다. 취소하면 null
+async function askPinNumber(type, page) {
+  const dlg = $('pinNumDialog');
+  const same = (drawingState.notes.pins || []).filter((p) => p.page === page && (p.type || '') === (type || ''));
+  $('pinNumLabel').textContent = type ? `${type} ${pinTypeName(type)} 번호 (원 안에 ${type}+번호로 표시)` : '번호 (원 안에 표시)';
+  $('pinNumInput').value = String(same.length + 1);
+  dlg.returnValue = '';   // 바탕을 눌러 닫으면 취소
+  dlg.showModal();
+  $('pinNumInput').select();
+  await new Promise((resolve) => dlg.addEventListener('close', resolve, { once: true }));
+  if (dlg.returnValue !== 'ok') return null;
+  return $('pinNumInput').value.trim().replace(/\s+/g, '') || String(same.length + 1);
 }
 
 function visiblePagePins() {
@@ -667,7 +683,7 @@ function renderPagePins() {
     const label = pinLabel(pin);
     const el = document.createElement('button');
     el.type = 'button';
-    el.className = `pdf-pin${pin.id === drawingState.activePinId ? ' selected' : ''}${label.length > 2 ? ' small' : ''}`;
+    el.className = `pdf-pin${pin.id === drawingState.activePinId ? ' selected' : ''}${label.length > 3 ? ' tiny' : label.length > 2 ? ' small' : ''}`;
     const at = toView(pin, drawingState.rotation);
     el.style.left = `${(at.x * 100).toFixed(2)}%`;
     el.style.top = `${(at.y * 100).toFixed(2)}%`;
@@ -686,21 +702,27 @@ function renderPagePins() {
   }));
 }
 
-function handleStageTapForPin(e) {
+async function handleStageTapForPin(e) {
   if (!drawingState.pinMode) return;
   if (e.target.closest('.pdf-pin')) return;
+  if ($('pinNumDialog').open) return;
   const rect = $('pinLayer').getBoundingClientRect();
   if (!rect.width || !rect.height) return;
   const { x, y } = fromView({
     x: Math.max(0.02, Math.min(0.98, (e.clientX - rect.left) / rect.width)),
     y: Math.max(0.02, Math.min(0.98, (e.clientY - rect.top) / rect.height)),
   }, drawingState.rotation);
+  const page = drawingState.pageNum;
+  const type = drawingState.pinType;
+  const num = await askPinNumber(type, page);
+  if (num === null || page !== drawingState.pageNum) return;
   const newPin = {
     id: crypto.randomUUID(),
-    page: drawingState.pageNum,
+    page,
     x,
     y,
-    type: drawingState.pinType,
+    type,
+    num,
     text: '',
     author: $('user')?.value || '',
     time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
@@ -1169,7 +1191,7 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType =
     ctx.fillStyle = '#FFFFFF';
     ctx.font = 'bold 12px "Noto Sans KR", "Malgun Gothic", sans-serif';
     const label = pinLabel(pin);
-    ctx.font = `bold ${label.length > 2 ? 10 : 12}px "Noto Sans KR", "Malgun Gothic", sans-serif`;
+    ctx.font = `bold ${label.length > 3 ? 8 : label.length > 2 ? 10 : 12}px "Noto Sans KR", "Malgun Gothic", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, cx, cy);
@@ -1475,6 +1497,7 @@ function initDrawingModule() {
   });
 
   $('pinLayer').addEventListener('click', handleStageTapForPin);
+  $('pinNumCancel').addEventListener('click', () => $('pinNumDialog').close('cancel'));
   $('pinMemoClose').addEventListener('click', closePinMemoBox);
   $('pinMemoDelete').addEventListener('click', deleteActivePin);
 

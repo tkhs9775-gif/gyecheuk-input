@@ -387,6 +387,7 @@ a.apk-link { display: grid; place-items: center; }
   border-color: #FFF;
 }
 .pdf-pin.small { font-size: 10px; }
+.pdf-pin.tiny { font-size: 8.5px; letter-spacing: -0.3px; }
 .circle-pin-fab {
   height: 50px;
   padding: 0 16px 0 12px;
