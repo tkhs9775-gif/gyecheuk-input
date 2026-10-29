@@ -33,7 +33,7 @@ self.addEventListener('fetch', (event) => {
 
   // ?v= 가 붙은 파일은 번호가 바뀌면 주소가 달라지므로 저장분을 먼저 쓴다
   if (url.searchParams.has('v')) {
-    event.respondWith(caches.match(req).then((hit) => hit || fetch(req)));
+    event.respondWith(caches.match(req).then((hit) => hit || fetch(req)));   // 앱이 대신 준 사본은 cache에 넣지 않으므로 여기도 저장 안 함
     return;
   }
   // 나머지(index.html, 로고 등)는 인터넷이 되면 항상 최신을 받고, 안 되면 저장분을 쓴다.
@@ -48,7 +48,7 @@ self.addEventListener('fetch', (event) => {
     ? { res, fresh: true }
     : caches.match(req).then((hit) => (hit ? { res: hit, fresh: false } : net.then((r) => ({ res: r, fresh: true }))))));   // 저장분이 없으면 끝까지 기다린다
   event.waitUntil(shown.then(({ res, fresh }) => {
-    if (!fresh || !res.ok) return undefined;
+    if (!fresh || !res.ok || res.headers.get('X-Offline-Copy')) return undefined;   // 신호가 없어 앱(APK)이 대신 준 옛 사본은 저장하지 않는다
     const copy = res.clone();   // 화면이 본문을 읽기 전에 복사해 둔다
     return caches.open(CACHE).then((cache) => cache.put(req, copy));
   }).catch(() => {}));

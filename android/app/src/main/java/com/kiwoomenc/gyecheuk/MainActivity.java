@@ -13,6 +13,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.media.MediaScannerConnection;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -23,9 +26,12 @@ import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.JsResult;
 import android.webkit.RenderProcessGoneDetail;
+import android.webkit.ServiceWorkerClient;
+import android.webkit.ServiceWorkerController;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -35,6 +41,8 @@ import com.google.firebase.messaging.FirebaseMessaging;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.text.SimpleDateFormat;
@@ -81,6 +89,13 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // 서비스 워커가 화면 파일을 받으러 나가는 요청도 신호가 없으면 앱 안 화면 파일로 답한다(offlineAsset)
+        ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
+                return offlineAsset(request);
+            }
+        });
         webView = createWebView();
         setContentView(webView);
 
@@ -125,6 +140,11 @@ public class MainActivity extends Activity {
         view.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> openOutside(Uri.parse(url)));
 
         view.setWebViewClient(new WebViewClient() {
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest request) {
+                return offlineAsset(request);
+            }
+
             @Override
             public void onReceivedError(WebView v, int errorCode, String description, String failingUrl) {
                 if (failingUrl != null && failingUrl.startsWith(LIVE_URL)) {
@@ -215,6 +235,51 @@ public class MainActivity extends Activity {
             }
         });
         return view;
+    }
+
+    // 신호가 없을 때 우리 화면 주소(…/gyecheuk-input/xxx)의 화면 파일을 앱 안 사본(assets/www/xxx)으로 답한다.
+    // 주소가 그대로라 접속 코드·목록·보관함(같은 주소에 저장됨)이 그대로 보인다. (앱 안 사본을 file:// 주소로 열면 저장소가 따로라
+    // 접속 코드·목록이 없어 '서버에 연결할 수 없습니다'에서 멈췄다.) 신호가 있으면 null: 평소대로 인터넷·서비스 워커가 처리한다.
+    // ponytail: 앱 안 사본은 APK를 만든 때의 화면이라 신호가 없을 때는 그 판으로 열린다. 새 화면이 꼭 필요하면 APK를 새로 만든다
+    private WebResourceResponse offlineAsset(WebResourceRequest request) {
+        String url = request.getUrl().toString();
+        if (!"GET".equals(request.getMethod()) || !url.startsWith(LIVE_PREFIX) || hasInternet()) return null;
+        String path = request.getUrl().getPath();
+        String base = Uri.parse(LIVE_PREFIX).getPath();
+        String name = path == null || base == null || path.length() <= base.length() ? "index.html" : path.substring(base.length());
+        if (name.isEmpty()) name = "index.html";
+        if (name.contains("..")) return null;
+        try {
+            InputStream in = getAssets().open("www/" + name);
+            WebResourceResponse res = new WebResourceResponse(mimeOf(name), "utf-8", in);
+            // 서비스 워커가 이 옛 사본을 최신 화면으로 알고 저장하지 않게 표시한다(sw.js가 이 머리를 보면 저장하지 않음)
+            res.setResponseHeaders(java.util.Collections.singletonMap("X-Offline-Copy", "1"));
+            return res;
+        } catch (IOException e) {
+            return null;   // 앱 안에 없는 파일은 평소대로 실패하게 둔다
+        }
+    }
+
+    private static String mimeOf(String name) {
+        if (name.endsWith(".html")) return "text/html";
+        if (name.endsWith(".js")) return "application/javascript";
+        if (name.endsWith(".css")) return "text/css";
+        if (name.endsWith(".png")) return "image/png";
+        if (name.endsWith(".json")) return "application/json";
+        return "application/octet-stream";
+    }
+
+    // 휴대폰이 인터넷에 연결돼 있다고 확인된 상태인지(비행기 모드·데이터 꺼짐·인터넷 안 되는 와이파이면 false)
+    private boolean hasInternet() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            Network n = cm == null ? null : cm.getActiveNetwork();
+            NetworkCapabilities caps = n == null ? null : cm.getNetworkCapabilities(n);
+            return caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        } catch (Exception e) {
+            return true;   // 모르면 평소대로
+        }
     }
 
     private static boolean isOurPage(Uri url) {
