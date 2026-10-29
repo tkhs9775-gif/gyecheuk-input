@@ -75,6 +75,7 @@ public class MainActivity extends Activity {
     private String pendingGeoOrigin;
     private GeolocationPermissions.Callback pendingGeoCallback;
     private long lastBackAt;
+    private boolean clearHistoryOnce;   // 앱 안 사본으로 바꿔 연 뒤 한 번: 실패한 주소가 뒤로가기 기록에 남아 있으면 뒤로가기 때 또 실패→사본을 되풀이한다
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -127,7 +128,16 @@ public class MainActivity extends Activity {
             @Override
             public void onReceivedError(WebView v, int errorCode, String description, String failingUrl) {
                 if (failingUrl != null && failingUrl.startsWith(LIVE_URL)) {
+                    clearHistoryOnce = true;
                     v.loadUrl(LOCAL_URL);
+                }
+            }
+
+            @Override
+            public void onPageFinished(WebView v, String url) {
+                if (clearHistoryOnce && url != null && url.startsWith("file:")) {
+                    clearHistoryOnce = false;
+                    v.clearHistory();
                 }
             }
 
@@ -495,8 +505,8 @@ public class MainActivity extends Activity {
                         out.write(bytes);
                         return true;
                     }
-                } catch (SecurityException e) {
-                    // 다른 앱이 만든 같은 이름 파일이면 덮어쓸 수 없다: 아래에서 새로 만든다
+                } catch (Exception e) {
+                    // 다른 앱이 만든 같은 이름 파일이거나, 파일은 지워지고 목록만 남은 경우: 아래에서 새로 만든다
                 }
             }
             ContentValues values = new ContentValues();

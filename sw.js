@@ -39,15 +39,21 @@ self.addEventListener('fetch', (event) => {
   // 나머지(index.html, 로고 등)는 인터넷이 되면 항상 최신을 받고, 안 되면 저장분을 쓴다.
   // 신호가 약해 NET_WAIT_MS 안에 안 오면 저장분으로 먼저 열고(지하 현장에서 하얀 화면으로 오래 멈추지 않게), 받는 것은 뒤에서 마저 받아 다음에 쓴다
   // (주소 문자열로 다시 요청: 화면 이동(navigate) 요청 객체에 옵션을 얹으면 일부 브라우저가 예외를 던진다)
-  const net = fetch(req.url, { cache: 'no-cache' }).then((res) => {
-    if (res.ok) { const copy = res.clone(); return caches.open(CACHE).then((cache) => cache.put(req, copy)).then(() => res); }
-    return res;
-  });
-  event.waitUntil(net.catch(() => {}));
-  const late = new Promise((resolve) => setTimeout(resolve, NET_WAIT_MS));
+  // 저장분으로 연 경우에는 늦게 온 새 index.html을 저장하지 않는다: 새 index.html은 이 저장 묶음에 없는 새 ?v= 파일을 가리켜서,
+  // 그 뒤 신호 없이 열면 하얀 화면이 된다. 다음에 신호가 좋을 때 새로 받아 서비스 워커째 바뀐다
+  const net = fetch(req.url, { cache: 'no-cache' });
+  net.catch(() => {});   // 저장분으로 이미 열었으면 실패해도 알릴 곳이 없다
+  const late = new Promise((resolve) => setTimeout(() => resolve(null), NET_WAIT_MS));
+  const shown = Promise.race([net, late]).then((res) => (res
+    ? { res, fresh: true }
+    : caches.match(req).then((hit) => (hit ? { res: hit, fresh: false } : net.then((r) => ({ res: r, fresh: true }))))));   // 저장분이 없으면 끝까지 기다린다
+  event.waitUntil(shown.then(({ res, fresh }) => {
+    if (!fresh || !res.ok) return undefined;
+    const copy = res.clone();   // 화면이 본문을 읽기 전에 복사해 둔다
+    return caches.open(CACHE).then((cache) => cache.put(req, copy));
+  }).catch(() => {}));
   event.respondWith(
-    Promise.race([net, late])
-      .then((res) => res || caches.match(req).then((hit) => hit || net))   // 저장분이 없으면 끝까지 기다린다
+    shown.then(({ res }) => res)
       .catch(() => caches.match(req).then((hit) => hit || caches.match('index.html'))),
   );
 });
