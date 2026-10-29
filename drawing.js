@@ -142,7 +142,7 @@ const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.35;            // ＋/－ 한 번에 바뀌는 배율
 const TAP_SLOP_PX = 14;            // 이만큼까지 손가락이 흔들려도 '찍기'로 본다
-const MAX_CANVAS_PX = 16000000;    // 도면 캔버스 최대 화소 수(폰 메모리 한도 아래)
+const MAX_CANVAS_PX = 12000000;    // 도면 캔버스 최대 화소 수. 그리는 동안 숨은 캔버스가 하나 더 있으므로 폰 메모리 한도의 절반 아래로
 
 const EXTERNAL_DIR = '외부계측기';
 const PDF_CACHE_DB = 'gyecheuk_pdf_cache';
@@ -553,7 +553,10 @@ let renderTask = null;
 let renderSeq = 0;
 
 // 확대·쪽 넘김을 빠르게 연달아 누르면 이전 그리기를 멈추고 마지막 것만 그린다(같은 캔버스에 두 번 그리면 pdf.js가 예외를 던진다)
-async function renderPdfPage() {
+// 크기는 바로 바꾸고(지금 그림을 늘려 보여 줌 → 확대가 손에 바로 반응), 선명한 그림은 숨은 캔버스에 그린 뒤 한 번에 바꿔 끼운다(그리는 1~2초 동안 하얗게 비지 않게).
+// afterLayout: 크기를 바꾼 바로 그 순간에 부르는 함수(확대 기준점 스크롤 맞추기). 같은 순간이라 화면이 튀지 않는다
+let shownKey = '';   // 지금 캔버스에 있는 그림이 어느 문서·쪽·회전인지. 다르면 늘려 보이지 않고 비운다(다른 쪽 그림이 잠깐 보이지 않게)
+async function renderPdfPage(afterLayout) {
   if (!drawingState.pdfDoc) return;
   const my = ++renderSeq;
   if (renderTask) {
@@ -573,33 +576,43 @@ async function renderPdfPage() {
     // 많이 확대해도 캔버스가 폰 메모리 한도를 넘지 않게 선명도(dpr)를 낮춘다
     const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_CANVAS_PX / (unscaled.width * unscaled.height * fitScale * fitScale)));
     const viewport = page.getViewport({ scale: fitScale * dpr, rotation });
-
-    const pdfCanvas = $('pdfCanvas');
     const cssW = Math.round(viewport.width / dpr);
     const cssH = Math.round(viewport.height / dpr);
-    pdfCanvas.width = viewport.width;
-    pdfCanvas.height = viewport.height;
+
+    const pdfCanvas = $('pdfCanvas');
+    const key = `${drawingState.currentFile?.id}|${drawingState.pageNum}|${rotation}`;
+    if (key !== shownKey) {
+      pdfCanvas.width = 1;   // 다른 쪽·문서: 옛 그림을 지운다(흰 바탕만 보임)
+      pdfCanvas.height = 1;
+    }
     pdfCanvas.style.width = `${cssW}px`;
     pdfCanvas.style.height = `${cssH}px`;
-
     const inkCanvas = $('inkCanvas');
     inkCanvas.width = cssW;
     inkCanvas.height = cssH;
     inkCanvas.style.width = `${cssW}px`;
     inkCanvas.style.height = `${cssH}px`;
-
     const pinLayer = $('pinLayer');
     pinLayer.style.width = `${cssW}px`;
     pinLayer.style.height = `${cssH}px`;
+    redrawPageInk();
+    renderPagePins();
+    if (afterLayout) afterLayout();
 
-    const task = page.render({ canvasContext: pdfCanvas.getContext('2d'), viewport });
+    const buf = document.createElement('canvas');
+    buf.width = viewport.width;
+    buf.height = viewport.height;
+    const task = page.render({ canvasContext: buf.getContext('2d'), viewport });
     renderTask = task;
     await task.promise;
     if (renderTask === task) renderTask = null;
     if (my !== renderSeq) return;
+    pdfCanvas.width = buf.width;    // 크기를 바꾸면 비워지지만 같은 순간에 다시 그려서 빈 화면은 보이지 않는다
+    pdfCanvas.height = buf.height;
+    pdfCanvas.getContext('2d').drawImage(buf, 0, 0);
+    buf.width = 0;                  // 숨은 캔버스 메모리를 바로 돌려준다
+    shownKey = key;
     updatePageInfo();
-    redrawPageInk();
-    renderPagePins();
     if (typeof refreshGps === 'function') refreshGps();
   } catch (err) {
     if (err?.name === 'RenderingCancelledException' || my !== renderSeq) return;
@@ -628,16 +641,19 @@ function stageFraction(clientX, clientY) {
 }
 
 // 배율을 바꾸고, 바꾸기 전에 (fx, fy)였던 도면 위치가 다시 화면의 (clientX, clientY)에 오도록 스크롤한다
+// 두 손가락으로 늘려 보이던 모양(transform)은 새 크기를 정하는 바로 그 순간에 걷어 내서, 손을 떼도 원래 크기로 튀었다 커지지 않는다
 async function zoomStageTo(scale, { fx, fy }, clientX, clientY) {
-  $('pdfStage').style.transform = '';
+  const stage = $('pdfStage');
   const next = clampScale(scale);
-  if (next === drawingState.scale) return;
+  if (next === drawingState.scale) { stage.style.transform = ''; return; }
   drawingState.scale = next;
-  await renderPdfPage();
-  const wrap = $('pdfStageWrap');
-  const r = $('pdfStage').getBoundingClientRect();
-  wrap.scrollLeft += r.left + fx * r.width - clientX;
-  wrap.scrollTop += r.top + fy * r.height - clientY;
+  await renderPdfPage(() => {
+    stage.style.transform = '';
+    const wrap = $('pdfStageWrap');
+    const r = stage.getBoundingClientRect();
+    wrap.scrollLeft += r.left + fx * r.width - clientX;
+    wrap.scrollTop += r.top + fy * r.height - clientY;
+  });
 }
 
 // ＋/－ 버튼: 지금 보고 있는 화면 가운데를 기준으로
@@ -653,6 +669,8 @@ function onStageDown(e) {
   if (drawingState.penMode && e.target === $('inkCanvas')) return;   // 펜은 잉크 캔버스가 받는다
   if (e.target.closest('#gpsLayer.calibrating')) return;              // GPS 기준점 찍기는 gps.js가 받는다
   const g = stageGesture;
+  // 새 터치의 첫 손가락인데 지난 손가락이 남아 있으면(떼는 신호를 놓친 경우) 비운다. 안 그러면 한 손가락도 두 손가락으로 보여 찍기가 안 된다
+  if (e.isPrimary && g.pts.size) { g.pts.clear(); g.pinch = null; $('pdfStage').style.transform = ''; }
   g.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (g.pts.size === 1) {
     const wrap = $('pdfStageWrap');

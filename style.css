@@ -348,28 +348,33 @@ a.apk-link { display: grid; place-items: center; }
 .gps-map .pdf-title-wrap small { display: block; line-height: 1.35; }   /* 좌표·오차가 잘리지 않게 두 줄까지 */
 
 /* 왼쪽 하단 동그란 원(마커) 버튼 그룹 */
+/* 도면 아래 도구 줄: 범례(가로로 밀어서 보기) + 동그라미·펜 버튼. 도면 위에 떠 있지 않아 확대해도 찍을 자리를 가리지 않는다 */
 .pdf-fab-group {
-  position: fixed;
-  left: 16px;
-  bottom: calc(18px + env(safe-area-inset-bottom));
+  position: relative;
   z-index: 45;
   display: flex;
-  align-items: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  background: #1B2A57;
+  border-top: 1px solid rgba(255,255,255,0.15);
 }
-.pdf-fab-col {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
+.pdf-fab-col { display: contents; }
 .pin-legend {
+  order: -1;
+  flex: 1 0 100%;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px 0;
 }
+.pin-legend::-webkit-scrollbar { display: none; }
 .pin-legend-item {
   position: relative;
+  flex-shrink: 0;
   height: 36px;
   padding: 0 12px;
   border-radius: 15px;
@@ -382,7 +387,7 @@ a.apk-link { display: grid; place-items: center; }
   white-space: nowrap;
   box-shadow: 0 3px 10px rgba(0,0,0,0.3);
 }
-.pin-legend-item::before { content: ""; position: absolute; inset: -4px 0; }   /* 세로 간격 8px 안에서 닿는 범위 44px */
+.pin-legend-item::before { content: ""; position: absolute; inset: -4px -3px; }   /* 닿는 범위 44px(간격 6px 안에서) */
 .pin-legend-item[aria-pressed="true"] {
   background: #1F62A8;
   border-color: #FFF;
@@ -445,7 +450,7 @@ a.apk-link { display: grid; place-items: center; }
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: calc(82px + env(safe-area-inset-bottom));
+  bottom: calc(118px + env(safe-area-inset-bottom));   /* 아래 도구 줄 위 */
   max-width: 480px;
   margin: 0 auto;
   z-index: 48;
