@@ -60,7 +60,9 @@ jobs:
             gyecheuk-input.apk
             gyecheuk-input-pro.apk
 
+      # 다른 브랜치에서 수동으로 돌리면 빌드만 확인하고 직원용 최신 APK는 바꾸지 않는다
       - name: Publish to GitHub Release (latest)
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest

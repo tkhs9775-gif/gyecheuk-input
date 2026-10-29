@@ -2,6 +2,7 @@
 // 서버 통신(Apps Script, 날씨)은 건드리지 않는다. 등록할 때 붙인 ?v=번호가 바뀌면 이 파일이 새로 설치되고 옛 저장분은 지워진다.
 const V = new URL(self.location.href).searchParams.get('v') || '0';
 const CACHE = `shell-${V}`;
+const NET_WAIT_MS = 3000;   // 화면 파일(index.html)을 이만큼 기다려도 안 오면 폰에 저장해 둔 것으로 연다
 const SHELL = [
   './', 'index.html', 'logo.png', 'manifest.json',
   `style.css?v=${V}`, `config.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
@@ -35,14 +36,18 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(caches.match(req).then((hit) => hit || fetch(req)));
     return;
   }
-  // 나머지(index.html, 로고 등)는 인터넷이 되면 항상 최신을 받고, 안 되면 저장분을 쓴다
+  // 나머지(index.html, 로고 등)는 인터넷이 되면 항상 최신을 받고, 안 되면 저장분을 쓴다.
+  // 신호가 약해 NET_WAIT_MS 안에 안 오면 저장분으로 먼저 열고(지하 현장에서 하얀 화면으로 오래 멈추지 않게), 받는 것은 뒤에서 마저 받아 다음에 쓴다
   // (주소 문자열로 다시 요청: 화면 이동(navigate) 요청 객체에 옵션을 얹으면 일부 브라우저가 예외를 던진다)
+  const net = fetch(req.url, { cache: 'no-cache' }).then((res) => {
+    if (res.ok) { const copy = res.clone(); return caches.open(CACHE).then((cache) => cache.put(req, copy)).then(() => res); }
+    return res;
+  });
+  event.waitUntil(net.catch(() => {}));
+  const late = new Promise((resolve) => setTimeout(resolve, NET_WAIT_MS));
   event.respondWith(
-    fetch(req.url, { cache: 'no-cache' })
-      .then((res) => {
-        if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((cache) => cache.put(req, copy)); }
-        return res;
-      })
+    Promise.race([net, late])
+      .then((res) => res || caches.match(req).then((hit) => hit || net))   // 저장분이 없으면 끝까지 기다린다
       .catch(() => caches.match(req).then((hit) => hit || caches.match('index.html'))),
   );
 });

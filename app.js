@@ -838,10 +838,43 @@ async function saveShot(e) {
 
 // ---------- info tab ----------
 
+const APK_URLS = {
+  staff: 'https://github.com/tkhs9775-gif/gyecheuk-input/releases/download/latest/gyecheuk-input.apk',
+  pro: 'https://github.com/tkhs9775-gif/gyecheuk-input/releases/download/latest/gyecheuk-input-pro.apk',
+};
+
+// 이 폰에 깔린 앱(APK)의 판 번호. 1.27 이하는 판 번호를 알려 주는 기능이 없어 0
+function apkVersion() {
+  try { return Number(window.AndroidApp?.version?.()) || 0; } catch { return 0; }
+}
+const apkOutdated = () => !!window.AndroidGallery && apkVersion() < LATEST_APK;
+
 function renderInfo() {
-  $('appVersion').textContent = `v${BUILD}${window.AndroidGallery ? ` (안드로이드 앱${isProApp() ? ' Pro' : ''})` : ''}`;
+  const v = apkVersion();
+  $('appVersion').textContent = `v${BUILD}${window.AndroidGallery ? ` (안드로이드 앱${v ? ` 1.${v}` : ''}${isProApp() ? ' Pro' : ''})` : ''}`;
   $('adminInfo').textContent = state.config.admin || '과장 정준업(Master)';
   show($('downloadApk'), !window.AndroidGallery);
+  renderApkNotice();
+}
+
+// 옛 앱이면 새 앱 설치 안내. 1.28부터는 버튼을 누르면 휴대폰 브라우저가 내려받는다(옛 앱 안에서는 내려받기가 안 돼 글로만 안내)
+function renderApkNotice() {
+  const box = $('apkNotice');
+  show(box, apkOutdated());
+  if (!apkOutdated()) return;
+  const text = document.createElement('p');
+  text.textContent = `새 앱(1.${LATEST_APK})이 나왔습니다. 설치하면 도면 저장 겹침 방지·신호 없는 곳 열기 등이 좋아집니다. 기존 입력은 그대로 남습니다.`;
+  if (!apkVersion()) {
+    const how = document.createElement('small');
+    how.textContent = '관리자에게 받은 설치 파일(APK)을 눌러 덮어 설치하세요.';
+    box.replaceChildren(text, how);
+    return;
+  }
+  const link = document.createElement('a');
+  link.className = 'btn primary wide apk-link';
+  link.href = isProApp() ? APK_URLS.pro : APK_URLS.staff;
+  link.textContent = '📱 새 앱 내려받기';
+  box.replaceChildren(text, link);
 }
 
 // ---------- start ----------
@@ -883,6 +916,7 @@ function openApp() {
   renderIssues();
   if (!restoreDraft()) selectType(siteTypes()[0] ?? OTHER);
   route();
+  if (apkOutdated()) flash(`📱 새 앱(1.${LATEST_APK})이 나왔습니다 · 정보 탭에서 확인`);
 }
 
 // 뒤에서 받은 목록이 지난번과 다를 때만 다시 그린다. 고르던 종류·계측기와 적던 값은 그대로 둔다
