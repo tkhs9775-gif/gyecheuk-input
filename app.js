@@ -207,15 +207,20 @@ function renderRecent(rows, emptyText = '아직 입력한 내역이 없습니다
       const title = document.createElement('b');
       title.textContent = r.id;
       const sub = document.createElement('small');
-      sub.textContent = `${r.type} · ${r.date}${r.canEdit ? ' · 눌러서 수정' : ''}`;
+      const fromDrawing = r.source === 'drawing';   // 도면에 찍어 저장한 동그라미 메모: 누르면 그 도면을 연다
+      sub.textContent = fromDrawing ? `📐 도면 ${r.type} · ${r.date} · 눌러서 도면 보기` : `${r.type} · ${r.date}${r.canEdit ? ' · 눌러서 수정' : ''}`;
       meta.append(title, sub);
       li.classList.add('tap');
       li.tabIndex = 0;
       li.setAttribute('role', 'button');
-      li.addEventListener('click', () => openEdit(r));
-      li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openEdit(r); });
+      const open = () => (fromDrawing ? openRecentDrawing(r) : openEdit(r));
+      li.addEventListener('click', open);
+      li.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
       const val = document.createElement('div');
-      if (r.issue) {
+      if (fromDrawing) {
+        val.className = 'val memo';
+        val.textContent = String(r.value ?? '');
+      } else if (r.issue) {
         val.className = 'val issue';
         val.textContent = `⚠ ${r.issue}`;
       } else {

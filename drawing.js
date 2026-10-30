@@ -220,6 +220,19 @@ function updatePageInfo() {
 
 // ---------- 1단계: 현장명 목록 화면 ----------
 
+// 홈 '최근 입력'의 도면 메모를 누르면: 도면 탭 → 그 현장 → 그 도면(목록에 없으면, 예: 같은 이름으로 다시 저장돼 바뀐 경우, 현장 도면 목록까지)
+async function openRecentDrawing(r) {
+  if (location.hash !== '#drawing') {
+    const moved = new Promise((resolve) => window.addEventListener('hashchange', resolve, { once: true }));
+    location.hash = '#drawing';
+    await moved;   // route()가 도면 탭을 먼저 그린 뒤에 연다
+  }
+  if (!r.site) return;
+  await openSiteDrawingFolder(r.site);
+  const file = allDrawingFiles().find((f) => f.id === r.fileId);
+  if (file) openPdfFieldbook(file);
+}
+
 function loadDrawingTab() {
   ensurePdfJs().catch(() => {}); // 도면 탭 진입 즉시 PDF 엔진 예열!
   show($('drawingSitesView'), true);

@@ -128,6 +128,7 @@ input:focus, select:focus, button:focus-visible, a:focus-visible, [tabindex]:foc
 .chips button[aria-pressed="true"] { border: 1.5px solid var(--accent); background: var(--chip); font-weight: 700; }
 .issue-chips button { min-height: 44px; padding: 0 16px; font-size: 15px; }
 .issue-chips button.warn[aria-pressed="true"] { border-color: var(--err); background: var(--err-bg); color: var(--err); }
+.list .val.memo { font-size: 16px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }   /* 도면 메모 글: 길면 줄임 */
 .list .val.issue { font-size: 16px; color: var(--err); background: var(--err-bg); padding: 4px 10px; border-radius: 12px; }
 
 .bar-top { display: flex; align-items: center; gap: 4px; margin: -8px 0 4px -8px; }
