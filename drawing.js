@@ -1406,7 +1406,34 @@ async function buildAnnotatedPdfBase64(onlyType = null) {
 let saveNotesTimer = null;
 function persistNotesNow() {
   clearTimeout(saveNotesTimer);
-  if (drawingState.currentFile) store.set(`pdf_notes_${drawingState.currentFile.id}`, JSON.stringify(drawingState.notes));
+  if (!drawingState.currentFile) return;
+  store.set(`pdf_notes_${drawingState.currentFile.id}`, JSON.stringify(drawingState.notes));
+  scheduleLivePins();
+}
+
+// 내가 찍고 값을 적은 동그라미를 '다른이름 저장' 전에도 서버에 보내 둔다 → 홈 '최근 입력'에 바로 뜨고, 앱이 꺼져도 남는다.
+// 도면 파일이 아니라 측정자별 실시간 줄(live:<원본ID>:<측정자>)에 쓰므로 다른 사람이 여는 도면 메모는 바뀌지 않는다.
+// 실패하면(신호 없음 등) 다음에 메모를 고치거나 도면을 닫을 때 다시 보낸다
+const LIVE_PINS_DELAY_MS = 4000;
+const livePinsSent = {};   // 실시간 줄 키 → 마지막으로 보낸 내용(같으면 다시 안 보냄)
+let livePinsTimer = null;
+function scheduleLivePins() {
+  const file = drawingState.currentFile;
+  const user = $('user')?.value || '';
+  if (!file || !user) return;
+  const sourceId = (drawingState.sourceFile || file).id;
+  const pins = (drawingState.notes.pins || []).filter((p) => p.author === user && String(p.text || '').trim());
+  const key = `live:${sourceId}:${user}`;
+  const body = JSON.stringify(pins);
+  if (livePinsSent[key] === body || (livePinsSent[key] === undefined && !pins.length)) return;
+  // 지금 상태를 붙잡아 둔다: 도면을 닫거나 바꿔도 이 내용 그대로 보낸다
+  const payload = { fileId: key, site: drawingState.site, fileName: file.name, user, data: { live: true, sourceId, fileId: file.id, pins } };
+  clearTimeout(livePinsTimer);
+  livePinsTimer = setTimeout(() => {
+    api('drawing_notes_save', payload)
+      .then(() => { livePinsSent[key] = body; })
+      .catch((err) => console.warn('도면 메모 실시간 보내기 실패(다음에 다시)', err));
+  }, LIVE_PINS_DELAY_MS);
 }
 function saveDrawingNotesQuiet() {
   if (!drawingState.currentFile) return;
