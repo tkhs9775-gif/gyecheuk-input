@@ -739,7 +739,7 @@ function onStageUp(e) {
   const s = g.start;
   if (g.pts.size === 0) g.start = null;
   // 도면 위를 찍었을 때만(바깥 회색 여백은 아님). 이미 있는 동그라미는 그 동그라미가 받는다
-  if (e.type === 'pointerup' && s && !g.moved && drawingState.pinMode && s.target.closest('#pdfStage')) {
+  if (e.type === 'pointerup' && s && !g.moved && drawingState.pinMode && s.target.closest('#pdfStage') && !s.target.closest('.pdf-pin')) {
     swallowNextClick(e.clientX, e.clientY);
     handleStageTapForPin({ clientX: s.x, clientY: s.y, target: s.target });
   }
@@ -911,9 +911,13 @@ function openPinMemoBox(pinId) {
 }
 
 function closePinMemoBox() {
+  const wasEditing = !!drawingState.activePinId;
   drawingState.activePinId = null;
   show($('pinMemoBox'), false);
   renderPagePins();
+  if (!wasEditing) return;
+  persistNotesNow();   // 적던 값을 바로 폰에 쓰고
+  flushLivePins();     // 서버에도 바로 보낸다(기다리지 않음)
 }
 
 function updateActivePinText(newText) {
@@ -1413,10 +1417,12 @@ function persistNotesNow() {
 
 // 내가 찍고 값을 적은 동그라미를 '다른이름 저장' 전에도 서버에 보내 둔다 → 홈 '최근 입력'에 바로 뜨고, 앱이 꺼져도 남는다.
 // 도면 파일이 아니라 측정자별 실시간 줄(live:<원본ID>:<측정자>)에 쓰므로 다른 사람이 여는 도면 메모는 바뀌지 않는다.
-// 실패하면(신호 없음 등) 다음에 메모를 고치거나 도면을 닫을 때 다시 보낸다
-const LIVE_PINS_DELAY_MS = 4000;
+// 글자를 치는 동안은 기다렸다가 손을 멈추면(LIVE_PINS_DELAY_MS) 보내고, 메모 상자를 닫거나 도면을 닫으면 바로 보낸다.
+// 보내지면 홈 최근 입력을 새로 불러 새로고침 없이 보이게 한다. 실패하면(신호 없음 등) 다음에 메모를 고치거나 닫을 때 다시 보낸다
+const LIVE_PINS_DELAY_MS = 800;
 const livePinsSent = {};   // 실시간 줄 키 → 마지막으로 보낸 내용(같으면 다시 안 보냄)
 let livePinsTimer = null;
+let livePinsPending = null;   // 아직 안 보낸 내용 { key, body, payload }
 function scheduleLivePins() {
   const file = drawingState.currentFile;
   const user = $('user')?.value || '';
@@ -1427,14 +1433,24 @@ function scheduleLivePins() {
   const body = JSON.stringify(pins);
   if (livePinsSent[key] === body || (livePinsSent[key] === undefined && !pins.length)) return;
   // 지금 상태를 붙잡아 둔다: 도면을 닫거나 바꿔도 이 내용 그대로 보낸다
-  const payload = { fileId: key, site: drawingState.site, fileName: file.name, user, data: { live: true, sourceId, fileId: file.id, pins } };
+  livePinsPending = { key, body, payload: { fileId: key, site: drawingState.site, fileName: file.name, user, data: { live: true, sourceId, fileId: file.id, pins } } };
   clearTimeout(livePinsTimer);
-  livePinsTimer = setTimeout(() => {
-    api('drawing_notes_save', payload)
-      .then(() => { livePinsSent[key] = body; })
-      .catch((err) => console.warn('도면 메모 실시간 보내기 실패(다음에 다시)', err));
-  }, LIVE_PINS_DELAY_MS);
+  livePinsTimer = setTimeout(flushLivePins, LIVE_PINS_DELAY_MS);
 }
+
+function flushLivePins() {
+  clearTimeout(livePinsTimer);
+  const job = livePinsPending;
+  if (!job) return;
+  livePinsPending = null;
+  api('drawing_notes_save', job.payload)
+    .then(() => {
+      livePinsSent[job.key] = job.body;
+      if (typeof loadRecent === 'function') loadRecent().catch(() => {});   // 홈 최근 입력에 바로 반영
+    })
+    .catch((err) => console.warn('도면 메모 실시간 보내기 실패(다음에 다시)', err));
+}
+
 function saveDrawingNotesQuiet() {
   if (!drawingState.currentFile) return;
   clearTimeout(saveNotesTimer);
