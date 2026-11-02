@@ -387,30 +387,40 @@ function readForm() {
 // toBlob encodes off the main thread, so the screen keeps painting while many photos are processed.
 const toJpeg = (canvas, quality) => new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
 
-async function compressPhoto(file) {
-  let bitmap;
-  try { bitmap = await createImageBitmap(file); } catch { throw new Error(`'${file.name}' 사진을 읽을 수 없습니다(HEIC 등 지원되지 않는 형식). 다른 사진을 고르세요.`); }
+// source(사진·카메라 화면)를 PHOTO_MAX_BYTES 이하 JPEG로. 사진 올리기와 앱 안 카메라(camera.js)가 같은 규칙을 쓴다. 못 만들면 null
+async function shrinkToJpeg(source, width, height) {
+  let scale = Math.min(1, PHOTO_MAX_PX / Math.max(width, height));
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('사진을 처리할 메모리가 부족합니다. 사진 수를 줄여 다시 해 주세요.');
   try {
-    let scale = Math.min(1, PHOTO_MAX_PX / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('사진을 처리할 메모리가 부족합니다. 사진 수를 줄여 다시 해 주세요.');
     for (;;) {
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
       let blob = null;
       for (let q = PHOTO_QUALITY; q >= PHOTO_MIN_QUALITY - 1e-9; q -= PHOTO_QUALITY_STEP) {
         blob = await toJpeg(canvas, q);
-        if (blob && blob.size <= PHOTO_MAX_BYTES) return { base64: await readFileAsBase64(blob) };
+        if (blob && blob.size <= PHOTO_MAX_BYTES) return blob;
       }
       // ponytail: 더 줄이면 알아볼 수 없으니 최저 품질 결과를 그대로 보낸다. 서버 상한(약 500KB)이 마지막 안전망
-      if (Math.max(canvas.width, canvas.height) <= PHOTO_MIN_PX) {
-        if (!blob) throw new Error(`'${file.name}' 사진을 변환하지 못했습니다. 다른 사진을 고르세요.`);
-        return { base64: await readFileAsBase64(blob) };
-      }
+      if (Math.max(canvas.width, canvas.height) <= PHOTO_MIN_PX) return blob;
       scale *= PHOTO_SHRINK;
     }
+  } finally {
+    canvas.width = 0;
+  }
+}
+
+async function compressPhoto(file) {
+  // 앱 안 카메라로 찍은 사진(이미 150KB 이하 JPEG)은 다시 풀지 않고 그대로 보낸다
+  if (file.type === 'image/jpeg' && file.size <= PHOTO_MAX_BYTES) return { base64: await readFileAsBase64(file) };
+  let bitmap;
+  try { bitmap = await createImageBitmap(file); } catch { throw new Error(`'${file.name}' 사진을 읽을 수 없습니다(HEIC 등 지원되지 않는 형식). 다른 사진을 고르세요.`); }
+  try {
+    const blob = await shrinkToJpeg(bitmap, bitmap.width, bitmap.height);
+    if (!blob) throw new Error(`'${file.name}' 사진을 변환하지 못했습니다. 다른 사진을 고르세요.`);
+    return { base64: await readFileAsBase64(blob) };
   } finally {
     bitmap.close();
   }
@@ -450,18 +460,19 @@ const queueThumb = (file) => (thumbQueue = thumbQueue.then(() => thumbUrl(file))
 // Photo chooser: camera button + gallery/file button (many at once).
 // 안드로이드 앱에서는 촬영 버튼이 연속 촬영: 찍을 때마다 카메라가 다시 열리고, 뒤로가기를 누르면 찍은 사진이 한꺼번에 들어온다(MainActivity).
 // 브라우저에서는 한 번에 한 장. The browser's own picker is what asks the phone for storage/gallery access; a web page cannot request it directly.
+let nativeCamOnly = false;   // 앱 안 카메라를 못 열었으면 true(makePicker의 📷 촬영)
 function makePicker(box) {
   let files = [];
   const previews = new Map();   // 사진 파일 → 줄인 미리보기 주소(약속). 사진을 빼도 남은 사진은 다시 줄이지 않는다
   const thumbs = document.createElement('ul');
   thumbs.className = 'thumbs';
 
-  const button = (text, input) => {
+  const button = (text, onClick) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'btn outline small';
     b.textContent = text;
-    b.addEventListener('click', () => input.click());
+    b.addEventListener('click', onClick);
     return b;
   };
   const makeInput = (extra) => {
@@ -507,9 +518,26 @@ function makePicker(box) {
     }));
   }
 
+  // 📷 촬영: 앱 안 카메라(camera.js, 찍는 순간 150KB). 못 열면(APK 1.29 이하는 앱이 막음, 권한 거부) 기본 카메라로 대신 연다.
+  // 한 번 못 열면 앱을 다시 켤 때까지 기본 카메라만 쓴다(권한 창에서 오래 머물면 cam.click()이 안 먹으니, 다시 누르면 바로 열리게)
+  let camOpen = false;   // 카메라가 뜨기 전에 또 눌러도 두 번 열지 않는다
+  const shoot = async () => {
+    if (!camSupported() || nativeCamOnly) { cam.click(); return; }
+    if (camOpen) return;
+    camOpen = true;
+    try {
+      await openInAppCamera({ room: MAX_PHOTOS - files.length, onShot: (file) => add([file]) });
+    } catch (err) {
+      console.warn('앱 안 카메라를 못 열어 기본 카메라로 엽니다', err);
+      nativeCamOnly = true;
+      cam.click();
+    } finally {
+      camOpen = false;
+    }
+  };
   const row = document.createElement('div');
   row.className = 'row';
-  row.append(button('📷 촬영', cam), button('🖼 갤러리·파일', gallery));
+  row.append(button('📷 촬영', shoot), button('🖼 갤러리·파일', () => gallery.click()));
   box.append(row, cam, gallery, thumbs);
   return { files: () => files, clear: () => { files = []; render(); } };
 }

@@ -25,6 +25,7 @@ import android.util.Base64;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.JsResult;
+import android.webkit.PermissionRequest;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.ServiceWorkerClient;
 import android.webkit.ServiceWorkerController;
@@ -60,6 +61,7 @@ public class MainActivity extends Activity {
     private static final int REQ_NOTIFY_PERM = 1003;
     private static final int REQ_CAMERA = 1004;
     private static final int REQ_LOCATION_PERM = 1005;
+    private static final int REQ_MEDIA_CAMERA_PERM = 1006;
     private static final int MAX_BURST = 50;   // 웹 화면·서버의 사진 한도(MAX_PHOTOS)와 같다
     private static final long DAY_MS = 24L * 60 * 60 * 1000;
     private static final long SHOT_KEEP_MS = DAY_MS;               // 화면에 넘긴 촬영 원본(앱 캐시)을 남겨 두는 시간
@@ -82,6 +84,7 @@ public class MainActivity extends Activity {
     private final ArrayList<Uri> burstShots = new ArrayList<>();   // 연속 촬영으로 지금까지 찍은 사진
     private String pendingGeoOrigin;
     private GeolocationPermissions.Callback pendingGeoCallback;
+    private PermissionRequest pendingMediaRequest;
     private long lastBackAt;
     private boolean clearHistoryOnce;   // 앱 안 사본으로 바꿔 연 뒤 한 번: 실패한 주소가 뒤로가기 기록에 남아 있으면 뒤로가기 때 또 실패→사본을 되풀이한다
 
@@ -217,6 +220,38 @@ public class MainActivity extends Activity {
                 pendingGeoOrigin = origin;
                 pendingGeoCallback = callback;
                 requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LOCATION_PERM);
+            }
+
+            // 우리 화면(직원용·Pro 모두)에서 앱 안 카메라 미리보기(getUserMedia)를 요청할 때 허용한다
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                String origin = request.getOrigin() != null ? request.getOrigin().toString() : null;
+                boolean ours = origin != null && (LIVE_URL.startsWith(origin) || origin.startsWith("file"));
+                boolean wantsVideo = false;
+                String[] resources = request.getResources();
+                if (resources != null) {
+                    for (String r : resources) {
+                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) {
+                            wantsVideo = true;
+                            break;
+                        }
+                    }
+                }
+                if (!ours || !wantsVideo) {
+                    request.deny();
+                    return;
+                }
+                if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    runOnUiThread(() -> request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE}));
+                    return;
+                }
+                pendingMediaRequest = request;
+                requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_MEDIA_CAMERA_PERM);
+            }
+
+            @Override
+            public void onPermissionRequestCanceled(PermissionRequest r) {
+                if (pendingMediaRequest == r) pendingMediaRequest = null;
             }
 
             @Override
@@ -468,6 +503,16 @@ public class MainActivity extends Activity {
             pendingGeoCallback.invoke(pendingGeoOrigin, granted, false);
             pendingGeoCallback = null;
             pendingGeoOrigin = null;
+            return;
+        }
+        if (requestCode == REQ_MEDIA_CAMERA_PERM && pendingMediaRequest != null) {
+            PermissionRequest req = pendingMediaRequest;
+            pendingMediaRequest = null;
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                req.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+            } else {
+                req.deny();
+            }
             return;
         }
         if (requestCode == REQ_CAMERA_PERM && pendingChooserParams != null) {
