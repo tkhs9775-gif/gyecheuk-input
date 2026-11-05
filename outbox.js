@@ -66,6 +66,12 @@ async function requestBody(item) {
   return { entry: item.entry, files };
 }
 
+// 서버가 받아 준 뒤 화면이 할 일(도면 업로드: 목록에 넣기·캐시)을 맡긴다. 훅(onOutboxSent)은 drawing.js 가 정의한다. 훅이 실패해도 전송 결과는 그대로
+function notifySent(item, data) {
+  if (typeof onOutboxSent !== 'function') return;
+  try { onOutboxSent(item, data); } catch (err) { console.warn('보낸 뒤 처리 실패', err); }
+}
+
 // 바로 보내 보고, 신호 문제로 못 보내면 이 폰에 보관한다. 'sent' 또는 'queued'를 돌려주고,
 // 서버가 거부한 경우(입력 오류 등)는 그대로 던져서 화면이 고치게 한다.
 // background: 사진·파일처럼 수십 초 걸리는 저장은 보관함에 먼저 넣고 바로 'background'를 돌려준다. 전송은 보관함이 뒤에서 한다
@@ -80,7 +86,8 @@ async function submitOrQueue(req, background = false) {
   }
   if (navigator.onLine !== false) {
     try {
-      await api(item.action, await requestBody(item));
+      const data = await api(item.action, await requestBody(item));
+      notifySent(item, data);
       return 'sent';
     } catch (err) {
       if (!err.network) throw err;
@@ -119,9 +126,10 @@ async function doFlush() {
   try { items = (await outboxAll()).filter((i) => i.state !== 'failed'); } catch { return 0; }
   for (const item of items) {
     try {
-      await api(item.action, await requestBody(item));
+      const data = await api(item.action, await requestBody(item));
       await outboxDelete(item.id);
       sent += 1;
+      notifySent(item, data);
     } catch (err) {
       if (err.isAuth) { signOut(); break; }
       const verdict = classifyFailure(err, item.tries);

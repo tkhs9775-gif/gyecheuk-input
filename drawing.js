@@ -780,6 +780,8 @@ async function openPdfFieldbook(file, preset = null) {
     drawingState.pageCount = pdfDoc.numPages;
     await renderPdfPage();
     applyServerNotes(file, await notesPromise);
+    // 저장 때 쓸 합치기 라이브러리(pdf-lib, 1MB)를 도면을 보는 동안 미리 받아 둔다(저장을 누른 뒤 받으면 그만큼 기다린다)
+    if (navigator.onLine !== false) ensurePdfLib().catch(() => {});
   } catch (err) {
     if (seq !== openSeq) return;
     if (err.isAuth) { drawingState.dirty = false; signOut(); closePdfViewer(); return; }
@@ -1719,9 +1721,9 @@ function uint8ToBase64(bytes) {
 
 // 특정 페이지의 동그라미 마커 + OCR 텍스트 태그 + 자유 펜 필기를 투명 PNG 데이터로 그린다
 // onlyType을 주면 그 계측기 메모만 그린다(자유 펜 필기는 계측기와 무관하므로 뺀다). 없으면 전부
-function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType = null) {
-  const pagePins = (drawingState.notes.pins || []).filter((p) => p.page === pageIndex1Based && (!onlyType || p.type === onlyType));
-  const pageStrokes = onlyType ? [] : (drawingState.notes.strokes?.[String(pageIndex1Based)] || []);
+function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType = null, notes = drawingState.notes) {
+  const pagePins = (notes.pins || []).filter((p) => p.page === pageIndex1Based && (!onlyType || p.type === onlyType));
+  const pageStrokes = onlyType ? [] : (notes.strokes?.[String(pageIndex1Based)] || []);
   if (!pagePins.length && !pageStrokes.length) return null;
 
   const c = document.createElement('canvas');
@@ -1791,16 +1793,22 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType =
   return c.toDataURL('image/png');
 }
 
-// 원본 PDF 바이트 위에 모든 페이지의 야장 메모/필기를 합성한 새 PDF base64 생성
-async function buildAnnotatedPdfBase64(onlyType = null) {
+// pdf-lib 받기 + 문서 열기(1MB 도면이면 느린 폰에서 1초 안팎). 저장 때 서버 확인(같은 이름 저장본 합치기)과 나란히 돌려 기다리는 시간을 겹친다
+async function loadPdfForAnnotate(bytes) {
   const PDFLib = await ensurePdfLib();
-  const pdfDoc = await PDFLib.PDFDocument.load(drawingState.rawPdfBytes);
+  return PDFLib.PDFDocument.load(bytes);
+}
+
+// 원본 PDF 바이트 위에 모든 페이지의 야장 메모/필기를 합성한 새 PDF base64 생성. docPromise 를 주면 미리 연 문서를 쓴다(문서에 그려 넣으므로 한 번만 쓸 것).
+// notes 는 만들기 시작할 때의 메모로 고정한다(만드는 동안 값을 더 적거나 합치기가 끝나도 쪽마다 다른 메모가 섞이지 않게)
+async function buildAnnotatedPdfBase64(onlyType = null, docPromise = null, notes = drawingState.notes) {
+  const pdfDoc = await (docPromise || loadPdfForAnnotate(drawingState.rawPdfBytes));
   const pages = pdfDoc.getPages();
 
   for (let i = 0; i < pages.length; i += 1) {
     const p = pages[i];
     const { width, height } = p.getSize();
-    const pngUrl = renderPageAnnotationsPng(i + 1, width, height, onlyType);
+    const pngUrl = renderPageAnnotationsPng(i + 1, width, height, onlyType, notes);
     if (!pngUrl) continue;
     const pngImage = await pdfDoc.embedPng(pngUrl);
     p.drawImage(pngImage, { x: 0, y: 0, width, height });
@@ -1947,62 +1955,48 @@ async function doSaveDrawingNotes(showAlert) {
   const phoneFiles = () => (pdfBase64 ? [{ name: newFileName, base64: pdfBase64, folder: subdir }] : []);
 
   try {
+    // PDF 만들기(pdf-lib 받기 → 문서 열기 → 동그라미 그려 넣기)는 서버 확인(아래 합치기, 왕복 1.5~3초)과 나란히 돌린다.
+    // 합치기로 메모가 바뀌는 드문 경우에만 새 문서로 다시 만든다(문서에 그려 넣으므로 같은 문서를 두 번 쓰면 두 겹이 된다)
+    const bytes = drawingState.rawPdfBytes;
+    const build = (notes) => (bytes ? buildAnnotatedPdfBase64(null, null, notes).catch((err) => { console.warn('메모 합치기 실패', err); return null; }) : Promise.resolve(null));
+    // 메모는 복사본으로 고정: 만드는 동안 더 적은 값이 그림에는 없는데 메모 JSON 에만 들어가는 어긋남을 막는다(그 값은 dirty 가 남아 닫을 때 다시 저장된다)
+    let notesAtBuild = structuredClone(drawingState.notes);
+    let built = build(notesAtBuild);
     // 계측용 도면이거나 오늘 저장본을 이어 적는 중(여럿이 나눠 적는 날): 다른 폰이 먼저 저장한 같은 이름 저장본이 있으면 그 값을 먼저 합친다(PDF 에 굽기 전에)
-    if (file.templateOf || stemOf(file.name) === stemOf(newFileName)) await mergeRivalSave(newFileName, file);
-    // 1) 원본 파일에도 야장 메모 JSON은 보존해 두고,
-    // 2) '원본이름_수정날짜(요일한글자).pdf' 로 야장 메모가 합쳐진 새 PDF를 다른 이름으로 저장!
-    if (drawingState.rawPdfBytes) {
-      try {
-        pdfBase64 = await buildAnnotatedPdfBase64();
-      } catch (err) {
-        console.warn('메모 합치기 실패, 원본 그대로 저장', err);
-        flattened = false;
-        pdfBase64 = uint8ToBase64(drawingState.rawPdfBytes);
-      }
+    if ((file.templateOf || stemOf(file.name) === stemOf(newFileName)) && await mergeRivalSave(newFileName, file)) {
+      notesAtBuild = structuredClone(drawingState.notes);
+      built = build(notesAtBuild);
+    }
+    // '원본이름_수정날짜(요일한글자).pdf' 로 야장 메모가 합쳐진 새 PDF. 합치기 라이브러리를 못 받으면 원본 그대로 올린다(메모는 서버에 따로 남는다)
+    if (bytes) {
+      pdfBase64 = await built;
+      if (!pdfBase64) { flattened = false; pdfBase64 = uint8ToBase64(bytes); }
     }
     if (!pdfBase64) throw new Error('도면이 아직 다 열리지 않았습니다. 도면이 보인 뒤 다시 저장해 주세요.');
 
     // 새 저장본의 메모에 바탕 원본을 적어 둔다: 저장본을 다시 열어도 원본 위에 동그라미 한 겹만 그린다. history 가 커져 시트 한 칸을 넘지 않게 줄인다
-    const fullNotes = { ...drawingState.notes, sourceId: (drawingState.sourceFile || file).id };
+    const fullNotes = { ...notesAtBuild, sourceId: (drawingState.sourceFile || file).id };
     const savedNotes = typeof trimNotesForCell === 'function' ? trimNotesForCell(fullNotes) : fullNotes;
-    const res = await api('drawing_upload', {
-      site: drawingState.site,
-      file: {
-        name: newFileName,
-        base64: pdfBase64,
-        replaceSameName: true,
-        subdir,
-        user: $('user')?.value || '',
-        notes: savedNotes,
-      },
-    });
-
-    if (res.file) {
-      // 새로 저장한 파일도 즉시 IndexedDB 캐시에 넣어 다시 열 때 0.1초 만에 뜨도록 함
-      if (pdfBase64) putCachedPdfBytes(res.file.id, b64ToUint8(pdfBase64));
-      // 옛 서버(subdir 모름)는 현장 폴더 바로 아래에 저장한다. 목록은 이름으로 가르므로 어디에 있든 저장본 구분에 보인다
-      const inFolder = typeof res.folder === 'string' && res.folder.endsWith(`/${subdir}`);
-      if (!inFolder) console.warn('서버가 옛 버전이라 저장본을 현장 폴더에 저장함. Code.gs 를 새 버전으로 배포하면 저장본 폴더에 모입니다');
-      upsertDrawingFile(res.file, inFolder ? familyName : '');
-      store.set(`pdf_notes_${res.file.id}`, JSON.stringify(savedNotes));
-      $('pdfTitle').textContent = res.file.name;
-      // 계측용(가상) 도면은 저장된 순간부터 그 저장본을 연 것으로 바꾼다: 이어 적는 값은 저장본 메모(pdf_notes_<새 id>)와 실시간 줄에 그 id 로 남고, 가상 보관분은 치운다.
-      // 캔버스 그림 키도 새 id 로 바꿔 다음 확대·회전 때 흰 화면이 끼지 않게 한다(저장 중에 다른 도면을 열었으면 건드리지 않는다)
-      if (file.templateOf) {
-        store.remove(`pdf_notes_${file.id}`);
-        if (drawingState.currentFile === file) {
-          drawingState.currentFile = res.file;
-          if (shownKey.startsWith(`${file.id}|`)) shownKey = res.file.id + shownKey.slice(file.id.length);
-        }
-      }
-    }
+    // 업로드(1~2MB, 폰 LTE 로 5~15초)는 보관함(IndexedDB)에 넣고 뒤에서 보낸다 — 사진 저장과 같은 길. 버튼·닫기는 PDF 를 만든 뒤 바로 끝나고, 신호가 끊겨도 폰에 남아 다음에 올라간다.
+    // 서버 응답(새 파일 id)은 onOutboxSent 가 받아 목록·캐시·계측용 전환을 한다
+    const result = await submitOrQueue({
+      id: `drawing:${crypto.randomUUID()}`,
+      action: 'drawing_upload',
+      kind: 'drawing',
+      label: `도면 ${newFileName}`,
+      payload: { site: drawingState.site, file: { name: newFileName, base64: pdfBase64, replaceSameName: true, subdir, user: $('user')?.value || '', notes: savedNotes } },
+      meta: { site: drawingState.site, familyName, subdir, templateId: file.templateOf ? file.id : '' },
+    }, true);
 
     if (notesVersion === ver) drawingState.dirty = false;
-    btn.textContent = '저장됨✓';
+    btn.textContent = result === 'queued' ? '폰보관✓' : '저장됨✓';
     if (showAlert) {
+      const where = result === 'queued'
+        ? '신호가 없어 이 폰에 보관했습니다. 신호가 잡히면 자동으로 클라우드에 올라갑니다.'
+        : '클라우드에는 뒤에서 올립니다(맨 위 줄에서 진행을 볼 수 있습니다).';
       askPhoneSave(flattened
-        ? `'${newFileName}' 이름으로 도면 폴더에 새로 저장되었습니다!`
-        : `'${newFileName}' 이름으로 저장했지만, 합치기 기능 파일을 받지 못해 메모를 PDF 그림에 합치지는 못했습니다.\n메모 자체는 서버에 보관되어 다시 열면 보입니다.`, phoneFiles());
+        ? `'${newFileName}' 이름으로 저장했습니다. ${where}`
+        : `'${newFileName}' 이름으로 저장했지만, 합치기 기능 파일을 받지 못해 메모를 PDF 그림에 합치지는 못했습니다.\n메모 자체는 서버에 보관되어 다시 열면 보입니다. ${where}`, phoneFiles());
     }
   } catch (err) {
     if (err.isAuth) { drawingState.dirty = false; signOut(); closePdfViewer(); return; }
@@ -2017,6 +2011,29 @@ async function doSaveDrawingNotes(showAlert) {
   }
 }
 
+// 보관함(outbox.js)이 도면 업로드를 서버에 보낸 뒤: 새 파일을 목록에 넣고, 다시 열 때 0.1초 만에 뜨게 캐시를 채우고,
+// 계측용(가상) 도면이 아직 열려 있으면 그 저장본을 연 것으로 바꾼다(이어 적는 값은 저장본 메모·실시간 줄에 그 id 로 남고, 가상 보관분은 치운다)
+function onOutboxSent(item, res) {
+  if (item?.kind !== 'drawing' || !res?.file) return;
+  const m = item.meta || {};
+  const sent = item.payload?.file || {};
+  if (sent.base64) putCachedPdfBytes(res.file.id, b64ToUint8(sent.base64));
+  if (sent.notes) store.set(`pdf_notes_${res.file.id}`, JSON.stringify(sent.notes));
+  if (drawingState.site === m.site) {
+    // 옛 서버(subdir 모름)는 현장 폴더 바로 아래에 저장한다. 목록은 이름으로 가르므로 어디에 있든 제 구분에 보인다
+    const inFolder = typeof res.folder === 'string' && res.folder.endsWith(`/${m.subdir}`);
+    if (!inFolder) console.warn('서버가 옛 버전이라 도면을 현장 폴더에 저장함. Code.gs 를 새 버전으로 배포하면 원본별 폴더에 모입니다');
+    upsertDrawingFile(res.file, inFolder ? m.familyName : '');
+  }
+  if (!m.templateId) return;
+  store.remove(`pdf_notes_${m.templateId}`);
+  const cur = drawingState.currentFile;
+  if (cur?.id !== m.templateId) return;
+  drawingState.currentFile = res.file;
+  if (shownKey.startsWith(`${cur.id}|`)) shownKey = res.file.id + shownKey.slice(cur.id.length);   // 다음 확대·회전 때 흰 화면이 끼지 않게
+  $('pdfTitle').textContent = res.file.name;
+}
+
 // 같은 날 다른 폰이 같은 이름으로 먼저 저장한 저장본이 있으면(두 사람이 한 도면을 나눠 적는 날) 그 메모를 받아 합친다. 안 하면 replaceSameName 으로 먼저 적은 값이 PDF 에서 사라진다.
 // 목록은 현장을 열 때 받은 것이라 저장 직전에 다시 받는다(왕복 1~3초). 신호가 없거나 실패하면 내 것만 저장한다(원래 동작)
 async function mergeRivalSave(newFileName, file) {
@@ -2027,9 +2044,9 @@ async function mergeRivalSave(newFileName, file) {
     rival = files.find((f) => f.name === newFileName && f.id !== file.id) || null;
   } catch (err) {
     console.warn('같은 이름 저장본 확인 건너뜀(목록을 못 받음)', err);   // 목록조차 못 받으면 원래대로 내 것만 저장한다
-    return;
+    return false;
   }
-  if (!rival) return;
+  if (!rival) return false;
   const stillMine = () => { if (drawingState.currentFile !== file) throw new Error('저장하는 사이 다른 도면이 열려 저장을 멈췄습니다. 다시 저장해 주세요.'); };
   stillMine();
   let theirs;
@@ -2042,10 +2059,13 @@ async function mergeRivalSave(newFileName, file) {
     throw e;
   }
   stillMine();
-  if (!theirs?.updated || !Array.isArray(theirs.data?.pins)) return;   // 메모 없이 올린 파일(PC 등)이면 합칠 것이 없다
-  drawingState.notes = mergeNotesForSave(drawingState.notes, normalizeNotes(theirs.data), todayKst());
+  if (!theirs?.updated || !Array.isArray(theirs.data?.pins)) return false;   // 메모 없이 올린 파일(PC 등)이면 합칠 것이 없다
+  const merged = mergeNotesForSave(drawingState.notes, normalizeNotes(theirs.data), todayKst());
+  if (JSON.stringify(merged.pins) === JSON.stringify(drawingState.notes.pins)) return false;   // 달라진 게 없으면 PDF 를 다시 만들 필요 없다
+  drawingState.notes = merged;
   renderPagePins();
   updatePageInfo();
+  return true;
 }
 
 // 순수 함수: 내 메모(mine)에 그쪽 메모(theirs)를 합친다. 내 동그라미는 그대로 두고, 그쪽에만 있는 동그라미는 그쪽이 오늘 값을 적은 것만 더한다
@@ -2098,34 +2118,37 @@ async function saveTypedPdfs() {
   const file = drawingState.currentFile;
   if (!file || !drawingState.rawPdfBytes) return;
   const pins = drawingState.notes.pins || [];
-  const types = PIN_TYPES.filter((t) => pins.some((p) => p.type === t.code));
+  const hasValue = (p) => String(p.text || '').trim() !== '';
+  // 값을 적은 종류만 만든다(2026-11-05 결정): 계측용 도면에서 오늘 안 잰 종류까지 번호만 있는 PDF 가 생기면 종류별 폴더에서 '잰 날'과 '안 잰 날'이 섞인다
+  const types = PIN_TYPES.filter((t) => pins.some((p) => p.type === t.code && hasValue(p)));
   if (!types.length) {
-    alert('계측기 종류를 고른 동그라미 메모가 없습니다. 범례에서 종류를 고른 뒤 동그라미를 찍어 주세요.');
+    alert('값을 적은 계측기 종류가 없습니다. 동그라미에 값을 적은 종류만 계측기별 PDF 로 만듭니다.');
     return;
   }
   const btn = $('pdfSaveTyped');
   btn.disabled = true;
   // 원본 이름에서 .pdf와 날짜 꼬리표를 뗀 이름이 묶음 폴더 이름. 그 안에 종류(수위·굴착고…)마다 폴더를 두어 계측기별로 쌓인다
   const folderName = familyNameOf(file.name, allDrawingFiles());
-  const saved = [];
+  const queued = [];
   const failed = [];
   const phoneFiles = [];   // 클라우드에 못 올린 것도 PDF를 만들었으면 폰에는 저장할 수 있다
   for (const t of types) {
-    btn.textContent = `${t.name} 저장중..`;
+    btn.textContent = `${t.name} 만드는 중..`;
     const name = buildSavedDrawingFileName(file.name, new Date()).replace(/(_\d{4}-\d{2}-\d{2}\([일월화수목금토]\)\.pdf)$/, `_${t.name}$1`);
     const savePath = `${folderName}/${t.name}`;
     try {
       const base64 = await buildAnnotatedPdfBase64(t.code);
       phoneFiles.push({ name, base64, folder: savePath });
-      const res = await api('drawing_upload', {
-        site: drawingState.site,
-        file: { name, base64, replaceSameName: true, subdir: savePath, user: $('user')?.value || '' },
-      });
-      if (!res.file) throw new Error(res.error || '저장 실패');
-      // 옛 서버 코드는 folder를 안 돌려주고 subdir을 무시한 채 현장 폴더에 저장한다
-      if (res.folder !== `도면/${drawingState.site}/${savePath}`) throw new Error(`서버가 옛 버전이라 ${res.folder || '도면/' + drawingState.site} 에 저장됨. Code.gs를 새 버전으로 배포하세요`);
-      saved.push(t.name);
-      upsertDrawingFile(res.file, folderName);   // 목록(계측기별 구분)에 바로 보이게
+      // 업로드는 보관함에 넣고 뒤에서 보낸다(다른이름 저장과 같음). 목록 반영은 onOutboxSent
+      await submitOrQueue({
+        id: `drawing:${crypto.randomUUID()}`,
+        action: 'drawing_upload',
+        kind: 'drawing',
+        label: `계측기별 PDF ${name}`,
+        payload: { site: drawingState.site, file: { name, base64, replaceSameName: true, subdir: savePath, user: $('user')?.value || '' } },
+        meta: { site: drawingState.site, familyName: folderName, subdir: savePath, templateId: '' },
+      }, true);
+      queued.push(t.name);
     } catch (err) {
       if (err.isAuth) { btn.disabled = false; btn.textContent = '계측기별 PDF'; drawingState.dirty = false; signOut(); closePdfViewer(); return; }
       failed.push(`${t.name}(${friendlyError(err, 'PDF를 만들지 못했습니다')})`);
@@ -2133,9 +2156,9 @@ async function saveTypedPdfs() {
   }
   btn.disabled = false;
   btn.textContent = '계측기별 PDF';
-  const untyped = pins.filter((p) => !p.type).length;
+  const untyped = pins.filter((p) => !p.type && hasValue(p)).length;
   askPhoneSave([
-    saved.length ? `'${folderName}' 폴더에 ${saved.length}개 저장: ${saved.join(', ')}` : '클라우드에 저장된 파일이 없습니다',
+    queued.length ? `'${folderName}' 폴더로 ${queued.length}개를 올립니다(뒤에서 전송): ${queued.join(', ')}` : '만든 파일이 없습니다',
     failed.length ? `실패: ${failed.join(', ')}` : '',
     untyped ? `종류 없는 메모 ${untyped}개는 계측기별 PDF에 들어가지 않습니다` : '',
   ].filter(Boolean).join('\n'), phoneFiles);
