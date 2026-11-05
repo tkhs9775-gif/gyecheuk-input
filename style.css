@@ -613,9 +613,23 @@ dialog::backdrop { background: rgba(27, 42, 87, .45); }
 .list .val { font-size: 22px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .list .empty { color: var(--muted); justify-content: flex-start; }
 
-/* 도면 목록: 원본별 계측기 폴더 */
-.list li.folder { background: #EEF4FB; border-color: #C9DBF0; }
+/* 도면 목록: 원본 / 저장본 / 계측기별 구분(.seg 안 버튼) + 원본별 묶음 줄 */
+.seg button { flex: 1; min-height: 44px; padding: 0 6px; border: 0; border-radius: 20px; background: transparent; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.seg button[aria-pressed="true"] { background: var(--card); color: var(--accent); font-weight: 700; box-shadow: 0 1px 3px rgba(27, 42, 87, .12); }
+.drawing-tools { display: flex; flex-direction: column; gap: 10px; margin: 0 0 12px; }
+.drawing-tools .muted { margin: 0 4px; min-height: 20px; line-height: 1.45; }
+.drawing-tools .btn { width: 100%; }
+.list li.drawing .meta b { font-size: 16px; line-height: 1.35; }
+.list li.drawing .meta small { display: block; margin-top: 2px; font-size: 13px; }
+.list .val.chev { font-size: 22px; font-weight: 500; color: var(--muted); }
+.list .kind { display: inline-block; margin-right: 6px; padding: 1px 9px; border-radius: 10px; background: var(--chip); color: var(--accent); font-size: 12px; font-weight: 700; vertical-align: 2px; }
+.list li.folder { background: var(--chip); border-color: transparent; }
+.list li.folder .meta b { font-size: 16px; }
 .list li.in-folder { margin-left: 22px; }
+
+/* 동그라미 메모 상자: 초기치·전회값과 변화·누적 */
+.pin-memo-prev { display: flex; flex-direction: column; gap: 3px; margin: 0 0 8px; padding: 8px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pin-memo-prev b { font-size: 15px; color: var(--text); }
 
 /* 사진: 찍기 / 갤러리 칸 */
 .seg { display: flex; gap: 4px; padding: 4px; margin: 8px 0 12px; border-radius: 24px; background: var(--chip); }

@@ -9,7 +9,25 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=55">
+<link rel="stylesheet" href="style.css?v=56">
+<link rel="stylesheet" href="theme.css?v=56">
+<script>
+// 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
+(function () {
+  try {
+    var q = new URLSearchParams(location.search).get('theme');
+    if (q === 'dark' || q === 'light') localStorage.setItem('theme', q);
+    var t = localStorage.getItem('theme');
+    var pro = false;
+    try { pro = !!(window.AndroidPro && window.AndroidPro.isPro && window.AndroidPro.isPro()); } catch (e) { pro = false; }
+    if (t ? t === 'dark' : pro) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.setAttribute('content', '#0A0D14');
+    }
+  } catch (e) { /* 저장소를 못 쓰면 밝은 화면 그대로 */ }
+})();
+</script>
 <title>키움이엔씨</title>
 </head>
 <body>
@@ -347,8 +365,14 @@
       </button>
       <h1 id="drawingSiteTitle" class="title">도면 폴더</h1>
     </div>
-    <div class="row between" style="margin: 8px 0 12px;">
-      <span id="drawingFolderNote" class="muted" role="status">PDF를 터치하면 전체화면 야장으로 열립니다.</span>
+    <!-- 원본만 먼저 보이고, [다른이름 저장]본과 [계측기별 PDF]는 구분 버튼을 눌러 본다(원본별 묶음) -->
+    <nav id="drawingViewSeg" class="seg" aria-label="도면 구분">
+      <button type="button" data-view="original" aria-pressed="true">원본</button>
+      <button type="button" data-view="saved" aria-pressed="false">저장본</button>
+      <button type="button" data-view="typed" aria-pressed="false">계측기별</button>
+    </nav>
+    <div class="drawing-tools">
+      <p id="drawingFolderNote" class="muted" role="status">PDF를 터치하면 전체화면 야장으로 열립니다.</p>
       <button id="btnUploadDrawing" type="button" class="btn outline small">＋ 도면 추가 (PDF·JPG)</button>
       <input id="inputDrawingPdf" type="file" accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png" hidden>
     </div>
@@ -437,6 +461,11 @@
       </div>
     </div>
     <p class="pin-memo-hint">💡 아래 메모 칸을 <b>한 번 더 터치</b>하면 펜으로 손글씨를 써서 텍스트(OCR)로 자동 변환할 수 있습니다.</p>
+    <!-- 지난 측정일에 적은 값(초기치·전회)과 지금 값의 변화·누적. 처음 적는 동그라미에는 안 보인다 -->
+    <div id="pinMemoPrev" class="pin-memo-prev hidden" role="status" aria-live="polite">
+      <span id="pinPrevLine"></span>
+      <b id="pinDeltaLine" class="hidden"></b>
+    </div>
     <div id="pinMemoDisplay" class="pin-memo-display" tabindex="0" role="button" aria-label="메모 칸 (터치하면 손글씨 펜 입력 열기)"></div>
     <div class="row" style="margin-top: 8px;">
       <input id="pinMemoKeyboard" type="text" maxlength="200" placeholder="키보드로 직접 수정할 수도 있습니다" aria-label="메모 (키보드 입력)">
@@ -479,6 +508,10 @@
     <input id="drawingPhoneAlways" type="checkbox">
     <span>도면 저장할 때 폰에도 항상 저장<small>끄면 저장할 때마다 물어봅니다</small></span>
   </label>
+  <label class="keep">
+    <input id="darkTheme" type="checkbox">
+    <span>블랙 테마<small>Pro 앱은 기본으로 켜져 있습니다. 바꾸면 바로 적용됩니다</small></span>
+  </label>
   <a id="downloadApk" href="https://github.com/tkhs9775-gif/gyecheuk-input/releases/download/latest/gyecheuk-input.apk" class="btn outline wide apk-link">📱 안드로이드 앱(APK) 내려받기</a>
 </main>
 
@@ -500,16 +533,17 @@
   </a>
 </nav>
 
-<script src="config.js?v=55"></script>
-<script src="weather.js?v=55"></script>
-<script src="entries.js?v=55"></script>
-<script src="push.js?v=55"></script>
-<script src="outbox.js?v=55"></script>
-<script src="phonecopy.js?v=55"></script>
-<script src="drawing.js?v=55"></script>
-<script src="gps.js?v=55"></script>
-<script src="gallery.js?v=55"></script>
-<script src="camera.js?v=55"></script>
-<script src="app.js?v=55"></script>
+<script src="config.js?v=56"></script>
+<script src="weather.js?v=56"></script>
+<script src="entries.js?v=56"></script>
+<script src="push.js?v=56"></script>
+<script src="outbox.js?v=56"></script>
+<script src="phonecopy.js?v=56"></script>
+<script src="pinhistory.js?v=56"></script>
+<script src="drawing.js?v=56"></script>
+<script src="gps.js?v=56"></script>
+<script src="gallery.js?v=56"></script>
+<script src="camera.js?v=56"></script>
+<script src="app.js?v=56"></script>
 </body>
 </html>

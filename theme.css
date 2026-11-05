@@ -1,0 +1,117 @@
+/* 다크(블랙) 테마 — style.css 위에 얹는 덮어쓰기 층.
+   모든 규칙은 html[data-theme="dark"] 아래에만 둔다(라이트 테마는 손대지 않는다). 크기·간격·둥글기는 그대로, 색·테두리·그림자만 바꾼다.
+   켜는 법: <html data-theme="dark"> — Pro 앱(window.AndroidPro.isPro()), localStorage.theme === 'dark', ?theme=dark 는 index.html 머리 스크립트가 붙인다. */
+
+html[data-theme="dark"] {
+  color-scheme: dark;   /* 날짜·select 기본 창, 스크롤바, 체크박스도 어둡게 */
+  background: #0A0D14;
+  --bg: #0A0D14; --card: #121826; --text: #E6EBF5; --muted: #94A0B8; --line: #232C3F;
+  --accent: #5B9CFF; --chip: #1B2A47; --ok-bg: #0F2A1E; --ok: #5ED39A; --err-bg: #3A1418; --err: #FF7B72;
+  /* 다크 전용 보조 색 */
+  --raised: #182033;                       /* 카드보다 한 단 떠 있는 면(폴더 줄, 칩, 도구 버튼) */
+  --field: #0F141F; --field-line: #2A3450; /* 입력 칸 */
+  --hairline: rgba(255, 255, 255, .07);
+  --warn: #FFC861; --warn-bg: #3A2A0F;
+  --bar: rgba(14, 19, 29, .92);            /* 위·아래 고정 막대(blur 바탕) */
+  --accent-fill: #2D68FA;                  /* 흰 글자를 얹는 단색 파랑(흰 글자 4.7:1). #5B9CFF 위 흰 글자는 2.8:1이라 글자 바탕으로 쓰지 않는다 */
+  --grad: linear-gradient(135deg, #1E4FD9 0%, #2D68FA 100%);   /* 주 버튼·홈 타일(가장 밝은 끝에서도 흰 글자 4.7:1) */
+  --glow: 0 10px 30px rgba(59, 130, 246, .28);
+}
+
+/* ---------- 로고: 파란 K는 그대로, 남색 영문·회색 한글만 밝게 ---------- */
+/* 기본(마스크 미지원 브라우저): 필터로 통째로 뒤집는다 */
+html[data-theme="dark"] .splash-logo { filter: invert(1) hue-rotate(180deg) brightness(1.05); }
+@supports (-webkit-mask-image: url("")) or (mask-image: url("")) {
+  html[data-theme="dark"] .splash-logo { filter: none; }
+  /* logo.png(1200×870)에서 영문 "KIEUM E&C"는 세로 70~85%, 한글은 90~98% 띠에 있다. 그 띠만 로고 모양으로 밝은 색을 덮어 쓴다 */
+  html[data-theme="dark"] .logo-wrap::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    -webkit-mask: url(logo.png) center / contain no-repeat; mask: url(logo.png) center / contain no-repeat;
+    clip-path: inset(66% 0 0 0);
+    background: linear-gradient(var(--text) 0 88%, var(--muted) 88%);
+  }
+}
+/* 로고 뒤 은은한 파란 빛(스플래시·로그인 공통). 절대 위치라 배치에는 영향 없다 */
+html[data-theme="dark"] .logo-wrap::before {
+  content: ""; position: absolute; inset: -34% -40%; z-index: -1; pointer-events: none; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(59, 130, 246, .34), rgba(59, 130, 246, 0));
+}
+
+/* ---------- 스플래시 / 로그인(접속 코드) ---------- */
+html[data-theme="dark"] #splash { background: var(--bg); }
+html[data-theme="dark"] .gate-card-anim { box-shadow: 0 16px 40px rgba(0, 0, 0, .5); }
+
+/* ---------- 공통 면: 카드·목록·입력 ---------- */
+html[data-theme="dark"] .card { border-color: var(--line); }
+html[data-theme="dark"] .list li { border-color: var(--line); }
+html[data-theme="dark"] .list li.folder { background: var(--raised); border-color: var(--field-line); }
+html[data-theme="dark"] .list li.tap:active { background: var(--raised); }
+html[data-theme="dark"] .tile { background: var(--grad); box-shadow: var(--glow); }
+
+html[data-theme="dark"] input[type="text"], html[data-theme="dark"] input[type="password"], html[data-theme="dark"] input[type="date"],
+html[data-theme="dark"] input[type="file"] { background: var(--field); border-color: var(--field-line); }
+html[data-theme="dark"] input::placeholder { color: #7C879D; }
+html[data-theme="dark"] input:-webkit-autofill { -webkit-box-shadow: 0 0 0 1000px var(--field) inset; -webkit-text-fill-color: var(--text); }
+html[data-theme="dark"] input[type="file"]::file-selector-button { background: var(--chip); }
+
+/* 칩(계측기 종류·상태·OCR 후보) */
+html[data-theme="dark"] .chips button { background: var(--raised); border-color: var(--field-line); }
+html[data-theme="dark"] .chips button[aria-pressed="true"] { background: var(--chip); border-color: var(--accent); color: #D6E4FF; }
+html[data-theme="dark"] .chips button:active:not(:disabled) { background: var(--chip); }
+
+/* 버튼 */
+/* 뒤로·닫기 둥근 버튼(브라우저 기본 모양이던 것): 떠 있는 면 색으로. 테두리 두께는 그대로라 크기 변화 없음 */
+html[data-theme="dark"] .bar-top button.icon-btn, html[data-theme="dark"] .pdf-topbar .icon-btn { background: var(--raised); border-color: var(--field-line); border-style: solid; }
+html[data-theme="dark"] .btn.primary { background: var(--grad); border-color: rgba(255, 255, 255, .14); box-shadow: var(--glow); }
+html[data-theme="dark"] .btn.outline { background: rgba(91, 156, 255, .08); }
+html[data-theme="dark"] .thumbs button { background: #0A0D14; color: #FFF; box-shadow: 0 0 0 1px rgba(255, 255, 255, .28); }
+html[data-theme="dark"] .apk-notice { background: #241C0E; border-color: rgba(255, 200, 97, .4); }
+
+/* 위 상태줄 / 아래 탭·저장 막대 */
+html[data-theme="dark"] .netbar.warn { background: var(--warn-bg); color: var(--warn); }
+html[data-theme="dark"] #tabbar,
+html[data-theme="dark"] .bar-bottom { background: var(--bar); border-top-color: var(--hairline); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+
+/* 칸 나누기(.seg): 사진 찍기/갤러리(a), 도면 원본/저장본/계측기별(button) — 트랙은 카드색, 고른 칸은 칩색에 강조 글자 */
+html[data-theme="dark"] .seg { background: var(--card); box-shadow: inset 0 0 0 1px var(--hairline); }
+html[data-theme="dark"] .seg a[aria-current="page"], html[data-theme="dark"] .seg button[aria-pressed="true"] { background: var(--chip); color: var(--accent); box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+
+/* 대화창 */
+html[data-theme="dark"] dialog { box-shadow: 0 0 0 1px var(--line), 0 24px 60px rgba(0, 0, 0, .6); }
+html[data-theme="dark"] dialog::backdrop { background: rgba(0, 0, 0, .6); }
+
+/* 갤러리 */
+html[data-theme="dark"] .g-album .cover { background-color: var(--raised); }
+html[data-theme="dark"] .g-grid button { background-color: var(--raised); }
+
+/* 앱 안 카메라(이미 검정): 완료 버튼만 흰 글자가 읽히는 파랑으로 */
+html[data-theme="dark"] .cam-done { background: var(--accent-fill); }
+
+/* ---------- 도면(PDF 야장) 뷰어: 원래 남색 → 새 블랙 계열 ---------- */
+html[data-theme="dark"] .pdf-viewer { background: var(--bg); }
+html[data-theme="dark"] .pdf-topbar { background: #0E131D; box-shadow: inset 0 -1px 0 var(--hairline); }
+html[data-theme="dark"] .pdf-title-wrap small { color: var(--muted); }
+html[data-theme="dark"] .pdf-sm-btn { background: var(--raised); border-color: var(--field-line); }
+html[data-theme="dark"] .pdf-sm-btn[aria-pressed="true"] { background: var(--accent-fill); }
+html[data-theme="dark"] .pdf-save-btn { background: #238636; }   /* 흰 글자 4.6:1 */
+html[data-theme="dark"] .pdf-stage-wrap { background: #06080D; }
+/* .pdf-stage(흰 종이)·#pdfCanvas 는 도면 자체라 그대로 둔다 */
+html[data-theme="dark"] .pdf-pin.selected { background: var(--accent-fill); }
+html[data-theme="dark"] .pdf-pin-tag { background: rgba(14, 19, 29, .92); }
+html[data-theme="dark"] .gps-layer.calibrating { outline-color: var(--accent); }
+html[data-theme="dark"] .gps-panel { background: var(--card); border-bottom-color: var(--line); }
+html[data-theme="dark"] .gps-panel .close-pin-btn { color: var(--text); }
+html[data-theme="dark"] .gps-map { background: var(--bg); }
+/* 아래 도구 줄 */
+html[data-theme="dark"] .pdf-fab-group { background: #0E131D; border-top-color: var(--hairline); }
+html[data-theme="dark"] .pin-legend-item { background: var(--raised); border-color: rgba(255, 255, 255, .22); box-shadow: none; }
+html[data-theme="dark"] .pin-legend-item[aria-pressed="true"] { background: var(--accent-fill); border-color: rgba(255, 255, 255, .75); }
+html[data-theme="dark"] .circle-pin-fab { background: var(--raised); border-color: rgba(255, 255, 255, .45); box-shadow: 0 6px 18px rgba(0, 0, 0, .5); }
+html[data-theme="dark"] .circle-pin-fab[aria-pressed="true"] { background: #D32F2F; border-color: #FFD2D2; }   /* 흰 글자 5:1 */
+html[data-theme="dark"] .pdf-tool-fab { background: var(--raised); border-color: rgba(255, 255, 255, .22); box-shadow: none; }
+html[data-theme="dark"] .pdf-tool-fab[aria-pressed="true"] { background: var(--accent-fill); border-color: rgba(255, 255, 255, .75); }
+/* 동그라미 메모 상자 */
+html[data-theme="dark"] .pin-memo-box { background: var(--raised); box-shadow: 0 12px 34px rgba(0, 0, 0, .6); }
+html[data-theme="dark"] .pin-memo-display { background: var(--field); }
+html[data-theme="dark"] .del-pin-btn, html[data-theme="dark"] .close-pin-btn { background: var(--field); }
+/* 손글씨(OCR) 패드: .ocr-canvas-wrap · #ocrPadCanvas 는 글씨를 쓰는 종이라 흰색 그대로 */

@@ -12,6 +12,7 @@ const PHOTO_SHRINK = 0.85;
 const PHOTO_MIN_PX = 320;  // 이보다 작게는 줄이지 않는다(알아볼 수 없음)
 const MAX_PHOTOS = 50;   // 서버(Code.gs) MAX_PHOTOS와 같다
 const DRAFT_DELAY_MS = 500;
+const WARM_DRAWING_MS = 4000;   // 홈이 뜨고 이만큼 뒤에 pdf.js 를 미리 받는다(시작 요청들과 겹치지 않게)
 const MIN_TIMEOUT_MS = 30 * 1000;
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const BYTES_PER_MS = 15;   // 느린 신호를 초당 약 15KB로 보고 시간 제한을 잡는다
@@ -950,6 +951,8 @@ function openApp() {
   if (!restoreDraft()) selectType(siteTypes()[0] ?? OTHER);
   route();
   if (apkOutdated()) flash(`📱 새 앱(1.${LATEST_APK})이 나왔습니다 · 정보 탭에서 확인`);
+  // 홈이 뜬 뒤 한가할 때 도면 엔진(pdf.js)을 미리 받아 둔다: 도면 탭을 처음 눌러도 기다리지 않는다
+  setTimeout(() => { if (typeof warmDrawing === 'function') warmDrawing(); }, WARM_DRAWING_MS);
 }
 
 // 뒤에서 받은 목록이 지난번과 다를 때만 다시 그린다. 고르던 종류·계측기와 적던 값은 그대로 둔다
@@ -1049,6 +1052,14 @@ $('editDelete').addEventListener('click', removeEntry);
 $('editCancel').addEventListener('click', () => $('editDialog').close());
 $('openManage').addEventListener('click', openManage);
 $('reloadApp').addEventListener('click', () => location.reload());
+// 블랙 테마 스위치: 머리 스크립트(index.html)가 Pro 앱·저장한 선택으로 처음 모양을 정하고, 여기서는 바꾼 값을 저장하고 바로 적용한다
+$('darkTheme').checked = document.documentElement.getAttribute('data-theme') === 'dark';
+$('darkTheme').addEventListener('change', (e) => {
+  const dark = e.target.checked;
+  store.set('theme', dark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0A0D14' : '#F2F5FA');
+});
 $('manageClose').addEventListener('click', () => $('manageDialog').close());
 for (const kind of Object.keys(PEOPLE)) {
   $(`${kind}Form`).addEventListener('submit', async (e) => {
@@ -1135,6 +1146,8 @@ initGps();
 initGallery();
 // file:// (앱 안의 오프라인 사본)에서는 서비스 워커를 쓸 수 없다. 그래도 앱은 그대로 동작한다
 if ('serviceWorker' in navigator) navigator.serviceWorker.register(`sw.js?v=${BUILD}`).catch((err) => console.warn('서비스 워커 등록 실패', err));
+// 폰 저장 공간이 모자랄 때 브라우저가 이 앱의 저장분(보관함의 아직 못 보낸 입력, 도면 캐시)을 통째로 지우지 않게 '지키기'를 요청한다(크롬은 묻지 않고 정한다)
+try { navigator.storage?.persist?.().catch(() => {}); } catch { /* 지원 안 하는 브라우저 */ }
 
 if (state.code) {
   start();

@@ -84,7 +84,7 @@ dependencies {
 // 빌드 시 루트 폴더의 최신 웹앱 파일들을 assets/www 로 자동 복사
 tasks.register('syncWebAssets', Copy) {
     from('../../') {
-        include '*.html', '*.css', '*.js', '*.png', '*.json'
+        include '*.html', '*.css', '*.js', '*.png', '*.json', 'vendor/**'
     }
     into 'src/main/assets/www'
 }

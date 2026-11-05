@@ -5,7 +5,7 @@ const CACHE = `shell-${V}`;
 const NET_WAIT_MS = 3000;   // 화면 파일(index.html)을 이만큼 기다려도 안 오면 폰에 저장해 둔 것으로 연다
 const SHELL = [
   './', 'index.html', 'logo.png', 'manifest.json',
-  `style.css?v=${V}`, `config.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
+  `style.css?v=${V}`, `theme.css?v=${V}`, `config.js?v=${V}`, `pinhistory.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
   `outbox.js?v=${V}`, `phonecopy.js?v=${V}`, `drawing.js?v=${V}`, `gps.js?v=${V}`, `gallery.js?v=${V}`, `camera.js?v=${V}`, `app.js?v=${V}`,
 ];
 
@@ -31,6 +31,18 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (req.method !== 'GET' || url.origin !== self.location.origin) return;
 
+  // vendor/(pdf.js 등 큰 라이브러리)는 SHELL에 넣지 않는다: 설치 때 다 받으면 첫 설치가 무거워진다.
+  // 대신 처음 쓸 때 받아서 저장해 두고(지연 캐시), 그 뒤로는 저장분을 먼저 쓴다. 주소에 ?v= 가 있어 번호가 바뀌면 새로 받는다
+  if (url.pathname.includes('/vendor/')) {
+    const got = caches.match(req).then((hit) => (hit ? { res: hit, fresh: false } : fetch(req).then((res) => ({ res, fresh: true }))));
+    event.waitUntil(got.then(({ res, fresh }) => {
+      if (!fresh || !res.ok || res.headers.get('X-Offline-Copy')) return undefined;   // 앱(APK)이 대신 준 사본은 저장하지 않는다(아래 index.html과 같은 이유)
+      const copy = res.clone();   // 화면이 본문을 읽기 전에 복사해 둔다
+      return caches.open(CACHE).then((cache) => cache.put(req, copy));
+    }).catch(() => {}));
+    event.respondWith(got.then(({ res }) => res));
+    return;
+  }
   // ?v= 가 붙은 파일은 번호가 바뀌면 주소가 달라지므로 저장분을 먼저 쓴다
   if (url.searchParams.has('v')) {
     event.respondWith(caches.match(req).then((hit) => hit || fetch(req)));   // 앱이 대신 준 사본은 cache에 넣지 않으므로 여기도 저장 안 함
