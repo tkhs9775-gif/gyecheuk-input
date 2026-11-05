@@ -655,8 +655,9 @@ async function openPdfFieldbook(file) {
   drawingState.dirty = false;
   drawingState.notes = normalizeNotes(readCached(`pdf_notes_${file.id}`));
   drawingState.sourceFile = sourceFileOf(file, drawingState.notes, allDrawingFiles());
-  // 다른 폰(또는 PC)에서 저장한 저장본은 이 폰에 메모가 없어 원본 표시(sourceId)를 모른다 → 서버 메모를 받아 본 뒤 원본을 정한다
-  const askServerForSource = !drawingState.notes.sourceId && DATE_TAG.test(stemOf(file.name));
+  // 다른 폰(또는 PC)에서 저장한 저장본은 이 폰에 메모가 없어 원본 표시(sourceId)를 모른다 → 이름으로도 원본을 못 찾을 때만 서버 메모를 받아 본 뒤 원본을 정한다
+  // (이름으로 찾았으면 기다리지 않는다: 서버 왕복 1.5~3초를 아낀다. 원본을 같은 이름으로 다시 올려 ID가 바뀐 경우에도 이름으로 찾은 새 원본이 맞다)
+  const askServerForSource = !drawingState.notes.sourceId && !drawingState.sourceFile && DATE_TAG.test(stemOf(file.name));
   setPinMode(false);
   setPenMode(false);
   closePinMemoBox();
@@ -718,6 +719,8 @@ async function hideViewer() {
   closingViewer = false;
   if ($('pdfViewer').classList.contains('hidden')) return;
   openSeq += 1;   // 아직 열리던 도면은 버린다
+  // 열자마자 닫아도 다음에 먼저 보여 줄 그림이 남게: 다 그린 1쪽이 캔버스에 있으면 지금 저장한다(이미 저장했으면 건너뛴다)
+  if (drawingState.pdfDoc && shownKey === `${drawingState.currentFile?.id}|1|${shownRot}`) savePageSnapshot($('pdfCanvas'), shownRot);
   if (savingNotes) await savingNotes;
   else if (drawingState.dirty) await saveDrawingNotesToServer(false);
   show($('pdfViewer'), false);
@@ -824,6 +827,7 @@ function savePageSnapshot(canvas, rot) {
 // 크기는 바로 바꾸고(지금 그림을 늘려 보여 줌 → 확대가 손에 바로 반응), 선명한 그림은 숨은 캔버스에 그린 뒤 한 번에 바꿔 끼운다(그리는 1~2초 동안 하얗게 비지 않게).
 // afterLayout: 크기를 바꾼 바로 그 순간에 부르는 함수(확대 기준점 스크롤 맞추기). 같은 순간이라 화면이 튀지 않는다
 let shownKey = '';   // 지금 캔버스에 있는 그림이 어느 문서·쪽·회전인지. 다르면 늘려 보이지 않고 비운다(다른 쪽 그림이 잠깐 보이지 않게)
+let shownRot = 0;    // 지금 캔버스 그림의 실제 회전(PDF 자체 회전 포함). 닫을 때 그림을 저장하는 데 쓴다
 async function renderPdfPage(afterLayout) {
   if (!drawingState.pdfDoc) return;
   const my = ++renderSeq;
@@ -880,6 +884,7 @@ async function renderPdfPage(afterLayout) {
     pdfCanvas.getContext('2d').drawImage(buf, 0, 0);
     buf.width = 0;                  // 숨은 캔버스 메모리를 바로 돌려준다
     shownKey = key;
+    shownRot = rotation;
     updatePageInfo();
     // 쪽 그림 저장은 화면이 다 뜬 뒤 한 박자 쉬고(그리는 시간에 끼지 않게), 그사이 다른 쪽으로 바뀌지 않았을 때만
     setTimeout(() => { if (shownKey === key && drawingState.pdfDoc === doc) savePageSnapshot(pdfCanvas, rotation); }, SNAPSHOT_SAVE_DELAY_MS);
