@@ -114,4 +114,15 @@ html[data-theme="dark"] .pdf-tool-fab[aria-pressed="true"] { background: var(--a
 html[data-theme="dark"] .pin-memo-box { background: var(--raised); box-shadow: 0 12px 34px rgba(0, 0, 0, .6); }
 html[data-theme="dark"] .pin-memo-display { background: var(--field); }
 html[data-theme="dark"] .del-pin-btn, html[data-theme="dark"] .close-pin-btn { background: var(--field); }
+/* 지난 값 카드: 상자(raised) 안에 한 단 낮은 판(field), 그 위 타일은 다시 raised — 판과 타일이 구분되게 */
+html[data-theme="dark"] .pin-memo-prev { background: var(--field); border-color: var(--field-line); }
+html[data-theme="dark"] .pin-reading { background: var(--raised); border-color: var(--field-line); }
+html[data-theme="dark"] .pin-reading.today { background: var(--chip); border-color: var(--accent); }
+html[data-theme="dark"] .pin-reading.today .label { color: #8FBAFF; }   /* chip 위 작은 글자 */
+html[data-theme="dark"] .pin-reading .delta { background: var(--field); }
+html[data-theme="dark"] .pin-hist { background: var(--raised); border-color: var(--field-line); }
+html[data-theme="dark"] .pin-hist.last { border-color: var(--accent); color: #8FBAFF; }
+/* 계측용 줄: 흰 글자를 얹는 꼬리표는 단색 파랑(accent-fill, 4.7:1) */
+html[data-theme="dark"] .list li.drawing.template { border-color: var(--accent); }
+html[data-theme="dark"] .list li.drawing.template .kind { background: var(--accent-fill); }
 /* 손글씨(OCR) 패드: .ocr-canvas-wrap · #ocrPadCanvas 는 글씨를 쓰는 종이라 흰색 그대로 */

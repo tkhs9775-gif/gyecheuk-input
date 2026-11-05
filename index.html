@@ -9,8 +9,8 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=57">
-<link rel="stylesheet" href="theme.css?v=57">
+<link rel="stylesheet" href="style.css?v=58">
+<link rel="stylesheet" href="theme.css?v=58">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -461,11 +461,8 @@
       </div>
     </div>
     <p class="pin-memo-hint">💡 아래 메모 칸을 <b>한 번 더 터치</b>하면 펜으로 손글씨를 써서 텍스트(OCR)로 자동 변환할 수 있습니다.</p>
-    <!-- 지난 측정일에 적은 값(초기치·전회)과 지금 값의 변화·누적. 처음 적는 동그라미에는 안 보인다 -->
-    <div id="pinMemoPrev" class="pin-memo-prev hidden" role="status" aria-live="polite">
-      <span id="pinPrevLine"></span>
-      <b id="pinDeltaLine" class="hidden"></b>
-    </div>
+    <!-- 지난 값 카드: 초기치·전회·오늘 타일 + 이력 칩(drawing.js renderPinReadings 가 채운다). 처음 적는 동그라미에는 안 보인다 -->
+    <div id="pinMemoPrev" class="pin-memo-prev hidden" role="status" aria-live="polite"></div>
     <div id="pinMemoDisplay" class="pin-memo-display" tabindex="0" role="button" aria-label="메모 칸 (터치하면 손글씨 펜 입력 열기)"></div>
     <div class="row" style="margin-top: 8px;">
       <input id="pinMemoKeyboard" type="text" maxlength="200" placeholder="키보드로 직접 수정할 수도 있습니다" aria-label="메모 (키보드 입력)">
@@ -533,17 +530,17 @@
   </a>
 </nav>
 
-<script src="config.js?v=57"></script>
-<script src="weather.js?v=57"></script>
-<script src="entries.js?v=57"></script>
-<script src="push.js?v=57"></script>
-<script src="outbox.js?v=57"></script>
-<script src="phonecopy.js?v=57"></script>
-<script src="pinhistory.js?v=57"></script>
-<script src="drawing.js?v=57"></script>
-<script src="gps.js?v=57"></script>
-<script src="gallery.js?v=57"></script>
-<script src="camera.js?v=57"></script>
-<script src="app.js?v=57"></script>
+<script src="config.js?v=58"></script>
+<script src="weather.js?v=58"></script>
+<script src="entries.js?v=58"></script>
+<script src="push.js?v=58"></script>
+<script src="outbox.js?v=58"></script>
+<script src="phonecopy.js?v=58"></script>
+<script src="pinhistory.js?v=58"></script>
+<script src="drawing.js?v=58"></script>
+<script src="gps.js?v=58"></script>
+<script src="gallery.js?v=58"></script>
+<script src="camera.js?v=58"></script>
+<script src="app.js?v=58"></script>
 </body>
 </html>

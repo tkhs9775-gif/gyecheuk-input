@@ -200,7 +200,7 @@ function handleGpsTap(e) {
   }
   // 기준점은 야장 메모와 함께 저장된다: 다른 폰·저장본에서도 다시 맞추지 않아도 된다
   drawingState.notes.gps = { ...(drawingState.notes.gps || {}), [String(drawingState.pageNum)]: { a, b: point, ar: pageAspect() } };
-  drawingState.dirty = true;
+  markDirty();   // drawing.js: 저장 중에 고친 것이 '저장됨'으로 처리되지 않게 번호를 올린다
   saveDrawingNotesQuiet();
   gpsState.step = 0;
   gpsState.pendingA = null;

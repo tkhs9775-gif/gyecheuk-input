@@ -464,6 +464,29 @@ a.apk-link { display: grid; place-items: center; }
   padding: 16px;
   box-shadow: 0 12px 34px rgba(0,0,0,0.45);
   border: 2px solid var(--accent);
+  /* 키보드가 올라와 화면이 낮아져도 위로 잘리지 않게: 제목 줄·입력 줄은 늘 보이고, 지난 값 카드만 줄어들며 안에서 스크롤한다 */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 126px - env(safe-area-inset-bottom));
+  max-height: calc(100dvh - 126px - env(safe-area-inset-bottom));
+}
+.pin-memo-box > * { flex-shrink: 0; }
+.pin-memo-box > .pin-memo-prev { flex-shrink: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* 낮은 화면(키보드가 올라온 폰): 안내 문구를 숨기고 타일·메모 칸을 줄여 상자 전체를 300px 안쪽으로 */
+@media (max-height: 520px) {
+  .pin-memo-box { padding: 10px 12px; border-radius: 16px; }
+  .pin-memo-box .pin-memo-head { margin-bottom: 4px; }   /* 아래쪽 기본 규칙보다 이기도록 .pin-memo-box 를 앞에 붙인다 */
+  .pin-memo-head .del-pin-btn, .pin-memo-head .close-pin-btn { min-height: 34px; }
+  .pin-memo-box .pin-memo-hint { display: none; }
+  .pin-memo-box .pin-memo-prev { margin-bottom: 6px; padding: 6px; }
+  .pin-memo-box .pin-reading { padding: 4px 6px 5px; }
+  .pin-memo-box .pin-reading.today { padding: 3px 5px 4px; }
+  .pin-memo-box .pin-reading .value { font-size: 18px; }
+  .pin-memo-box .pin-history { margin-top: 4px; }
+  .pin-memo-box .pin-memo-display { min-height: 40px; padding: 6px 10px; }
+  .pin-memo-box .pin-memo-display:empty::before { font-size: 13px; }
+  .pin-memo-box > .row { margin-top: 6px !important; }   /* index.html 인라인 margin-top: 8px */
+  .pin-memo-box #pinMemoKeyboard { min-height: 40px; }
 }
 .pin-memo-head {
   display: flex;
@@ -627,9 +650,33 @@ dialog::backdrop { background: rgba(27, 42, 87, .45); }
 .list li.folder .meta b { font-size: 16px; }
 .list li.in-folder { margin-left: 22px; }
 
-/* 동그라미 메모 상자: 초기치·전회값과 변화·누적 */
-.pin-memo-prev { display: flex; flex-direction: column; gap: 3px; margin: 0 0 8px; padding: 8px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.pin-memo-prev b { font-size: 15px; color: var(--text); }
+/* 계측용(번호만) 도면 줄: 원본 바로 아래, 왼쪽 파란 띠 + 채운 '계측용' 꼬리표로 원본·저장본 줄과 구분 */
+.list li.drawing.template { border-color: var(--accent); border-left-width: 5px; padding-left: 12px; }
+.list li.drawing.template .kind { background: var(--accent); color: #FFF; }   /* 흰 글자 6.1:1 */
+.list li.drawing.template .val.chev { color: var(--accent); font-weight: 700; }
+
+/* 동그라미 메모 상자: 지난 값 카드(초기치 · 전회 · 오늘 타일 + 날짜별 이력 칩). 큰 숫자는 같은 폭(tabular)으로 세로 자리 맞춤 */
+.pin-memo-prev { margin: 0 0 8px; padding: 8px; border-radius: 14px; background: var(--bg); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.pin-readings { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
+.pin-reading { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: 6px 8px 7px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
+.pin-reading .label { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pin-reading .value { font-size: 22px; font-weight: 800; line-height: 1.15; color: var(--text); letter-spacing: -.01em; overflow-wrap: anywhere; }   /* 긴 값도 자르지 않고 줄을 바꾼다 */
+.pin-reading .date { font-size: 12px; color: var(--muted); }
+/* 오늘 타일: 파란 테두리·옅은 파랑 바탕으로 '여기에 적는다'를 표시. 비었으면 점선 + 흐린 대시 */
+.pin-reading.today { background: var(--chip); border: 2px solid var(--accent); padding: 5px 7px 6px; }
+.pin-reading.today .label { color: var(--accent); }
+.pin-reading.today.empty { border-style: dashed; }
+.pin-reading.today.empty .value { color: var(--muted); font-weight: 600; }
+.pin-reading .delta, .pin-reading .cum { font-size: 12px; font-weight: 700; line-height: 1.3; white-space: nowrap; }
+.pin-reading .delta { align-self: flex-start; margin-top: 2px; padding: 0 6px; border-radius: 8px; background: var(--card); color: var(--text); }   /* 부호(+/-)를 그대로 보이게: 좋고 나쁨은 계측기마다 달라 색으로 판단하지 않는다 */
+.pin-reading .delta::before { content: "변화 "; font-weight: 600; color: var(--muted); }   /* JS 는 '+0.02' 숫자만 넣는다 */
+.pin-reading .cum { color: var(--muted); }
+/* 날짜별 지난 값: 한 줄로 두고 넘치면 옆으로 민다(20개여도 상자 높이가 늘지 않게). 마지막(전회)은 파란 테두리 */
+.pin-history { display: flex; gap: 4px; margin-top: 6px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.pin-history::-webkit-scrollbar { display: none; }
+.pin-hist { flex: none; display: inline-flex; align-items: baseline; gap: 4px; padding: 3px 8px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.pin-hist small { font-size: 11px; font-weight: 600; color: var(--muted); }
+.pin-hist.last { border-color: var(--accent); color: var(--accent); }
 
 /* 사진: 찍기 / 갤러리 칸 */
 .seg { display: flex; gap: 4px; padding: 4px; margin: 8px 0 12px; border-radius: 24px; background: var(--chip); }

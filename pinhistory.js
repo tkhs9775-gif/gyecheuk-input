@@ -61,6 +61,38 @@ function readingSummary(pin, today) {
   return { line1, line2 };
 }
 
+// 메모 상자 카드용 값: 지난 값 전부(past, 오래된 것부터)와 오늘 값, 전회·초기치 대비 변화
+function readingTiles(pin, today) {
+  const history = Array.isArray(pin?.history) ? pin.history.filter((h) => h && typeof h === 'object') : [];
+  const isToday = pin?.date === today;
+  const past = history.slice();
+  if (!isToday && pin?.text) {
+    const own = { date: pin.date || '', text: pin.text };
+    if (!samePinEntry(past[past.length - 1], own)) past.push(own);
+  }
+  const initial = past[0] || null;
+  const prev = past[past.length - 1] || null;
+  const sameInitialPrev = past.length === 1;
+  const current = isToday ? String(pin.text ?? '') : '';
+  const numeric = (t) => readingNumber(t) !== null;
+  const delta = prev && numeric(current) && numeric(prev.text) ? pinSignedDiff(current, prev.text) : null;
+  const cumulative = initial && !sameInitialPrev && numeric(current) && numeric(initial.text)
+    ? pinSignedDiff(current, initial.text) : null;
+  return { past, initial, prev, sameInitialPrev, current, delta, cumulative };
+}
+
+// 계측용(번호만) 도면 메모: 지난 측정일의 값은 history 로 넘기고 비운다. 오늘 적은 값은 그대로, 펜 필기는 뺀다
+function templateNotes(notes, today) {
+  const src = notes && typeof notes === 'object' ? notes : {};
+  const pins = Array.isArray(src.pins)
+    ? src.pins.map((p) => (p && p.text && (p.date || '') !== today ? pushPinHistory(p, '', today) : p))
+    : [];
+  const out = { pins, strokes: {} };
+  if (src.sourceId) out.sourceId = src.sourceId;
+  if (src.gps) out.gps = src.gps;
+  return out;
+}
+
 // 셀 한 칸 글자 수 제한에 맞게 history를 줄인다(최근 것 남김).
 function trimNotesForCell(notes, maxLen = 45000) {
   if (!notes || !Array.isArray(notes.pins)) return notes;
@@ -76,5 +108,8 @@ function trimNotesForCell(notes, maxLen = 45000) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { MAX_PIN_HISTORY, readingNumber, pushPinHistory, pinReadings, readingSummary, trimNotesForCell };
+  module.exports = {
+    MAX_PIN_HISTORY, readingNumber, pushPinHistory, pinReadings, readingSummary, trimNotesForCell,
+    pinSignedDiff, readingTiles, templateNotes,
+  };
 }

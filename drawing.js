@@ -169,6 +169,13 @@ const drawingState = {
   dirty: false,
 };
 
+// 고친 횟수: 저장은 시작할 때의 번호를 기억했다가, 저장하는 동안 또 고친 게 없을 때만 dirty 를 내린다(저장 중에 적은 값이 '저장됨'으로 처리돼 사라지지 않게)
+let notesVersion = 0;
+function markDirty() {
+  drawingState.dirty = true;
+  notesVersion += 1;
+}
+
 const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.35;            // ＋/－ 한 번에 바뀌는 배율
@@ -277,6 +284,15 @@ async function openRecentDrawing(r) {
   }
   if (!r.site) return;
   await openSiteDrawingFolder(r.site);
+  // 계측용(가상) 도면에서 적은 값이면 그 묶음의 계측용 도면을 다시 연다(그 뒤 저장본이 생겼으면 최근 것 기준으로)
+  if (String(r.fileId || '').startsWith(TEMPLATE_PREFIX)) {
+    const prefix = templateId(r.site, '');
+    const family = String(r.fileId).startsWith(prefix) ? String(r.fileId).slice(prefix.length) : '';
+    const group = buildDrawingGroups().groups.find((g) => g.name === family);
+    if (group?.saved.length && group.originals.length) openTemplateDrawing(group);
+    else alert('이 메모의 계측용 도면을 지금 목록에서 찾지 못했습니다. 신호가 잡히면 현장을 다시 열어 주세요.');
+    return;
+  }
   const file = allDrawingFiles().find((f) => f.id === r.fileId);
   if (file) openPdfFieldbook(file);
 }
@@ -490,6 +506,24 @@ function drawingFileRow(it, group, inFolder = false) {
   return drawingRow({ title, sub: [f.updated || '', fmtSize(f.size || 0)].filter(Boolean).join(' · '), onOpen: open, cls, data });
 }
 
+// 계측용(번호만) 줄: 최근 저장본의 동그라미를 값 없이 원본 위에 띄우는 가상 도면(파일로 만들지 않는다). 저장본이 있는 원본 아래에만 보인다
+function templateRow(group) {
+  const latest = group.saved[0];
+  const title = document.createDocumentFragment();
+  const kind = document.createElement('span');
+  kind.className = 'kind';
+  kind.textContent = '계측용';
+  title.append(kind, group.name);
+  const when = latest.date === todayKst() ? '오늘 저장본 있음' : `전회 ${dateTitle(latest)}`;
+  return drawingRow({
+    title,
+    sub: `번호만 있는 동그라미 · 터치해 오늘 값 입력 · ${when}`,
+    onOpen: () => openTemplateDrawing(group),
+    cls: 'template',
+    data: { template: group.name, latestId: latest.file.id },
+  });
+}
+
 // 저장본·계측기별 구분: 원본 이름 묶음 머리줄(누르면 접기/펼치기) + 펼쳤을 때 그 안의 줄들
 function drawingGroupRows(group, view, single) {
   const list = group[view];
@@ -537,7 +571,12 @@ function renderDrawingFiles() {
   const ul = $('drawingFileList');
   let rows;
   if (view === 'original') {
-    rows = originals.map((it) => drawingFileRow(it, groups.find((g) => g.name === it.family)));
+    // 저장본이 있는 원본 바로 아래에 계측용(번호만) 줄을 하나 붙인다(같은 묶음에 원본이 둘이면 첫 원본 아래에만)
+    rows = originals.flatMap((it) => {
+      const group = groups.find((g) => g.name === it.family);
+      const row = drawingFileRow(it, group);
+      return group.saved.length && group.originals[0] === it ? [row, templateRow(group)] : [row];
+    });
   } else {
     const withFiles = groups.filter((g) => g[view].length);
     rows = withFiles.flatMap((g) => drawingGroupRows(g, view, withFiles.length === 1));
@@ -640,7 +679,43 @@ let openSeq = 0;              // 도면을 연달아 두 번 누르면 먼저 �
 let viewerReturnFocus = null; // 뷰어를 닫으면 열기 전에 있던 자리(도면 줄)로 포커스를 돌려준다
 let closingViewer = false;
 
-async function openPdfFieldbook(file) {
+// 계측용(번호만) 도면: 최근 저장본의 동그라미만(지난 값은 history 로) 원본 위에 띄운다. Drive 파일이 아니라 열 때 만드는 가상 파일이고,
+// id 는 'tpl:<현장>|<원본이름>' 로 묶음마다 하나다(그 뒤 다른 폰이 새 저장본을 만들어도 이 폰에 적어 둔 값을 같은 키로 찾는다).
+// 값을 적고 닫으면 다른이름 저장과 같은 흐름으로 '<원본이름>_오늘날짜(요).pdf' 가 <원본이름>/저장본 에 저장된다(name 이 원본 이름이라 같은 묶음에 들어간다).
+// 메모는 폰 보관분 → 서버 순으로 받아 templateNotes() 로 만든다. 고치다가 저장 못 한 값이 폰에 남아 있으면(앱이 꺼졌던 경우) 그것을 이어서 쓴다
+const TEMPLATE_PREFIX = 'tpl:';
+const templateId = (site, family) => `${TEMPLATE_PREFIX}${site}|${family}`;
+async function openTemplateDrawing(group) {
+  const latest = group.saved[0]?.file;
+  const original = group.originals[0]?.file;
+  if (!latest || !original) return;
+  if (typeof templateNotes !== 'function') { alert('도면 기능 파일이 덜 받아졌습니다. 정보 탭에서 새로고침해 주세요.'); return; }
+  const today = todayKst();
+  // 제목 칸이 좁아 앞 글자만 보이므로 '계측용' 을 앞에 둔다
+  const file = { id: templateId(drawingState.site, group.name), name: `${group.name}.pdf`, label: `계측용 · ${group.name}`, templateOf: latest.id, mime: 'application/pdf' };
+  const latestNotes = normalizeNotes(readCached(`pdf_notes_${latest.id}`));
+  const source = sourceFileOf(latest, latestNotes, allDrawingFiles()) || original;
+  const fresh = templateNotes(latestNotes, today);
+  // 폰에 적어 둔 값(고친 게 있을 때만 남는다)이 있으면 이어서 쓴다: 지난 날짜 값은 history 로 넘기고(오늘 값처럼 보이지 않게), 그사이 생긴 최근 저장본의 동그라미와 합친다
+  const kept = templateNotes(normalizeNotes(readCached(`pdf_notes_${file.id}`)), today);
+  const resuming = kept.pins.length > 0;
+  const build = (base) => (resuming ? mergeResumeNotes(kept, base, today) : base);   // 최근 저장본 템플릿이 바탕, 그 위에 내 미저장분
+  const notes = build(fresh);
+  // 서버 메모는 줄이 있을 때만(updated) 받아들인다: 메모 없이 올린 저장본이면 서버가 빈 메모를 돌려주는데, 그것으로 폰에 있던 동그라미를 지우지 않게.
+  // 이어쓰는 중에도 받는다(그사이 다른 사람이 저장한 지난 값·새 동그라미가 들어오게). 열고 나서 고친 게 있으면 applyServerNotes 가 덮지 않는다
+  const notesPromise = api('drawing_notes_get', { fileId: latest.id })
+    .then((res) => (res?.updated && res.data ? { updated: res.updated, data: build(templateNotes(normalizeNotes(res.data), today)) } : null))
+    .catch((err) => { console.warn('최근 저장본 메모 조회 실패', err); return null; });
+  await openPdfFieldbook(file, { source, notes, notesPromise });
+  // 동그라미를 하나도 못 불러왔으면(다른 폰이 저장한 저장본인데 서버 메모를 못 받음) 닫는다: 빈 도면에 새로 찍어 저장하면 그것이 최근 저장본이 되어 옛 동그라미 사슬이 끊긴다
+  if (drawingState.currentFile === file && !drawingState.notes.pins.length) {
+    alert('동그라미를 불러오지 못했습니다. 신호가 잡히면 다시 열어 주세요.');
+    closePdfViewer();
+  }
+}
+
+// preset: 계측용 도면처럼 바탕 원본(source)·메모(notes)·늦게 올 메모(notesPromise)를 미리 정해 열 때. 폰 보관분·서버 메모 조회·이름으로 원본 찾기를 건너뛴다
+async function openPdfFieldbook(file, preset = null) {
   const seq = ++openSeq;
   persistNotesNow();
   drawingState.pdfDoc?.destroy();   // 이전 도면 메모리 해제
@@ -653,16 +728,16 @@ async function openPdfFieldbook(file) {
   drawingState.rotation = 0;
   drawingState.activePinId = null;
   drawingState.dirty = false;
-  drawingState.notes = normalizeNotes(readCached(`pdf_notes_${file.id}`));
-  drawingState.sourceFile = sourceFileOf(file, drawingState.notes, allDrawingFiles());
+  drawingState.notes = preset ? preset.notes : normalizeNotes(readCached(`pdf_notes_${file.id}`));
+  drawingState.sourceFile = preset ? preset.source : sourceFileOf(file, drawingState.notes, allDrawingFiles());
   // 다른 폰(또는 PC)에서 저장한 저장본은 이 폰에 메모가 없어 원본 표시(sourceId)를 모른다 → 이름으로도 원본을 못 찾을 때만 서버 메모를 받아 본 뒤 원본을 정한다
   // (이름으로 찾았으면 기다리지 않는다: 서버 왕복 1.5~3초를 아낀다. 원본을 같은 이름으로 다시 올려 ID가 바뀐 경우에도 이름으로 찾은 새 원본이 맞다)
-  const askServerForSource = !drawingState.notes.sourceId && !drawingState.sourceFile && DATE_TAG.test(stemOf(file.name));
+  const askServerForSource = !preset && !drawingState.notes.sourceId && !drawingState.sourceFile && DATE_TAG.test(stemOf(file.name));
   setPinMode(false);
   setPenMode(false);
   closePinMemoBox();
 
-  $('pdfTitle').textContent = file.name;
+  $('pdfTitle').textContent = file.label || file.name;
   $('pdfPageInfo').textContent = '도면 불러오는 중...';
   if ($('pdfViewer').classList.contains('hidden')) {
     viewerReturnFocus = document.activeElement;
@@ -673,7 +748,7 @@ async function openPdfFieldbook(file) {
   }
 
   // 야장 메모 조회(서버)는 도면 그리기를 막지 않도록 먼저 출발만 시켜 두고, 그리기 끝난 뒤 반영한다
-  const notesPromise = api('drawing_notes_get', { fileId: file.id }).catch((err) => { console.warn('야장 메모 조회 실패', err); return null; });
+  const notesPromise = preset ? preset.notesPromise : api('drawing_notes_get', { fileId: file.id }).catch((err) => { console.warn('야장 메모 조회 실패', err); return null; });
   // 전에 그려 둔 첫 쪽 그림이 폰에 있으면 pdf.js 가 그리기 전에(0.1초 안에) 먼저 보여 준다. 선명한 그림이 준비되면 그 자리에서 바뀐다
   showPageSnapshot((drawingState.sourceFile || file).id, seq).catch(() => {});
 
@@ -688,7 +763,12 @@ async function openPdfFieldbook(file) {
       ensurePdfJs(),
       source ? loadPdfBytes(source.id).catch((err) => { console.warn('원본 도면을 받지 못해 저장본 그대로 엽니다', err); return null; }) : null,
     ]);
-    if (source && !sourceBytes && seq === openSeq) drawingState.sourceFile = null;
+    if (seq !== openSeq) return;   // 그사이 다른 도면을 열었으면 여기서 끝(가상 파일 id 로 서버에 받으러 가지 않게)
+    if (source && !sourceBytes) {
+      // 계측용 도면은 원본 위에만 그린다(가상 파일이라 대신 받을 PDF 가 없다)
+      if (preset) throw new Error('원본 도면을 받지 못해 계측용 도면을 열 수 없습니다. 신호가 잡히면 다시 열어 주세요.');
+      drawingState.sourceFile = null;
+    }
     const bytes = sourceBytes || await loadPdfBytes(file.id);
     if (seq !== openSeq) return;
     drawingState.rawPdfBytes = bytes.slice();
@@ -739,7 +819,8 @@ async function hideViewer() {
 // 서버 메모가 늦게 도착해도, 그 사이 다른 도면으로 바뀌었거나 사용자가 이미 고친 게 있으면 덮어쓰지 않는다
 function applyServerNotes(file, noteRes) {
   if (drawingState.currentFile !== file || drawingState.dirty) return;
-  if (!noteRes?.data || !Array.isArray(noteRes.data.pins)) return;
+  // 서버에 줄이 있을 때만(updated): 줄이 없으면 빈 메모가 오는데, 그것으로 폰에만 있는 동그라미(저장이 거부됐던 원본 등)를 지우지 않게
+  if (!noteRes?.updated || !noteRes.data || !Array.isArray(noteRes.data.pins)) return;
   drawingState.notes = normalizeNotes(noteRes.data);
   persistNotesNow();
   updatePageInfo();
@@ -1152,7 +1233,7 @@ async function handleStageTapForPin(e) {
     time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
   };
   drawingState.notes.pins.push(newPin);
-  drawingState.dirty = true;
+  markDirty();
   renderPagePins();
   updatePageInfo();
   openPinMemoBox(newPin.id);
@@ -1174,22 +1255,57 @@ function openPinMemoBox(pinId) {
   renderPagePins();
 }
 
-// 초기치·전회값(지난 측정일에 적은 값)과, 새 값을 적는 동안의 변화·누적을 메모 상자 위에 보여 준다(pinhistory.js)
+// 지난 값 카드(pinhistory.js readingTiles): 초기치·전회·오늘 타일(오늘 값이 있으면 전회 대비 변화·초기치 대비 누적) + 지난 값 이력 칩.
+// 지난 값이 없는 동그라미(처음 적는 것)에는 숨긴다. 모양(class)은 style.css .pin-memo-prev 와 맞춘 계약
+const KEYBOARD_PLACEHOLDER = '키보드로 직접 수정할 수도 있습니다';
+const mmdd = (date) => (date ? date.slice(5).replace('-', '/') : '');
 function renderPinReadings(pin) {
   const box = $('pinMemoPrev');
-  if (typeof readingSummary !== 'function') { show(box, false); return; }
-  const { line1, line2 } = readingSummary(pin, todayKst());
-  show(box, !!line1);
-  $('pinPrevLine').textContent = line1;
-  $('pinDeltaLine').textContent = line2;
-  show($('pinDeltaLine'), !!line2);
+  if (typeof readingTiles !== 'function') { show(box, false); return; }
+  const t = readingTiles(pin, todayKst());
+  $('pinMemoKeyboard').placeholder = t.prev && !t.current ? '오늘 값을 입력하세요' : KEYBOARD_PLACEHOLDER;
+  show(box, !!t.prev);
+  if (!t.prev) { box.replaceChildren(); return; }
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
+  const tile = (cls, label, value, date) => {
+    const d = el('div', `pin-reading ${cls}`);
+    d.append(el('small', 'label', label), el('b', 'value', value));
+    if (date) d.append(el('span', 'date', mmdd(date)));
+    return d;
+  };
+  const readings = el('div', 'pin-readings');
+  if (t.sameInitialPrev) readings.append(tile('initial', '초기치·전회', t.prev.text, t.prev.date));
+  else readings.append(tile('initial', '초기치', t.initial.text, t.initial.date), tile('prev', '전회', t.prev.text, t.prev.date));
+  const today = tile(t.current ? 'today' : 'today empty', '오늘', t.current || '—');
+  if (t.delta !== null) today.append(el('span', 'delta', t.delta));
+  if (t.cumulative !== null) today.append(el('span', 'cum', `누적 ${t.cumulative}`));
+  readings.append(today);
+  box.replaceChildren(readings);
+  if (t.past.length > 1) {
+    const hist = el('div', 'pin-history');
+    t.past.forEach((h, i) => {
+      const chip = el('span', i === t.past.length - 1 ? 'pin-hist last' : 'pin-hist');
+      chip.append(el('small', '', mmdd(h.date)), h.text);
+      hist.append(chip);
+    });
+    box.append(hist);
+    // 칩이 많으면 가장 최근(전회)이 보이게 오른쪽 끝으로. 상자가 아직 숨겨져 있을 수 있어 한 프레임 뒤에
+    requestAnimationFrame(() => { hist.scrollLeft = hist.scrollWidth; });
+  }
 }
 
 // 메모 글자를 바꾼다. 지난 측정일의 값을 오늘 처음 고치는 순간 그 값이 history 로 넘어간다(같은 날에는 그냥 고쳐진다)
 function replaceActivePinText(newText) {
   const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
   if (!pin) return null;
-  const next = typeof pushPinHistory === 'function' ? pushPinHistory(pin, newText, todayKst()) : { ...pin, text: newText };
+  const moved = typeof pushPinHistory === 'function' ? pushPinHistory(pin, newText, todayKst()) : { ...pin, text: newText };
+  // 값을 적은 사람이 author: 남이 찍어 둔 동그라미(계측용 도면)에 내가 값을 적으면 내 실시간 줄·홈 최근 입력에 들어가게
+  const next = { ...moved, author: $('user')?.value || moved.author || '' };
   drawingState.notes.pins = drawingState.notes.pins.map((p) => (p === pin ? next : p));
   return next;
 }
@@ -1210,7 +1326,7 @@ function updateActivePinText(newText) {
   newText = negateIfPlainNumber(pin.type, newText);
   const next = replaceActivePinText(newText);
   if (!next) return;
-  drawingState.dirty = true;
+  markDirty();
   $('pinMemoDisplay').textContent = newText;
   $('pinMemoKeyboard').value = newText;
   $('pinMemoKeyboard').dataset.stale = '';
@@ -1223,7 +1339,7 @@ function deleteActivePin() {
   if (!drawingState.activePinId) return;
   if (!confirm('이 동그라미 메모를 도면에서 삭제할까요?')) return;
   drawingState.notes.pins = drawingState.notes.pins.filter((p) => p.id !== drawingState.activePinId);
-  drawingState.dirty = true;
+  markDirty();
   closePinMemoBox();
   updatePageInfo();
   saveDrawingNotesQuiet();
@@ -1536,7 +1652,7 @@ function initInkCanvasEvents() {
     const pageKey = String(drawingState.pageNum);
     drawingState.notes.strokes[pageKey] ??= [];
     drawingState.notes.strokes[pageKey].push(stroke);
-    drawingState.dirty = true;
+    markDirty();
     redrawPageInk();
   });
 
@@ -1698,8 +1814,11 @@ async function buildAnnotatedPdfBase64(onlyType = null) {
 let saveNotesTimer = null;
 function persistNotesNow() {
   clearTimeout(saveNotesTimer);
-  if (!drawingState.currentFile) return;
-  store.set(`pdf_notes_${drawingState.currentFile.id}`, JSON.stringify(drawingState.notes));
+  const file = drawingState.currentFile;
+  if (!file) return;
+  // 계측용(가상) 도면은 고친 게 있을 때만 폰에 둔다: 열어 보기만 한 것까지 적으면 저장본마다 'pdf_notes_tpl:…' 키가 쌓인다(열 때마다 최근 저장본으로 다시 만들므로 필요 없다)
+  if (file.templateOf && !drawingState.dirty) return;
+  store.set(`pdf_notes_${file.id}`, JSON.stringify(drawingState.notes));
   scheduleLivePins();
 }
 
@@ -1722,6 +1841,7 @@ function scheduleLivePins() {
   const body = JSON.stringify(pins);
   if (livePinsSent[key] === body || (livePinsSent[key] === undefined && !pins.length)) return;
   // 지금 상태를 붙잡아 둔다: 도면을 닫거나 바꿔도 이 내용 그대로 보낸다
+  // 계측용(가상) 도면이면 fileId 가 'tpl:…' 로 간다 → 홈 최근 입력을 누르면 openRecentDrawing 이 계측용 도면을 다시 연다
   livePinsPending = { key, body, payload: { fileId: key, site: drawingState.site, fileName: file.name, user, data: { live: true, sourceId, fileId: file.id, pins } } };
   clearTimeout(livePinsTimer);
   livePinsTimer = setTimeout(flushLivePins, LIVE_PINS_DELAY_MS);
@@ -1812,6 +1932,7 @@ async function pdfToJpegs(base64) {
 async function doSaveDrawingNotes(showAlert) {
   const file = drawingState.currentFile;
   if (!file) return;
+  const ver = notesVersion;   // 저장하는 동안 또 고치면(합치기·PDF 만들기·업로드에 몇 초) dirty 를 내리지 않는다 → 닫을 때 한 번 더 저장된다
   const btn = $('pdfSaveNotes');
   btn.disabled = true;
   btn.textContent = '저장중..';
@@ -1826,6 +1947,8 @@ async function doSaveDrawingNotes(showAlert) {
   const phoneFiles = () => (pdfBase64 ? [{ name: newFileName, base64: pdfBase64, folder: subdir }] : []);
 
   try {
+    // 계측용 도면이거나 오늘 저장본을 이어 적는 중(여럿이 나눠 적는 날): 다른 폰이 먼저 저장한 같은 이름 저장본이 있으면 그 값을 먼저 합친다(PDF 에 굽기 전에)
+    if (file.templateOf || stemOf(file.name) === stemOf(newFileName)) await mergeRivalSave(newFileName, file);
     // 1) 원본 파일에도 야장 메모 JSON은 보존해 두고,
     // 2) '원본이름_수정날짜(요일한글자).pdf' 로 야장 메모가 합쳐진 새 PDF를 다른 이름으로 저장!
     if (drawingState.rawPdfBytes) {
@@ -1863,9 +1986,18 @@ async function doSaveDrawingNotes(showAlert) {
       upsertDrawingFile(res.file, inFolder ? familyName : '');
       store.set(`pdf_notes_${res.file.id}`, JSON.stringify(savedNotes));
       $('pdfTitle').textContent = res.file.name;
+      // 계측용(가상) 도면은 저장된 순간부터 그 저장본을 연 것으로 바꾼다: 이어 적는 값은 저장본 메모(pdf_notes_<새 id>)와 실시간 줄에 그 id 로 남고, 가상 보관분은 치운다.
+      // 캔버스 그림 키도 새 id 로 바꿔 다음 확대·회전 때 흰 화면이 끼지 않게 한다(저장 중에 다른 도면을 열었으면 건드리지 않는다)
+      if (file.templateOf) {
+        store.remove(`pdf_notes_${file.id}`);
+        if (drawingState.currentFile === file) {
+          drawingState.currentFile = res.file;
+          if (shownKey.startsWith(`${file.id}|`)) shownKey = res.file.id + shownKey.slice(file.id.length);
+        }
+      }
     }
 
-    drawingState.dirty = false;
+    if (notesVersion === ver) drawingState.dirty = false;
     btn.textContent = '저장됨✓';
     if (showAlert) {
       askPhoneSave(flattened
@@ -1878,10 +2010,87 @@ async function doSaveDrawingNotes(showAlert) {
     const reason = friendlyError(err, '메모를 PDF로 만들지 못했습니다.');
     // 서버가 입력을 거부한 것(파일 이름·메모 크기 등)은 신호 문제가 아니므로 그 사유를 그대로 보여 준다
     if (showAlert) askPhoneSave(err.network ? `신호가 약해 이 휴대폰에 먼저 보관했습니다: ${reason}` : `서버에 저장하지 못해 이 휴대폰에만 보관했습니다: ${reason}`, phoneFiles());
+    else if (err.rival) alert(`저장하지 않았습니다: ${reason}\n적은 값은 이 휴대폰에 남아 있습니다.`);   // 닫으며 저장할 때도 남의 값을 덮지 않고 멈춘 것은 알린다
   } finally {
     btn.disabled = false;
     setTimeout(() => { if (btn.textContent !== '저장중..') btn.textContent = '다른이름 저장'; }, BTN_RESET_MS);
   }
+}
+
+// 같은 날 다른 폰이 같은 이름으로 먼저 저장한 저장본이 있으면(두 사람이 한 도면을 나눠 적는 날) 그 메모를 받아 합친다. 안 하면 replaceSameName 으로 먼저 적은 값이 PDF 에서 사라진다.
+// 목록은 현장을 열 때 받은 것이라 저장 직전에 다시 받는다(왕복 1~3초). 신호가 없거나 실패하면 내 것만 저장한다(원래 동작)
+async function mergeRivalSave(newFileName, file) {
+  let rival = null;
+  try {
+    const res = await api('drawing_list', { site: drawingState.site });
+    const files = [...fileListOf(res.files), ...folderListOf(res.folders).flatMap((fo) => fo.files)];
+    rival = files.find((f) => f.name === newFileName && f.id !== file.id) || null;
+  } catch (err) {
+    console.warn('같은 이름 저장본 확인 건너뜀(목록을 못 받음)', err);   // 목록조차 못 받으면 원래대로 내 것만 저장한다
+    return;
+  }
+  if (!rival) return;
+  const stillMine = () => { if (drawingState.currentFile !== file) throw new Error('저장하는 사이 다른 도면이 열려 저장을 멈췄습니다. 다시 저장해 주세요.'); };
+  stillMine();
+  let theirs;
+  try {
+    theirs = await api('drawing_notes_get', { fileId: rival.id });
+  } catch (err) {
+    // 남의 저장본이 있는 건 아는데 그 값을 못 받았으면 덮어쓰지 않는다(적은 값은 폰에 남아 다음 저장 때 다시 시도). rival 표시: 닫으며 저장할 때도 알림을 띄운다
+    const e = new Error('다른 폰이 먼저 저장한 같은 이름 도면의 메모를 확인하지 못했습니다. 신호가 잡히면 다시 저장해 주세요.');
+    e.rival = true;
+    throw e;
+  }
+  stillMine();
+  if (!theirs?.updated || !Array.isArray(theirs.data?.pins)) return;   // 메모 없이 올린 파일(PC 등)이면 합칠 것이 없다
+  drawingState.notes = mergeNotesForSave(drawingState.notes, normalizeNotes(theirs.data), todayKst());
+  renderPagePins();
+  updatePageInfo();
+}
+
+// 순수 함수: 내 메모(mine)에 그쪽 메모(theirs)를 합친다. 내 동그라미는 그대로 두고, 그쪽에만 있는 동그라미는 그쪽이 오늘 값을 적은 것만 더한다
+// (둘 다 같은 저장본에서 출발했으므로 그쪽에만 남은 옛 동그라미는 내가 오늘 지운 것일 수 있다 — 되살리지 않는다. 한계: 그쪽이 오늘 찍고 값은 안 적은 동그라미는 안 들어온다).
+// 같은 동그라미(id)는 내게 오늘 값이 없고 그쪽에 오늘 값이 있을 때만 그쪽 값(text·date·history·author)을 받는다. 둘 다 오늘 값이면 내 것. 필기(strokes)는 내 것만
+function mergeNotesForSave(mine, theirs, today) {
+  const theirPins = Array.isArray(theirs?.pins) ? theirs.pins.filter((p) => p && p.id) : [];
+  const byId = new Map(theirPins.map((p) => [p.id, p]));
+  const pins = (mine.pins || []).map((p) => {
+    const t = byId.get(p.id);
+    const mineToday = !!p.text && p.date === today;
+    const theirsToday = !!t?.text && t.date === today;
+    return t && theirsToday && !mineToday ? { ...p, text: t.text, date: t.date, history: t.history || p.history, author: t.author || p.author } : p;
+  });
+  const have = new Set(pins.map((p) => p.id));
+  return { ...mine, pins: [...pins, ...theirPins.filter((p) => !have.has(p.id) && !!p.text && p.date === today)] };
+}
+
+// 순수 함수: 이어쓰기 — 최근 저장본 템플릿(fresh)을 바탕으로 두고, 폰에 남아 있던 내 미저장분(kept)에서 오늘 값·지난 값 이력·내가 새로 찍은 동그라미만 얹는다.
+// (fresh 가 더 새 사슬이다: 그사이 다른 사람이 저장한 지난 값·새 동그라미가 들어온다.) 같은 동그라미의 history 는 둘을 합친다(날짜·값이 같은 것은 하나로, 날짜순, 최대 20)
+function mergeResumeNotes(kept, fresh, today) {
+  const keptPins = Array.isArray(kept?.pins) ? kept.pins.filter((p) => p && p.id) : [];
+  const freshPins = Array.isArray(fresh?.pins) ? fresh.pins.filter((p) => p && p.id) : [];
+  const byId = new Map(keptPins.map((p) => [p.id, p]));
+  const pins = freshPins.map((f) => {
+    const k = byId.get(f.id);
+    if (!k) return f;
+    const history = unionPinHistory(f.history, k.history);
+    const mineToday = !!k.text && k.date === today;
+    return mineToday ? { ...f, history, text: k.text, date: k.date, author: k.author || f.author } : { ...f, history };
+  });
+  const have = new Set(pins.map((p) => p.id));
+  const out = { ...fresh, pins: [...pins, ...keptPins.filter((p) => !have.has(p.id))] };
+  if (!out.sourceId && kept?.sourceId) out.sourceId = kept.sourceId;
+  if (!out.gps && kept?.gps) out.gps = kept.gps;
+  return out;
+}
+
+function unionPinHistory(a, b) {
+  const seen = new Set();
+  const out = [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]
+    .filter((h) => h && typeof h === 'object')
+    .filter((h) => { const key = `${h.date}|${h.text}`; if (seen.has(key)) return false; seen.add(key); return true; })
+    .sort((x, y) => (String(x.date) < String(y.date) ? -1 : String(x.date) > String(y.date) ? 1 : 0));
+  return out.slice(-(typeof MAX_PIN_HISTORY === 'number' ? MAX_PIN_HISTORY : 20));
 }
 
 // 원본 도면 하나에서 계측기(범례 종류)별로 PDF를 따로 만들어 올린다. 메모가 있는 종류만, 종류마다 한 파일
@@ -1989,7 +2198,7 @@ function initDrawingModule() {
   $('btnClearInk').addEventListener('click', () => {
     if (!confirm('이 쪽에 그린 자유 펜 필기를 지울까요? (동그라미 메모는 유지됩니다)')) return;
     drawingState.notes.strokes[String(drawingState.pageNum)] = [];
-    drawingState.dirty = true;
+    markDirty();
     redrawPageInk();
     saveDrawingNotesQuiet();
   });
@@ -2012,4 +2221,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, PIN_TYPES };
+if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES };
