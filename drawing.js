@@ -458,8 +458,8 @@ function setDrawingView(view) {
   renderDrawingFiles();
 }
 
-// 한 줄: title 은 글자 또는 요소. data 는 시험·찾기용 data-* 속성
-function drawingRow({ title, sub, badge = '›', onOpen, cls = '', data = {} }) {
+// 한 줄: title 은 글자 또는 요소. data 는 시험·찾기용 data-* 속성. onHold 가 있으면 길게 누르기(안드로이드 contextmenu·마우스 오른쪽·F2)로 부른다
+function drawingRow({ title, sub, badge = '›', onOpen, onHold = null, cls = '', data = {} }) {
   const li = document.createElement('li');
   li.className = `tap drawing ${cls}`.trim();
   li.tabIndex = 0;
@@ -476,9 +476,35 @@ function drawingRow({ title, sub, badge = '›', onOpen, cls = '', data = {} }) 
   val.className = 'val chev';
   val.textContent = badge;
   li.append(meta, val);
-  li.addEventListener('click', onOpen);
-  li.addEventListener('keydown', (e) => { if (e.key === 'Enter') onOpen(); });
+  bindTapHold(li, onOpen, onHold);
   return li;
+}
+
+const HOLD_MS = 500;   // 이만큼 누르고 있으면 '길게 누름'. 손가락이 TAP_SLOP_PX 넘게 움직이면(스크롤) 아니다
+
+// 짧게 누르면 onOpen, 길게 누르면 onHold. 길게 누른 뒤 손을 떼면 브라우저가 click 을 하나 만드는데 그건 먹는다(도면이 열리지 않게).
+// 안드로이드는 길게 누르면 contextmenu 를 내므로 그것도 길게 누름으로 받고 기본 메뉴(글자 선택)는 막는다
+function bindTapHold(li, onOpen, onHold) {
+  li.addEventListener('keydown', (e) => { if (e.key === 'Enter') onOpen(); else if (e.key === 'F2' && onHold) onHold(); });
+  if (!onHold) { li.addEventListener('click', onOpen); return; }
+  let timer = 0;
+  let held = false;
+  let x0 = 0;
+  let y0 = 0;
+  const cancel = () => { clearTimeout(timer); timer = 0; };
+  const fire = () => { cancel(); held = true; navigator.vibrate?.(15); onHold(); };
+  li.addEventListener('pointerdown', (e) => {
+    if (!e.isPrimary || e.button !== 0) return;
+    held = false;
+    x0 = e.clientX;
+    y0 = e.clientY;
+    cancel();
+    timer = setTimeout(fire, HOLD_MS);
+  });
+  li.addEventListener('pointermove', (e) => { if (timer && Math.hypot(e.clientX - x0, e.clientY - y0) > TAP_SLOP_PX) cancel(); });
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave']) li.addEventListener(type, cancel);
+  li.addEventListener('contextmenu', (e) => { e.preventDefault(); if (!held) fire(); });
+  li.addEventListener('click', () => { if (held) { held = false; return; } onOpen(); });
 }
 
 const dateTitle = (it) => `${Number(it.date.slice(5, 7))}월 ${Number(it.date.slice(8, 10))}일 (${it.day})`;
@@ -492,7 +518,7 @@ function drawingFileRow(it, group, inFolder = false) {
   if (it.kind === 'original') {
     const extra = [group.saved.length ? `저장본 ${group.saved.length}` : '', group.typed.length ? `계측기별 ${group.typed.length}` : ''].filter(Boolean).join(' · ');
     const sub = [f.updated || '', fmtSize(f.size || 0), it.dir ? `📁 ${it.dir}` : '', extra].filter(Boolean).join(' · ');
-    return drawingRow({ title: `📄 ${f.name}`, sub, onOpen: open, cls, data });
+    return drawingRow({ title: `📄 ${f.name}`, sub, onOpen: open, onHold: renameHoldOf(f), cls, data });
   }
   let title = dateTitle(it);
   if (it.kind === 'typed') {
@@ -534,6 +560,7 @@ function drawingGroupRows(group, view, single) {
     sub: `${VIEW_NAMES[view]} ${list.length}개 · ${isOpen ? '접기' : '펼치기'}`,
     badge: isOpen ? '▾' : '▸',
     onOpen: () => { drawingState.groupOpen.set(key, !isOpen); renderDrawingFiles(); },
+    onHold: group.originals[0] ? renameHoldOf(group.originals[0].file) : null,   // 묶음 이름을 길게 누르면 그 원본의 이름을 바꾼다
     cls: 'folder',
     data: { group: group.name },
   });
@@ -606,6 +633,68 @@ function upsertDrawingFile(file, folderName = '') {
   } else {
     drawingState.files = [file, ...drawingState.files];
   }
+  store.set(`drawings_${drawingState.site}`, JSON.stringify(drawingState.files));
+  store.set(`drawing_folders_${drawingState.site}`, JSON.stringify(drawingState.folders));
+  renderDrawingFiles();
+}
+
+// ---------- 도면 이름 수정(길게 누르기) ----------
+
+// 날짜 꼬리표가 없는 진짜 원본만 이름을 바꿀 수 있다(날짜 이름으로 올린 원본은 저장본과 구분이 안 돼 묶음이 갈라진다)
+const renameHoldOf = (file) => (DATE_TAG.test(stemOf(file.name)) ? null : () => renameDrawing(file));
+
+// 도면 이름 수정 창. 취소하면 null, 아니면 확장자 없는 새 이름(앞뒤 공백 제거)
+async function askDrawingName(current) {
+  const dlg = $('renameDialog');
+  if (dlg.open) return null;   // 이미 열려 있으면(연달아 길게 누름) 두 번 열지 않는다
+  const input = $('renameInput');
+  input.value = current;
+  dlg.returnValue = '';   // 바탕을 눌러 닫으면 취소
+  dlg.showModal();
+  input.select();
+  // 길게 누른 손가락을 떼면 그 자리(지금은 창 바탕)에 click 이 하나 오는데, 바탕 click 은 창을 닫으므로(app.js) 연 직후의 것은 먹는다
+  const openedAt = Date.now();
+  const guard = (e) => { if (e.target === dlg && Date.now() - openedAt < GHOST_CLICK_MS) e.stopImmediatePropagation(); };
+  dlg.addEventListener('click', guard, true);
+  await new Promise((resolve) => dlg.addEventListener('close', resolve, { once: true }));
+  dlg.removeEventListener('click', guard, true);
+  return dlg.returnValue === 'ok' ? input.value.trim() : null;
+}
+
+// 길게 누른 원본 도면의 이름을 바꾼다. 서버(drawing_rename)가 같은 묶음(<원본>/ 폴더·저장본·계측기별 PDF)도 함께 바꿔 돌려주면 목록과 폰 보관분에 바로 반영한다
+async function renameDrawing(file) {
+  const oldStem = stemOf(file.name);
+  const name = await askDrawingName(oldStem);
+  if (!name || name === oldStem) return;   // 취소·빈 이름·그대로면 아무것도 안 한다
+  $('drawingFolderNote').textContent = `'${name}' 으로 이름을 바꾸는 중...`;
+  try {
+    const res = await api('drawing_rename', { site: drawingState.site, fileId: file.id, name });
+    applyRenamed(res.renamed || [], driveFolderName(oldStem), driveFolderName(stemOf(res.file?.name || name)));
+  } catch (err) {
+    if (err.isAuth) { signOut(); return; }
+    const why = err.code === 'duplicate' ? '같은 이름의 도면이나 폴더가 이미 있습니다.'
+      : err.fields ? '쓸 수 없는 이름입니다. 날짜 꼬리표(_2026-11-05(수)) 없이 100자 안으로 적어 주세요.'
+        : friendlyError(err, '서버 오류');
+    alert(`이름 바꾸기 실패: ${why}`);
+    renderDrawingFiles();
+  }
+}
+
+// 바뀐 이름을 목록 상태와 폰 보관분에 넣는다. 묶음 폴더 이름과 계측용(가상) 도면에 적어 둔 값의 키도 새 이름으로 옮긴다
+function applyRenamed(renamed, from, to) {
+  const names = new Map(renamed.map((r) => [r.id, r.name]));
+  const fix = (f) => (names.has(f.id) ? { ...f, name: names.get(f.id) } : f);
+  if (drawingState.listing) { folderSeq += 1; drawingState.listing = false; }   // 받는 중이던 옛 목록이 새 이름을 덮지 않게
+  drawingState.files = drawingState.files.map(fix);
+  drawingState.folders = drawingState.folders.map((fo) => ({ name: fo.name === from ? to : fo.name, files: fo.files.map(fix) }));
+  for (const view of Object.keys(VIEW_NAMES)) {   // 사용자가 펼쳐 둔 묶음은 새 이름으로도 펼쳐진 채
+    if (!drawingState.groupOpen.has(`${view}:${from}`)) continue;
+    drawingState.groupOpen.set(`${view}:${to}`, drawingState.groupOpen.get(`${view}:${from}`));
+    drawingState.groupOpen.delete(`${view}:${from}`);
+  }
+  const keptKey = `pdf_notes_${templateId(drawingState.site, from)}`;
+  const kept = store.get(keptKey);
+  if (kept) { store.set(`pdf_notes_${templateId(drawingState.site, to)}`, kept); store.remove(keptKey); }
   store.set(`drawings_${drawingState.site}`, JSON.stringify(drawingState.files));
   store.set(`drawing_folders_${drawingState.site}`, JSON.stringify(drawingState.folders));
   renderDrawingFiles();
@@ -2227,6 +2316,7 @@ function initDrawingModule() {
   });
 
   $('pinNumCancel').addEventListener('click', () => $('pinNumDialog').close('cancel'));
+  $('renameCancel').addEventListener('click', () => $('renameDialog').close('cancel'));
   $('pinMemoClose').addEventListener('click', closePinMemoBox);
   $('pinMemoDelete').addEventListener('click', deleteActivePin);
 
