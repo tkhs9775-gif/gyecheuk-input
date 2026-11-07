@@ -9,8 +9,8 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=62">
-<link rel="stylesheet" href="theme.css?v=62">
+<link rel="stylesheet" href="style.css?v=63">
+<link rel="stylesheet" href="theme.css?v=63">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -109,6 +109,10 @@
 
   <div id="types" class="chips" role="group" aria-label="계측기 종류"></div>
 
+  <div id="instrumentSearchRow" class="hidden">
+    <input id="instrumentSearch" class="list-search" type="search" placeholder="계측기 검색 (ID·위치 일부·초성)" aria-label="계측기 검색" autocomplete="off" enterkeyhint="search">
+    <small id="instrumentSearchNote" class="muted" role="status"></small>
+  </div>
   <label id="instrumentField" class="field select-card">
     <span class="label">계측기 위치</span>
     <select id="instrument"></select>
@@ -217,6 +221,7 @@
     <p class="muted">삭제해도 이미 저장된 기록은 그대로 남습니다.</p>
 
     <h3 class="section">현장</h3>
+    <input id="siteSearch" class="list-search" type="search" placeholder="현장 검색" aria-label="현장 검색" autocomplete="off" enterkeyhint="search">
     <ul id="siteList" class="list mlist"></ul>
     <form id="siteForm" class="row addrow" novalidate>
       <input id="siteNew" type="text" maxlength="100" placeholder="새 현장 이름" aria-label="새 현장 이름" autocomplete="off">
@@ -226,6 +231,7 @@
     <ul id="siteFound" class="list mlist"></ul>
 
     <h3 class="section">측정자</h3>
+    <input id="userSearch" class="list-search" type="search" placeholder="측정자 검색" aria-label="측정자 검색" autocomplete="off" enterkeyhint="search">
     <ul id="userList" class="list mlist"></ul>
     <form id="userForm" class="row addrow" novalidate>
       <input id="userNew" type="text" maxlength="100" placeholder="새 측정자 이름" aria-label="새 측정자 이름" autocomplete="off">
@@ -369,6 +375,7 @@
   <div id="drawingSitesView">
     <h1 class="title">현장 도면 (야장)</h1>
     <p class="muted">현장명을 터치하면 해당 현장의 도면(PDF) 폴더가 열립니다.</p>
+    <input id="drawingSiteSearch" class="list-search" type="search" placeholder="현장 검색 (일부·초성 ㄷㅅ·여러 단어)" aria-label="현장 검색" autocomplete="off" enterkeyhint="search">
     <ul id="drawingSiteList" class="list"></ul>
   </div>
 
@@ -390,6 +397,7 @@
       <button id="btnUploadDrawing" type="button" class="btn outline small">＋ 도면 추가 (PDF·JPG·DWG·DXF)</button>
       <input id="inputDrawingPdf" type="file" accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png,.dwg,.dxf" hidden>
     </div>
+    <input id="drawingFileSearch" class="list-search" type="search" placeholder="도면 검색 (이름 일부·초성·날짜)" aria-label="도면 검색" autocomplete="off" enterkeyhint="search">
     <ul id="drawingFileList" class="list"></ul>
   </div>
 </main>
@@ -523,6 +531,11 @@
     <input id="darkTheme" type="checkbox">
     <span>블랙 테마<small>Pro 앱은 기본으로 켜져 있습니다. 바꾸면 바로 적용됩니다</small></span>
   </label>
+  <details class="card perf-box">
+    <summary>속도 기록 (최근 20건)</summary>
+    <pre id="perfLog" class="perf-log"></pre>
+    <button id="perfClear" type="button" class="btn outline small">기록 지우기</button>
+  </details>
   <a id="downloadApk" href="https://github.com/tkhs9775-gif/gyecheuk-input/releases/download/latest/gyecheuk-input.apk" class="btn outline wide apk-link">📱 안드로이드 앱(APK) 내려받기</a>
 </main>
 
@@ -544,18 +557,20 @@
   </a>
 </nav>
 
-<script src="config.js?v=62"></script>
-<script src="weather.js?v=62"></script>
-<script src="entries.js?v=62"></script>
-<script src="push.js?v=62"></script>
-<script src="outbox.js?v=62"></script>
-<script src="phonecopy.js?v=62"></script>
-<script src="pinhistory.js?v=62"></script>
-<script src="dwgread.js?v=62"></script>
-<script src="drawing.js?v=62"></script>
-<script src="gps.js?v=62"></script>
-<script src="gallery.js?v=62"></script>
-<script src="camera.js?v=62"></script>
-<script src="app.js?v=62"></script>
+<script src="config.js?v=63"></script>
+<script src="weather.js?v=63"></script>
+<script src="entries.js?v=63"></script>
+<script src="push.js?v=63"></script>
+<script src="outbox.js?v=63"></script>
+<script src="phonecopy.js?v=63"></script>
+<script src="pinhistory.js?v=63"></script>
+<script src="perf.js?v=63"></script>
+<script src="search.js?v=63"></script>
+<script src="dwgread.js?v=63"></script>
+<script src="drawing.js?v=63"></script>
+<script src="gps.js?v=63"></script>
+<script src="gallery.js?v=63"></script>
+<script src="camera.js?v=63"></script>
+<script src="app.js?v=63"></script>
 </body>
 </html>

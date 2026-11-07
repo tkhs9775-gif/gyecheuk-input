@@ -729,3 +729,10 @@ body.cam-open { overflow: hidden; }
 .cam-shutter:active { transform: scale(.92); background: #fff; }
 .cam-done { min-width: 64px; height: 48px; padding: 0 16px; border: 0; border-radius: 24px; background: var(--accent); color: #fff; font: inherit; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .cam-flash.go { animation-duration: .01s; } }
+
+/* 목록 검색(search.js) · 속도 기록(perf.js) */
+.list li[hidden] { display: none !important; }
+.list-search { width: 100%; min-height: 48px; margin: 4px 0 8px; padding: 0 16px; border: 1px solid #C5CFDF; border-radius: 16px; background: var(--card); font: inherit; color: inherit; }
+#instrumentSearchNote { display: block; margin: -4px 4px 8px; }
+.perf-box summary { cursor: pointer; font-weight: 700; }
+.perf-log { white-space: pre-wrap; word-break: break-all; font-size: 11px; line-height: 1.5; max-height: 50vh; overflow: auto; margin: 8px 0; }

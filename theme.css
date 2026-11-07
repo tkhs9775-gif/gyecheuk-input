@@ -49,7 +49,7 @@ html[data-theme="dark"] .list li.tap:active { background: var(--raised); }
 html[data-theme="dark"] .tile { background: var(--grad); box-shadow: var(--glow); }
 
 html[data-theme="dark"] input[type="text"], html[data-theme="dark"] input[type="password"], html[data-theme="dark"] input[type="date"],
-html[data-theme="dark"] input[type="file"] { background: var(--field); border-color: var(--field-line); }
+html[data-theme="dark"] input[type="file"], html[data-theme="dark"] input[type="search"] { background: var(--field); border-color: var(--field-line); }
 html[data-theme="dark"] input::placeholder { color: #7C879D; }
 html[data-theme="dark"] input:-webkit-autofill { -webkit-box-shadow: 0 0 0 1000px var(--field) inset; -webkit-text-fill-color: var(--text); }
 html[data-theme="dark"] input[type="file"]::file-selector-button { background: var(--chip); }

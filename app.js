@@ -99,22 +99,28 @@ const networkError = (message) => Object.assign(new Error(message), { network: t
 // One POST per call. A string body keeps it a "simple" request, so the browser skips the CORS preflight Apps Script cannot answer.
 // Network trouble (offline, timeout, non-JSON page) is flagged err.network so callers can keep the input and retry later.
 // The time limit grows with the body size: a slow signal needs longer for photos and survey files.
-async function api(action, payload = {}) {
+// opts.timeoutMs: 응답이 큰 요청(도면 받기 등)은 보내는 양이 작아도 받는 데 오래 걸리므로 시간 제한을 따로 준다(MAX_TIMEOUT_MS 까지)
+async function api(action, payload = {}, opts = {}) {
   const body = JSON.stringify({ code: state.code, action, ...payload });
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, body.length / BYTES_PER_MS)));
+  const byBody = Math.max(MIN_TIMEOUT_MS, body.length / BYTES_PER_MS);
+  const timer = setTimeout(() => ctl.abort(), Math.min(MAX_TIMEOUT_MS, Math.max(byBody, opts.timeoutMs || 0)));
+  const t0 = performance.now();
   let data;
+  let got = 0;
   try {
     const res = await fetch(API_URL, { method: 'POST', body, signal: ctl.signal });
-    try { data = await res.json(); } catch { data = null; }
+    try { const text = await res.text(); got = text.length; data = JSON.parse(text); } catch (e) { if (e.name === 'AbortError') throw e; data = null; }
     // Apps Script answers JSON even for its own errors; an HTML page (sign-in, quota, broken deployment) is not a verdict on the input.
     if (!data || typeof data !== 'object') throw networkError('서버 응답이 올바르지 않습니다(배포 확인).');
   } catch (err) {
+    window.perfApi?.(action, performance.now() - t0, body.length, got, err.name === 'AbortError' ? 'timeout' : 'network');
     if (err.network) throw err;
     throw networkError(err.name === 'AbortError' ? '서버 응답이 없어 중단했습니다. 신호를 확인하세요.' : '인터넷 연결을 확인하세요.');
   } finally {
     clearTimeout(timer);
   }
+  window.perfApi?.(action, performance.now() - t0, body.length, got, data.ok ? 'ok' : String(data.error || 'error'));
   if (data.ok) {
     announceSaved(action, payload, data);
     return data;
@@ -316,8 +322,12 @@ function selectType(type) {
   const isSurvey = type === SURVEY;
   if (isSurvey && state.issue) state.issue = '';
   const list = type === OTHER || isSurvey ? [] : instrumentsOf(type);
-  $('instrument').replaceChildren(...list.map((i) => new Option(i.place ? `${i.id} · ${i.place}` : i.id, i.id)));
+  $('instrument').replaceChildren(...list.map(instrumentOption));
   show($('instrumentField'), list.length > 0);
+  // 계측기가 많을 때만 검색 칸을 보인다. 종류를 바꾸면 검색어를 비운다(다른 종류의 검색어로 목록이 잘려 보이지 않게)
+  $('instrumentSearch').value = '';
+  $('instrumentSearchNote').textContent = '';
+  show($('instrumentSearchRow'), list.length >= INSTRUMENT_SEARCH_MIN && typeof searchFilter === 'function');
   show($('addInstrument'), !isSurvey);
   show($('otherTypeField'), type === OTHER);
   show($('freeIdField'), list.length === 0 && !isSurvey);
@@ -329,6 +339,25 @@ function selectType(type) {
   show($('entryKeepField'), !isSurvey);
   for (const b of $('issues').children) b.setAttribute('aria-pressed', String(b.dataset.issue === state.issue));
   updateValueInfo();
+}
+
+const INSTRUMENT_SEARCH_MIN = 8;   // 계측기가 이만큼 이상이면 위치 목록 위에 검색 칸
+const instrumentOption = (i) => new Option(i.place ? `${i.id} · ${i.place}` : i.id, i.id);
+
+// 계측기 검색: 위치 목록(select)을 맞는 것만으로 다시 채운다. 맞는 게 없으면 목록은 그대로 두고 안내만(빈 목록이면 저장 때 계측기 ID 가 비게 된다).
+// 고르고 있던 계측기가 결과에 있으면 그대로, 없으면 첫 결과를 고른다
+function filterInstruments() {
+  const all = instrumentsOf(state.type);
+  const query = $('instrumentSearch').value;
+  const hits = searchFilter(all, query, (i) => `${i.id} ${i.place || ''}`);
+  const note = $('instrumentSearchNote');
+  if (!hits.length) { note.textContent = `'${query.trim()}' 검색 결과가 없습니다.`; return; }
+  note.textContent = hits.length === all.length ? '' : `${all.length}개 중 ${hits.length}개`;
+  const sel = $('instrument');
+  const before = sel.value;
+  sel.replaceChildren(...hits.map(instrumentOption));
+  if (hits.some((i) => i.id === before)) sel.value = before;
+  if (sel.value !== before) updateValueInfo();
 }
 
 // Load cells report one value per axis: those types show several inputs, filled in order (no axis names).
@@ -889,6 +918,14 @@ function renderInfo() {
   $('adminInfo').textContent = state.config.admin || '과장 정준업(Master)';
   show($('downloadApk'), !window.AndroidGallery);
   renderApkNotice();
+  renderPerfLog();
+}
+
+// 정보 탭 '속도 기록': 도면 열기·저장 단계별 시간과 서버 요청 시간(최근 20건씩, perf.js)
+function renderPerfLog() {
+  const box = $('perfLog');
+  if (!box) return;
+  box.textContent = window.perfReport?.() || '아직 기록이 없습니다. 도면을 열거나 저장하면 여기에 단계별 시간이 쌓입니다.';
 }
 
 // 옛 앱이면 새 앱 설치 안내. 1.28부터는 버튼을 누르면 휴대폰 브라우저가 내려받는다(옛 앱 안에서는 내려받기가 안 돼 글로만 안내)
@@ -1075,6 +1112,14 @@ $('instCancel').addEventListener('click', () => $('instDialog').close());
 $('instForm').addEventListener('submit', addInstrument);
 $('shot').addEventListener('submit', saveShot);
 $('instrument').addEventListener('change', updateValueInfo);
+$('perfClear').addEventListener('click', () => { window.perfClear?.(); renderPerfLog(); });
+// 목록 검색(search.js). 옛 앱 사본에 search.js 가 없으면 검색 칸만 숨기고 나머지는 그대로
+if (typeof attachListSearch === 'function') {
+  $('instrumentSearch').addEventListener('input', debounce(filterInstruments));
+  for (const kind of ['site', 'user']) attachListSearch($(`${kind}Search`), $(`${kind}List`), (li) => li.querySelector('span')?.textContent || '');
+} else {
+  for (const id of ['siteSearch', 'userSearch']) show($(id), false);
+}
 $('value').addEventListener('input', updateValueInfo);
 MULTI_IDS.forEach((id, i) => {
   $(id).addEventListener('input', updateValueInfo);

@@ -15,8 +15,11 @@ const TESSERACT_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesserac
 const PDFLIB_CDN = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js';
 const WEEKDAYS_KO = ['일', '월', '화', '수', '목', '금', '토'];
 const MAX_DRAWING_BYTES = 18 * 1024 * 1024;   // 서버 상한(base64 25,000,000자)과 같다
-const PREFETCH_COUNT = 8;      // 현장을 열면 미리 받아 두는 원본 도면 수
+const PREFETCH_COUNT = 8;      // 현장을 열면 미리 받아 두는 원본 도면 수(데이터 절약 모드이고 Wi-Fi 가 아닐 때)
+const PREFETCH_MAX = 24;       // 그 밖(데이터 절약 모드가 아니거나 Wi-Fi)일 때 미리 받는 수
 const PREFETCH_PARALLEL = 2;   // 동시에 받는 수(한꺼번에 받으면 사용자가 연 도면이 느려진다)
+const DOWNLOAD_TIMEOUT_MS = 3 * 60 * 1000;   // 도면 받기: 보내는 양은 작고 받는 양(수 MB)이 커서 기본 30초로는 느린 신호에서 끊긴다
+const LOWRES_DPR = 0.5;        // 처음 그릴 때 먼저 보여 주는 거친 그림의 선명도(화면 1px 에 0.5px). 이어서 선명한 그림으로 바꾼다
 const NOTES_SAVE_DELAY_MS = 300;
 const OCR_TIMEOUT_MS = 12 * 1000;
 const BTN_RESET_MS = 2200;
@@ -251,13 +254,32 @@ function b64ToUint8(base64) {
 // ponytail: 받아 둔 PDF는 지우지 않는다(현장당 도면 수십 개 수준). 용량이 문제되면 savedAt 기준으로 오래된 것부터 지운다
 // 같은 파일을 두 번 받지 않는다: 미리 받는 중이면 그 약속을 돌려주어 열 때 기다릴 수 있다
 const prefetchInFlight = new Map();
+const downloadPdf = (fileId) => api('drive_download', { fileId }, { timeoutMs: DOWNLOAD_TIMEOUT_MS });
+
+// 사용자가 직접 연 도면을 받는 동안에는 대기 중인 미리 받기를 시작하지 않는다(이미 받는 중인 것은 끝까지 받는다).
+// userLoads 가 0 이 되면 userIdle 이 풀려 미리 받기가 이어진다
+let userLoads = 0;
+let userIdle = Promise.resolve();
+let releaseUserIdle = () => {};
+function beginUserLoad() {
+  if (userLoads === 0) userIdle = new Promise((resolve) => { releaseUserIdle = resolve; });
+  userLoads += 1;
+}
+function endUserLoad() {
+  userLoads = Math.max(0, userLoads - 1);
+  if (userLoads === 0) releaseUserIdle();
+}
+
+// 순수 함수: 미리 받을 수. 데이터 절약 모드(saveData)이고 Wi-Fi 가 아니면 예전 수(8), 아니면 넉넉히(24). 연결 정보가 없는 브라우저는 넉넉히
+const prefetchLimit = (conn) => (conn?.saveData && conn.type !== 'wifi' ? PREFETCH_COUNT : PREFETCH_MAX);
+
 function prefetchPdfToCache(fileId) {
   if (!fileId || navigator.onLine === false) return Promise.resolve();
   if (!prefetchInFlight.has(fileId)) {
     prefetchInFlight.set(fileId, (async () => {
       try {
         if (await getCachedPdfBytes(fileId)) return;
-        const dl = await api('drive_download', { fileId });
+        const dl = await downloadPdf(fileId);
         if (typeof dl?.base64 === 'string' && dl.base64) await putCachedPdfBytes(fileId, b64ToUint8(dl.base64));
       } catch (err) {
         console.warn('도면 미리 받기 실패', err);
@@ -395,6 +417,19 @@ function groupDrawings(files, folders) {
 
 const buildDrawingGroups = () => groupDrawings(drawingState.files, drawingState.folders);
 
+// 순수 함수: 도면 검색. 묶음(원본) 이름이 맞으면 그 묶음 전부, 아니면 파일 이름·폴더·종류·날짜가 맞는 파일만 남긴다. 빈 검색어면 그대로.
+// search.js(searchMatch)가 없으면(옛 앱 사본) 거르지 않는다
+function filterDrawingGroups(groups, query) {
+  if (typeof searchMatch !== 'function' || !searchTokens(query).length) return groups;
+  const tokens = searchTokens(query);
+  const hit = (it) => searchMatch(`${it.file.name} ${it.dir || ''} ${it.type || ''} ${it.date || ''}`, tokens);
+  return groups.flatMap((g) => {
+    if (searchMatch(g.name, tokens)) return [g];
+    const out = { ...g, originals: g.originals.filter(hit), saved: g.saved.filter(hit), typed: g.typed.filter(hit) };
+    return out.originals.length || out.saved.length || out.typed.length ? [out] : [];
+  });
+}
+
 // 서버 응답과 폰 보관분(깨졌을 수 있음)을 같은 모양으로: 파일은 id·name 이 있는 것만, 폴더는 name 과 파일 배열이 있는 것만
 const fileListOf = (v) => (Array.isArray(v) ? v.filter((f) => f && typeof f === 'object' && f.id && typeof f.name === 'string') : []);
 const folderListOf = (v) => (Array.isArray(v) ? v.filter((fo) => fo && typeof fo.name === 'string').map((fo) => ({ name: fo.name, files: fileListOf(fo.files) })) : []);
@@ -410,6 +445,8 @@ async function openSiteDrawingFolder(site) {
   drawingState.site = site;
   drawingState.view = 'original';
   drawingState.groupOpen = new Map();
+  drawingState.query = '';   // 다른 현장의 검색어가 남아 빈 목록으로 보이지 않게
+  $('drawingFileSearch').value = '';
   $('drawingSiteTitle').textContent = `${site} 도면`;
   show($('drawingSitesView'), false);
   show($('drawingFilesView'), true);
@@ -420,6 +457,7 @@ async function openSiteDrawingFolder(site) {
   drawingState.listing = true;
   renderDrawingFiles();
   if (!cachedFiles) $('drawingFolderNote').textContent = '도면 폴더를 불러오는 중...';
+  else prefetchOriginals(seq);   // 서버 목록(1.5~3초)을 기다리지 않고 폰 보관 목록으로 미리 받기 시작
 
   try {
     const res = await api('drawing_list', { site });
@@ -445,11 +483,29 @@ async function openSiteDrawingFolder(site) {
   }
 }
 
-// 원본만 미리 받는다: 저장본·계측기별 PDF 는 열 때 원본 그림 위에 메모를 다시 그리므로, 원본만 폰에 있으면 어느 것이든 바로 열린다
-async function prefetchOriginals(seq) {
-  const queue = buildDrawingGroups().originals.map((it) => it.file.id).slice(0, PREFETCH_COUNT);
-  const take = async () => { while (queue.length && seq === folderSeq) await prefetchPdfToCache(queue.shift()); };
-  await Promise.all(Array.from({ length: PREFETCH_PARALLEL }, take));
+// 원본만 미리 받는다: 저장본·계측기별 PDF 는 열 때 원본 그림 위에 메모를 다시 그리므로, 원본만 폰에 있으면 어느 것이든 바로 열린다.
+// 폰 보관 목록이 뜨자마자 한 번, 서버 목록이 오면 다시 부른다: 줄(queue)을 새 목록으로 바꾸기만 하고, 받는 일꾼은 PREFETCH_PARALLEL 개까지만 둔다
+// (두 번 불러도 4개가 동시에 받지 않게). 같은 파일은 prefetchInFlight·폰 보관분 확인으로 두 번 받지 않는다
+let prefetchQueue = [];
+let prefetchSeq = 0;
+let prefetchWorkers = 0;
+function prefetchOriginals(seq) {
+  prefetchQueue = buildDrawingGroups().originals.map((it) => it.file.id).slice(0, prefetchLimit(navigator.connection));
+  prefetchSeq = seq;
+  // 일꾼은 줄 길이만큼만 더 세운다. 줄이 빈 일꾼은 await 없이 바로 끝나 수를 되돌리므로 'while (일꾼 < 2)' 로 세우면 끝나지 않는다
+  const start = Math.min(PREFETCH_PARALLEL - prefetchWorkers, prefetchQueue.length);
+  for (let i = 0; i < start; i += 1) {
+    prefetchWorkers += 1;
+    runPrefetchWorker();
+  }
+}
+async function runPrefetchWorker() {
+  // 줄이 비었는지 보는 것과 일꾼 수를 줄이는 것 사이에 await 가 없다: 그사이 새 목록이 들어와도 일꾼 없이 남지 않는다
+  while (prefetchQueue.length && prefetchSeq === folderSeq) {
+    if (userLoads) { await userIdle; continue; }   // 사용자가 연 도면을 먼저 받는다
+    await prefetchPdfToCache(prefetchQueue.shift());
+  }
+  prefetchWorkers -= 1;
 }
 
 function setDrawingView(view) {
@@ -585,9 +641,16 @@ const viewCounts = (groups) => ({
 });
 
 function renderDrawingFiles() {
-  const { groups, originals } = buildDrawingGroups();
+  const all = buildDrawingGroups();
+  const query = drawingState.query || '';
+  const searching = typeof searchTokens === 'function' && searchTokens(query).length > 0;
+  // 검색 중이면 맞는 것만 보이되, 줄을 만들 때는 거르지 않은 묶음을 쓴다(계측용 줄은 최근 저장본, 원본 줄의 '저장본 N' 은 전체 수여야 한다)
+  const shownGroups = searching ? filterDrawingGroups(all.groups, query) : all.groups;
+  const fullOf = new Map(all.groups.map((g) => [g.name, g]));
+  const groups = searching ? shownGroups.map((g) => fullOf.get(g.name)) : all.groups;
+  const originals = searching ? shownGroups.flatMap((g) => g.originals).sort((a, b) => (!!a.dir - !!b.dir)) : all.originals;
   const view = drawingState.view;
-  const counts = viewCounts(groups);
+  const counts = viewCounts(shownGroups);
   for (const btn of $('drawingViewSeg').querySelectorAll('button[data-view]')) {
     btn.textContent = `${VIEW_NAMES[btn.dataset.view]} ${counts[btn.dataset.view]}`;
     btn.setAttribute('aria-pressed', String(btn.dataset.view === view));
@@ -605,13 +668,14 @@ function renderDrawingFiles() {
       return group.saved.length && group.originals[0] === it ? [row, templateRow(group)] : [row];
     });
   } else {
-    const withFiles = groups.filter((g) => g[view].length);
-    rows = withFiles.flatMap((g) => drawingGroupRows(g, view, withFiles.length === 1));
+    // 검색 중이면 맞는 파일만 담은 묶음을 펼쳐 보인다(묶음 이름 바꾸기 등은 전체 묶음 기준)
+    const withFiles = shownGroups.filter((g) => g[view].length).map((g) => ({ ...fullOf.get(g.name), [view]: g[view] }));
+    rows = withFiles.flatMap((g) => drawingGroupRows(g, view, withFiles.length === 1 || searching));
   }
   if (!rows.length) {
     const li = document.createElement('li');
     li.className = 'empty';
-    li.textContent = { original: '등록된 원본 도면이 없습니다.', saved: '저장본이 없습니다. 도면을 열고 [다른이름 저장]을 누르면 여기에 날짜별로 쌓입니다.', typed: '계측기별 PDF 가 없습니다. 도면을 열고 [계측기별 PDF]를 누르면 종류별로 여기에 쌓입니다.' }[view];
+    li.textContent = searching ? `'${query.trim()}' 검색 결과가 없습니다. (원본·저장본·계측기별 구분을 바꿔 보세요)` : { original: '등록된 원본 도면이 없습니다.', saved: '저장본이 없습니다. 도면을 열고 [다른이름 저장]을 누르면 여기에 날짜별로 쌓입니다.', typed: '계측기별 PDF 가 없습니다. 도면을 열고 [계측기별 PDF]를 누르면 종류별로 여기에 쌓입니다.' }[view];
     ul.replaceChildren(li);
     return;
   }
@@ -762,20 +826,29 @@ async function uploadDrawingPdf(file) {
 // ---------- 3단계: PDF 전체화면 야장 뷰어 ----------
 
 // 폰 보관분 → 미리 받는 중인 것 → 옛 보관 방식 → 서버 순으로 PDF 바이트를 구한다
-async function loadPdfBytes(fileId) {
+// tr: 속도 기록(perf.js). 어디서 받았는지(bytes:cache·prefetch·legacy·server)와 바이트 수를 적는다
+async function loadPdfBytes(fileId, tr = null) {
   let bytes = await getCachedPdfBytes(fileId);
-  if (!bytes && prefetchInFlight.has(fileId)) {   // 미리 받는 중이면 다시 받지 않고 그것을 기다린다
-    await prefetchInFlight.get(fileId);
-    bytes = await getCachedPdfBytes(fileId);
+  if (bytes) { tr?.step('bytes:cache', bytes.length); return bytes; }
+  // 사용자가 연 도면: 대기 중인 미리 받기를 멈추게 하고(받는 중인 것은 그대로) 먼저 받는다
+  beginUserLoad();
+  try {
+    if (prefetchInFlight.has(fileId)) {   // 미리 받는 중이면 다시 받지 않고 그것을 기다린다
+      await prefetchInFlight.get(fileId);
+      bytes = await getCachedPdfBytes(fileId);
+      if (bytes) { tr?.step('bytes:prefetch', bytes.length); return bytes; }
+    }
+    const legacyB64 = store.get(`pdf_b64_${fileId}`);
+    if (legacyB64) { bytes = b64ToUint8(legacyB64); tr?.step('bytes:legacy', bytes.length); return bytes; }
+    const dl = await downloadPdf(fileId);
+    if (typeof dl.base64 !== 'string' || !dl.base64) throw new Error('서버에서 도면 내용을 받지 못했습니다.');
+    bytes = b64ToUint8(dl.base64);
+    tr?.step('bytes:server', bytes.length);
+    putCachedPdfBytes(fileId, bytes);
+    return bytes;
+  } finally {
+    endUserLoad();
   }
-  if (bytes) return bytes;
-  const legacyB64 = store.get(`pdf_b64_${fileId}`);
-  if (legacyB64) return b64ToUint8(legacyB64);
-  const dl = await api('drive_download', { fileId });
-  if (typeof dl.base64 !== 'string' || !dl.base64) throw new Error('서버에서 도면 내용을 받지 못했습니다.');
-  bytes = b64ToUint8(dl.base64);
-  putCachedPdfBytes(fileId, bytes);
-  return bytes;
 }
 
 // 현장 폴더 바로 아래 도면 + 원본별 폴더 안의 도면(원본이 폴더 안에 있어도 저장본의 바탕으로 찾을 수 있게)
@@ -823,6 +896,10 @@ async function openTemplateDrawing(group) {
 // preset: 계측용 도면처럼 바탕 원본(source)·메모(notes)·늦게 올 메모(notesPromise)를 미리 정해 열 때. 폰 보관분·서버 메모 조회·이름으로 원본 찾기를 건너뛴다
 async function openPdfFieldbook(file, preset = null) {
   const seq = ++openSeq;
+  drawingState.openTrace?.end('replaced');   // 앞 도면이 다 열리기 전에 다른 도면을 누름
+  const tr = window.perfTrace?.('open') || null;
+  drawingState.openTrace = tr;
+  tr?.step('open:tap');
   persistNotesNow();
   drawingState.pdfDoc?.destroy();   // 이전 도면 메모리 해제
   drawingState.pdfDoc = null;
@@ -856,18 +933,23 @@ async function openPdfFieldbook(file, preset = null) {
   // 야장 메모 조회(서버)는 도면 그리기를 막지 않도록 먼저 출발만 시켜 두고, 그리기 끝난 뒤 반영한다
   const notesPromise = preset ? preset.notesPromise : api('drawing_notes_get', { fileId: file.id }).catch((err) => { console.warn('야장 메모 조회 실패', err); return null; });
   // 전에 그려 둔 첫 쪽 그림이 폰에 있으면 pdf.js 가 그리기 전에(0.1초 안에) 먼저 보여 준다. 선명한 그림이 준비되면 그 자리에서 바뀐다
-  showPageSnapshot((drawingState.sourceFile || file).id, seq).catch(() => {});
+  showPageSnapshot((drawingState.sourceFile || file).id, seq).then((shown) => { if (shown) tr?.step('open:snap'); }).catch(() => {});
+  // 다른 폰이 저장한 저장본(원본을 모름): 서버 메모를 기다리는 동안 그 저장본 PDF 도 같이 받기 시작한다.
+  // 메모에서 원본을 찾으면 원본으로 그리고(받아 둔 저장본은 폰 보관분으로 남는다), 못 찾으면 받아 둔 저장본을 그대로 연다
+  const ownBytes = askServerForSource ? loadPdfBytes(file.id, tr) : null;
+  ownBytes?.catch(() => {});   // 원본으로 열면 이 실패는 쓰지 않는다(쓸 때 아래에서 다시 던진다)
 
   try {
     if (askServerForSource) {
       const serverNotes = await notesPromise;
       if (seq !== openSeq) return;
+      tr?.step('notes:got');
       if (serverNotes?.data?.sourceId) drawingState.sourceFile = sourceFileOf(file, normalizeNotes(serverNotes.data), allDrawingFiles()) || drawingState.sourceFile;
     }
     const source = drawingState.sourceFile;
     const [pdfjsLib, sourceBytes] = await Promise.all([
       ensurePdfJs(),
-      source ? loadPdfBytes(source.id).catch((err) => { console.warn('원본 도면을 받지 못해 저장본 그대로 엽니다', err); return null; }) : null,
+      source ? loadPdfBytes(source.id, tr).catch((err) => { console.warn('원본 도면을 받지 못해 저장본 그대로 엽니다', err); return null; }) : null,
     ]);
     if (seq !== openSeq) return;   // 그사이 다른 도면을 열었으면 여기서 끝(가상 파일 id 로 서버에 받으러 가지 않게)
     if (source && !sourceBytes) {
@@ -875,21 +957,24 @@ async function openPdfFieldbook(file, preset = null) {
       if (preset) throw new Error('원본 도면을 받지 못해 계측용 도면을 열 수 없습니다. 신호가 잡히면 다시 열어 주세요.');
       drawingState.sourceFile = null;
     }
-    const bytes = sourceBytes || await loadPdfBytes(file.id);
+    const bytes = sourceBytes || await (ownBytes || loadPdfBytes(file.id, tr));
     if (seq !== openSeq) return;
     drawingState.rawPdfBytes = bytes.slice();
 
     // isEvalSupported:false — pdf.js 3.x 는 PDF 글꼴로 임의 JS를 실행당할 수 있다(CVE-2024-4367). 4.2.67 이상으로 올려도 이 줄은 둔다
     const pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported: false }).promise;
     if (seq !== openSeq) { pdfDoc.destroy(); return; }
+    tr?.step('pdf:doc');
     drawingState.pdfDoc = pdfDoc;
     drawingState.pageCount = pdfDoc.numPages;
     await renderPdfPage();
     applyServerNotes(file, await notesPromise);
+    if (seq === openSeq) { tr?.step('notes:applied'); tr?.end(); }
     // 저장 때 쓸 합치기 라이브러리(pdf-lib, 1MB)를 도면을 보는 동안 미리 받아 둔다(저장을 누른 뒤 받으면 그만큼 기다린다)
     if (navigator.onLine !== false) ensurePdfLib().catch(() => {});
   } catch (err) {
     if (seq !== openSeq) return;
+    tr?.end(err.network ? 'network' : 'error');
     if (err.isAuth) { drawingState.dirty = false; signOut(); closePdfViewer(); return; }
     alert(`PDF 도면을 열지 못했습니다: ${friendlyError(err, '파일이 손상되었거나 PDF가 아닙니다.')}`);
     closePdfViewer();
@@ -907,8 +992,9 @@ async function hideViewer() {
   closingViewer = false;
   if ($('pdfViewer').classList.contains('hidden')) return;
   openSeq += 1;   // 아직 열리던 도면은 버린다
-  // 열자마자 닫아도 다음에 먼저 보여 줄 그림이 남게: 다 그린 1쪽이 캔버스에 있으면 지금 저장한다(이미 저장했으면 건너뛴다)
-  if (drawingState.pdfDoc && shownKey === `${drawingState.currentFile?.id}|1|${shownRot}`) savePageSnapshot($('pdfCanvas'), shownRot);
+  drawingState.openTrace?.end('closed');
+  // 열자마자 닫아도 다음에 먼저 보여 줄 그림이 남게: 다 그린 1쪽이 캔버스에 있으면 지금 저장한다(이미 저장했으면 건너뛴다). 거친 그림(저해상)만 있으면 저장하지 않는다
+  if (drawingState.pdfDoc && shownSharp && shownKey === `${drawingState.currentFile?.id}|1|${shownRot}`) savePageSnapshot($('pdfCanvas'), shownRot);
   if (savingNotes) await savingNotes;
   else if (drawingState.dirty) await saveDrawingNotesToServer(false);
   show($('pdfViewer'), false);
@@ -978,6 +1064,7 @@ async function showPageSnapshot(docId, seq) {
     $('inkCanvas').width = cssW;
     $('inkCanvas').height = cssH;
     shownKey = key;   // renderPdfPage 가 같은 쪽을 그릴 때 이 그림을 지우지 않고 늘려 두었다가 바꿔 끼운다
+    shownSharp = false;
     redrawPageInk();
     renderPagePins();
     $('pdfPageInfo').textContent = '지난번 그림으로 먼저 표시 · 선명하게 그리는 중...';
@@ -1017,9 +1104,39 @@ function savePageSnapshot(canvas, rot) {
 // afterLayout: 크기를 바꾼 바로 그 순간에 부르는 함수(확대 기준점 스크롤 맞추기). 같은 순간이라 화면이 튀지 않는다
 let shownKey = '';   // 지금 캔버스에 있는 그림이 어느 문서·쪽·회전인지. 다르면 늘려 보이지 않고 비운다(다른 쪽 그림이 잠깐 보이지 않게)
 let shownRot = 0;    // 지금 캔버스 그림의 실제 회전(PDF 자체 회전 포함). 닫을 때 그림을 저장하는 데 쓴다
+let shownSharp = false;   // 지금 캔버스 그림이 선명한 그림인지(거친 그림·저장해 둔 그림이면 false). 거친 그림은 쪽 그림으로 저장하지 않는다
+
+// 숨은 캔버스에 그린다. 그사이 다른 그리기가 시작됐으면(renderSeq) null — 취소는 다음 그리기가 renderTask.cancel() 로 한다
+async function renderToBuffer(page, viewport, my) {
+  const buf = document.createElement('canvas');
+  buf.width = viewport.width;
+  buf.height = viewport.height;
+  const task = page.render({ canvasContext: buf.getContext('2d'), viewport });
+  renderTask = task;
+  try {
+    await task.promise;
+  } catch (err) {
+    buf.width = 0;
+    throw err;
+  } finally {
+    if (renderTask === task) renderTask = null;
+  }
+  if (my !== renderSeq) { buf.width = 0; return null; }
+  return buf;
+}
+
+// 숨은 캔버스 그림을 화면 캔버스로 옮긴다(크기를 바꾸면 비워지지만 같은 순간에 다시 그려 빈 화면은 보이지 않는다)
+function swapIntoCanvas(pdfCanvas, buf) {
+  pdfCanvas.width = buf.width;
+  pdfCanvas.height = buf.height;
+  pdfCanvas.getContext('2d').drawImage(buf, 0, 0);
+  buf.width = 0;   // 숨은 캔버스 메모리를 바로 돌려준다
+}
+
 async function renderPdfPage(afterLayout) {
   if (!drawingState.pdfDoc) return;
   const my = ++renderSeq;
+  const tr = drawingState.openTrace;   // 도면을 열 때의 첫 그리기만 속도 기록에 적는다
   if (renderTask) {
     renderTask.cancel();
     await renderTask.promise.catch(() => {});
@@ -1030,6 +1147,7 @@ async function renderPdfPage(afterLayout) {
   try {
     const page = await doc.getPage(drawingState.pageNum);
     if (my !== renderSeq || doc !== drawingState.pdfDoc) return;
+    tr?.step('pdf:page');
     const wrapW = Math.max(320, $('pdfStageWrap').clientWidth - 24);
     const rotation = (page.rotate + drawingState.rotation) % 360;
     const unscaled = page.getViewport({ scale: 1, rotation });
@@ -1042,7 +1160,8 @@ async function renderPdfPage(afterLayout) {
 
     const pdfCanvas = $('pdfCanvas');
     const key = `${drawingState.currentFile?.id}|${drawingState.pageNum}|${rotation}`;
-    if (key !== shownKey) {
+    const fresh = key !== shownKey;   // 이 쪽 그림이 캔버스에 아직 없음(저장해 둔 그림도 없음)
+    if (fresh) {
       pdfCanvas.width = 1;   // 다른 쪽·문서: 옛 그림을 지운다(흰 바탕만 보임)
       pdfCanvas.height = 1;
     }
@@ -1060,23 +1179,30 @@ async function renderPdfPage(afterLayout) {
     renderPagePins();
     if (afterLayout) afterLayout();
 
-    const buf = document.createElement('canvas');
-    buf.width = viewport.width;
-    buf.height = viewport.height;
-    const task = page.render({ canvasContext: buf.getContext('2d'), viewport });
-    renderTask = task;
-    await task.promise;
-    if (renderTask === task) renderTask = null;
-    if (my !== renderSeq) return;
-    pdfCanvas.width = buf.width;    // 크기를 바꾸면 비워지지만 같은 순간에 다시 그려서 빈 화면은 보이지 않는다
-    pdfCanvas.height = buf.height;
-    pdfCanvas.getContext('2d').drawImage(buf, 0, 0);
-    buf.width = 0;                  // 숨은 캔버스 메모리를 바로 돌려준다
+    tr?.step('render:start');
+    // 화면에 아무 그림도 없을 때(처음 여는 쪽, 저장해 둔 그림 없음)는 거친 그림을 먼저 그려 보여 주고, 이어서 선명한 그림으로 바꾼다.
+    // 같은 page 객체라 두 번째 그리기는 PDF 해석을 다시 하지 않는다. 그사이 확대·쪽 넘김이 오면(renderSeq) 둘 다 버린다
+    if (fresh && dpr > LOWRES_DPR) {
+      const low = await renderToBuffer(page, page.getViewport({ scale: fitScale * LOWRES_DPR, rotation }), my);
+      if (!low) return;
+      swapIntoCanvas(pdfCanvas, low);
+      shownKey = key;
+      shownRot = rotation;
+      shownSharp = false;
+      tr?.step('render:low');
+      $('pdfPageInfo').textContent = '선명하게 그리는 중...';
+    }
+    const buf = await renderToBuffer(page, viewport, my);
+    if (!buf) return;
+    tr?.step('render:end');
+    swapIntoCanvas(pdfCanvas, buf);
     shownKey = key;
     shownRot = rotation;
+    shownSharp = true;
+    tr?.step('render:swap');
     updatePageInfo();
     // 쪽 그림 저장은 화면이 다 뜬 뒤 한 박자 쉬고(그리는 시간에 끼지 않게), 그사이 다른 쪽으로 바뀌지 않았을 때만
-    setTimeout(() => { if (shownKey === key && drawingState.pdfDoc === doc) savePageSnapshot(pdfCanvas, rotation); }, SNAPSHOT_SAVE_DELAY_MS);
+    setTimeout(() => { if (shownKey === key && shownSharp && drawingState.pdfDoc === doc) savePageSnapshot(pdfCanvas, rotation); }, SNAPSHOT_SAVE_DELAY_MS);
     if (typeof refreshGps === 'function') refreshGps();
   } catch (err) {
     if (err?.name === 'RenderingCancelledException' || my !== renderSeq) return;
@@ -1825,22 +1951,77 @@ function uint8ToBase64(bytes) {
   return btoa(binary);
 }
 
-// 특정 페이지의 동그라미 마커 + OCR 텍스트 태그 + 자유 펜 필기를 투명 PNG 데이터로 그린다
-// onlyType을 주면 그 계측기 메모만 그린다(자유 펜 필기는 계측기와 무관하므로 뺀다). 없으면 전부
+// 메모 그림의 모양(쪽 단위, 위가 0). 아래 그리기와 묶음 범위 계산이 같은 값을 쓴다
+const ANN_PIN_R = 13;
+const ANN_PIN_EDGE = 2.2;
+const ANN_INK_W = 3.0;
+const ANN_TAG_PAD_X = 7;
+const ANN_TAG_H = 22;
+const ANN_TAG_GAP = 4;
+const ANN_TAG_FONT = 'bold 12px "Noto Sans KR", "Malgun Gothic", sans-serif';
+const ANN_PNG_SCALE = 2;   // 쪽 1단위를 PNG 2px 로(확대해도 글자가 깨지지 않게)
+
+// 동그라미 아래 글자 상자 자리(쪽 가장자리 안으로 당긴다). textW: 글자 폭
+function annTagBox(pin, textW, widthPx, heightPx) {
+  const boxW = textW + ANN_TAG_PAD_X * 2;
+  const cx = pin.x * widthPx;
+  const cy = pin.y * heightPx;
+  return { x: Math.max(4, Math.min(widthPx - boxW - 4, cx - boxW / 2)), y: Math.min(heightPx - ANN_TAG_H - 4, cy + ANN_PIN_R + ANN_TAG_GAP), w: boxW, h: ANN_TAG_H };
+}
+
+// 순수 함수: 그릴 메모 전체를 감싸는 범위 { x, y, w, h }(쪽 단위, 위가 0, 정수로 넓혀 쪽 안으로 자름). 그릴 것이 없으면 null.
+// measure(text): 글자 폭(ANN_TAG_FONT 기준). 저장할 때 쪽 전체 크기 PNG 대신 이 범위만 그려 넣는다(큰 도면에서 PNG 만들기·넣기가 가벼워진다)
+function annotationBounds(pins, strokes, widthPx, heightPx, measure) {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  const add = (ax, ay, bx, by) => { x0 = Math.min(x0, ax); y0 = Math.min(y0, ay); x1 = Math.max(x1, bx); y1 = Math.max(y1, by); };
+  const inkPad = ANN_INK_W / 2 + 1;
+  for (const s of strokes || []) for (const p of s || []) add(p.x * widthPx - inkPad, p.y * heightPx - inkPad, p.x * widthPx + inkPad, p.y * heightPx + inkPad);
+  const pinPad = ANN_PIN_R + ANN_PIN_EDGE / 2 + 1;
+  for (const pin of pins || []) {
+    const cx = pin.x * widthPx;
+    const cy = pin.y * heightPx;
+    add(cx - pinPad, cy - pinPad, cx + pinPad, cy + pinPad);
+    if (pin.text) {
+      const b = annTagBox(pin, measure(pin.text), widthPx, heightPx);
+      add(b.x - 1, b.y - 1, b.x + b.w + 1, b.y + b.h + 1);
+    }
+  }
+  if (x0 === Infinity) return null;
+  const left = Math.max(0, Math.floor(x0));
+  const top = Math.max(0, Math.floor(y0));
+  const right = Math.min(Math.ceil(widthPx), Math.ceil(x1));
+  const bottom = Math.min(Math.ceil(heightPx), Math.ceil(y1));
+  if (right <= left || bottom <= top) return null;   // 메모가 모두 쪽 밖
+  return { x: left, y: top, w: right - left, h: bottom - top };
+}
+
+// 순수 함수: 범위(위가 0)를 pdf-lib drawImage 자리(아래가 0)로. 예전처럼 쪽 전체(0,0,width,height)에 그리던 것과 같은 자리에 같은 크기로 놓인다
+const pdfPlacement = (b, pageHeight) => ({ x: b.x, y: pageHeight - b.y - b.h, width: b.w, height: b.h });
+
+// 특정 페이지의 동그라미 마커 + OCR 텍스트 태그 + 자유 펜 필기를 투명 PNG 로 그린다. 메모가 있는 범위만 잘라 { url, box } 로 돌려준다(없으면 null).
+// onlyType을 주면 그 계측기 메모만 그린다(자유 펜 필기는 계측기와 무관하므로 뺀다). 없으면 전부.
+// 좌표는 예전(쪽 전체 PNG 를 0,0 에 쪽 크기로 놓기)과 같은 틀(getSize 의 가로·세로, 위가 0)이라 회전된 PDF 도 예전과 같은 자리에 놓인다
 function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType = null, notes = drawingState.notes) {
   const pagePins = (notes.pins || []).filter((p) => p.page === pageIndex1Based && (!onlyType || p.type === onlyType));
   const pageStrokes = onlyType ? [] : (notes.strokes?.[String(pageIndex1Based)] || []);
   if (!pagePins.length && !pageStrokes.length) return null;
 
   const c = document.createElement('canvas');
-  c.width = Math.round(widthPx * 2);
-  c.height = Math.round(heightPx * 2);
   const ctx = c.getContext('2d');
-  ctx.scale(2, 2);
+  ctx.font = ANN_TAG_FONT;
+  const box = annotationBounds(pagePins, pageStrokes, widthPx, heightPx, (t) => ctx.measureText(t).width);
+  if (!box) return null;
+  c.width = Math.round(box.w * ANN_PNG_SCALE);
+  c.height = Math.round(box.h * ANN_PNG_SCALE);
+  ctx.scale(ANN_PNG_SCALE, ANN_PNG_SCALE);   // 크기를 바꾸면 그리기 설정이 풀리므로 그 뒤에 정한다
+  ctx.translate(-box.x, -box.y);              // 아래 그리기는 쪽 전체 좌표 그대로
 
   // 1) 자유 펜 필기 그리기
   ctx.strokeStyle = INK_COLOR;
-  ctx.lineWidth = 3.0;
+  ctx.lineWidth = ANN_INK_W;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   for (const s of pageStrokes) {
@@ -1857,13 +2038,12 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType =
   pagePins.forEach((pin) => {
     const cx = pin.x * widthPx;
     const cy = pin.y * heightPx;
-    const r = 13;
 
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.arc(cx, cy, ANN_PIN_R, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(198, 40, 40, 0.94)';
     ctx.fill();
-    ctx.lineWidth = 2.2;
+    ctx.lineWidth = ANN_PIN_EDGE;
     ctx.strokeStyle = '#FFFFFF';
     ctx.stroke();
 
@@ -1876,27 +2056,24 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType =
     ctx.fillText(label, cx, cy);
 
     if (pin.text) {
-      ctx.font = 'bold 12px "Noto Sans KR", "Malgun Gothic", sans-serif';
-      const padX = 7;
-      const boxH = 22;
-      const textW = ctx.measureText(pin.text).width;
-      const boxW = textW + padX * 2;
-      const bx = Math.max(4, Math.min(widthPx - boxW - 4, cx - boxW / 2));
-      const by = Math.min(heightPx - boxH - 4, cy + r + 4);
+      ctx.font = ANN_TAG_FONT;
+      const b = annTagBox(pin, ctx.measureText(pin.text).width, widthPx, heightPx);
 
       ctx.fillStyle = 'rgba(27, 42, 87, 0.94)';
       ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(bx, by, boxW, boxH, 5); else ctx.rect(bx, by, boxW, boxH);   // 옛 WebView에는 roundRect가 없다
+      if (ctx.roundRect) ctx.roundRect(b.x, b.y, b.w, b.h, 5); else ctx.rect(b.x, b.y, b.w, b.h);   // 옛 WebView에는 roundRect가 없다
       ctx.fill();
 
       ctx.fillStyle = '#FFFFFF';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(pin.text, bx + padX, by + boxH / 2);
+      ctx.fillText(pin.text, b.x + ANN_TAG_PAD_X, b.y + b.h / 2);
     }
   });
 
-  return c.toDataURL('image/png');
+  const url = c.toDataURL('image/png');
+  c.width = 0;   // 캔버스 메모리를 바로 돌려준다
+  return { url, box };
 }
 
 // pdf-lib 받기 + 문서 열기(1MB 도면이면 느린 폰에서 1초 안팎). 저장 때 서버 확인(같은 이름 저장본 합치기)과 나란히 돌려 기다리는 시간을 겹친다
@@ -1907,21 +2084,37 @@ async function loadPdfForAnnotate(bytes) {
 
 // 원본 PDF 바이트 위에 모든 페이지의 야장 메모/필기를 합성한 새 PDF base64 생성. docPromise 를 주면 미리 연 문서를 쓴다(문서에 그려 넣으므로 한 번만 쓸 것).
 // notes 는 만들기 시작할 때의 메모로 고정한다(만드는 동안 값을 더 적거나 합치기가 끝나도 쪽마다 다른 메모가 섞이지 않게)
-async function buildAnnotatedPdfBase64(onlyType = null, docPromise = null, notes = drawingState.notes) {
+// tr: 속도 기록(perf.js) — lib(pdf-lib 받음)·load(문서 열림)·png(메모 그림)·embed(넣기)·pdfsave·b64 를 적는다
+async function buildAnnotatedPdfBase64(onlyType = null, docPromise = null, notes = drawingState.notes, tr = null) {
+  if (!docPromise) { await ensurePdfLib(); tr?.step('lib'); }
   const pdfDoc = await (docPromise || loadPdfForAnnotate(drawingState.rawPdfBytes));
+  tr?.step('load');
   const pages = pdfDoc.getPages();
+  let pngMs = 0;
+  let embedMs = 0;
+  let pngChars = 0;
 
   for (let i = 0; i < pages.length; i += 1) {
     const p = pages[i];
     const { width, height } = p.getSize();
-    const pngUrl = renderPageAnnotationsPng(i + 1, width, height, onlyType, notes);
-    if (!pngUrl) continue;
-    const pngImage = await pdfDoc.embedPng(pngUrl);
-    p.drawImage(pngImage, { x: 0, y: 0, width, height });
+    let t = performance.now();
+    const png = renderPageAnnotationsPng(i + 1, width, height, onlyType, notes);
+    pngMs += performance.now() - t;
+    if (!png) continue;
+    pngChars += png.url.length;
+    t = performance.now();
+    const pngImage = await pdfDoc.embedPng(png.url);
+    p.drawImage(pngImage, pdfPlacement(png.box, height));
+    embedMs += performance.now() - t;
   }
+  tr?.step('png', Math.round(pngMs));
+  tr?.step('embed', `${Math.round(embedMs)}ms·${pngChars}자`);
 
   const outBytes = await pdfDoc.save();
-  return uint8ToBase64(outBytes);
+  tr?.step('pdfsave', outBytes.length);
+  const b64 = uint8ToBase64(outBytes);
+  tr?.step('b64', b64.length);
+  return b64;
 }
 
 // 폰 보관: 획마다·글자마다 불리므로 잠깐 모아서 한 번만 쓴다. 닫거나 서버에 보낼 때는 바로 쓴다(persistNotesNow)
@@ -2050,6 +2243,8 @@ async function doSaveDrawingNotes(showAlert) {
   const btn = $('pdfSaveNotes');
   btn.disabled = true;
   btn.textContent = '저장중..';
+  const tr = window.perfTrace?.('save') || null;
+  tr?.step('save:start');
   persistNotesNow();
 
   const newFileName = buildSavedDrawingFileName(file.name, new Date());
@@ -2064,7 +2259,7 @@ async function doSaveDrawingNotes(showAlert) {
     // PDF 만들기(pdf-lib 받기 → 문서 열기 → 동그라미 그려 넣기)는 서버 확인(아래 합치기, 왕복 1.5~3초)과 나란히 돌린다.
     // 합치기로 메모가 바뀌는 드문 경우에만 새 문서로 다시 만든다(문서에 그려 넣으므로 같은 문서를 두 번 쓰면 두 겹이 된다)
     const bytes = drawingState.rawPdfBytes;
-    const build = (notes) => (bytes ? buildAnnotatedPdfBase64(null, null, notes).catch((err) => { console.warn('메모 합치기 실패', err); return null; }) : Promise.resolve(null));
+    const build = (notes) => (bytes ? buildAnnotatedPdfBase64(null, null, notes, tr).catch((err) => { console.warn('메모 합치기 실패', err); return null; }) : Promise.resolve(null));
     // 메모는 복사본으로 고정: 만드는 동안 더 적은 값이 그림에는 없는데 메모 JSON 에만 들어가는 어긋남을 막는다(그 값은 dirty 가 남아 닫을 때 다시 저장된다)
     let notesAtBuild = structuredClone(drawingState.notes);
     let built = build(notesAtBuild);
@@ -2095,6 +2290,8 @@ async function doSaveDrawingNotes(showAlert) {
     }, true);
 
     if (notesVersion === ver) drawingState.dirty = false;
+    tr?.step('save:done');
+    tr?.end(result === 'queued' ? 'queued' : 'ok');
     btn.textContent = result === 'queued' ? '폰보관✓' : '저장됨✓';
     if (showAlert) {
       const where = result === 'queued'
@@ -2105,6 +2302,7 @@ async function doSaveDrawingNotes(showAlert) {
         : `'${newFileName}' 이름으로 저장했지만, 합치기 기능 파일을 받지 못해 메모를 PDF 그림에 합치지는 못했습니다.\n메모 자체는 서버에 보관되어 다시 열면 보입니다. ${where}`, phoneFiles());
     }
   } catch (err) {
+    tr?.end(err.network ? 'network' : 'error');
     if (err.isAuth) { drawingState.dirty = false; signOut(); closePdfViewer(); return; }
     btn.textContent = '폰보관✓';
     const reason = friendlyError(err, '메모를 PDF로 만들지 못했습니다.');
@@ -2142,28 +2340,44 @@ function onOutboxSent(item, res) {
 
 // 같은 날 다른 폰이 같은 이름으로 먼저 저장한 저장본이 있으면(두 사람이 한 도면을 나눠 적는 날) 그 메모를 받아 합친다. 안 하면 replaceSameName 으로 먼저 적은 값이 PDF 에서 사라진다.
 // 목록은 현장을 열 때 받은 것이라 저장 직전에 다시 받는다(왕복 1~3초). 신호가 없거나 실패하면 내 것만 저장한다(원래 동작)
-async function mergeRivalSave(newFileName, file) {
+// 같은 이름 저장본과 그 메모를 구한다 → { rival, theirs }. 새 서버는 drawing_rival 한 번(왕복 1회), 그 액션을 모르는 옛 서버(bad_action)나
+// 그 요청이 실패하면 예전 길(drawing_list → drawing_notes_get, 왕복 2회)로 다시 한다(웹을 서버보다 먼저 배포해도 깨지지 않게). 접속 코드 오류는 그대로 던진다.
+// 예전 길: 목록을 못 받으면 { rival: null }(내 것만 저장), 저장본은 있는데 메모를 못 받으면 rival 오류(덮어쓰지 않음). check: 두 요청 사이에 부르는 확인
+async function fetchRival(callApi, site, fileName, excludeId, check = () => {}) {
+  try {
+    const res = await callApi('drawing_rival', { site, fileName, excludeId });
+    return { rival: res?.rival || null, theirs: res?.notes || null };
+  } catch (err) {
+    if (err.isAuth) throw err;
+    if (err.code !== 'bad_action') console.warn('drawing_rival 실패, 예전 방식(목록→메모)으로 확인', err);
+  }
   let rival = null;
   try {
-    const res = await api('drawing_list', { site: drawingState.site });
+    const res = await callApi('drawing_list', { site });
     const files = [...fileListOf(res.files), ...folderListOf(res.folders).flatMap((fo) => fo.files)];
-    rival = files.find((f) => f.name === newFileName && f.id !== file.id) || null;
+    rival = files.find((f) => f.name === fileName && f.id !== excludeId) || null;
   } catch (err) {
+    if (err.isAuth) throw err;
     console.warn('같은 이름 저장본 확인 건너뜀(목록을 못 받음)', err);   // 목록조차 못 받으면 원래대로 내 것만 저장한다
-    return false;
+    return { rival: null, theirs: null };
   }
-  if (!rival) return false;
-  const stillMine = () => { if (drawingState.currentFile !== file) throw new Error('저장하는 사이 다른 도면이 열려 저장을 멈췄습니다. 다시 저장해 주세요.'); };
-  stillMine();
-  let theirs;
+  if (!rival) return { rival: null, theirs: null };
+  check();
   try {
-    theirs = await api('drawing_notes_get', { fileId: rival.id });
+    return { rival, theirs: await callApi('drawing_notes_get', { fileId: rival.id }) };
   } catch (err) {
+    if (err.isAuth) throw err;
     // 남의 저장본이 있는 건 아는데 그 값을 못 받았으면 덮어쓰지 않는다(적은 값은 폰에 남아 다음 저장 때 다시 시도). rival 표시: 닫으며 저장할 때도 알림을 띄운다
     const e = new Error('다른 폰이 먼저 저장한 같은 이름 도면의 메모를 확인하지 못했습니다. 신호가 잡히면 다시 저장해 주세요.');
     e.rival = true;
     throw e;
   }
+}
+
+async function mergeRivalSave(newFileName, file) {
+  const stillMine = () => { if (drawingState.currentFile !== file) throw new Error('저장하는 사이 다른 도면이 열려 저장을 멈췄습니다. 다시 저장해 주세요.'); };
+  const { rival, theirs } = await fetchRival(api, drawingState.site, newFileName, file.id, stillMine);
+  if (!rival) return false;
   stillMine();
   if (!theirs?.updated || !Array.isArray(theirs.data?.pins)) return false;   // 메모 없이 올린 파일(PC 등)이면 합칠 것이 없다
   const merged = mergeNotesForSave(drawingState.notes, normalizeNotes(theirs.data), todayKst());
@@ -2275,6 +2489,13 @@ function initDrawingModule() {
   $('pdfSaveTyped').addEventListener('click', saveTypedPdfs);
   $('drawingBackSites').addEventListener('click', loadDrawingTab);
   $('drawingViewSeg').addEventListener('click', (e) => { const b = e.target.closest('button[data-view]'); if (b) setDrawingView(b.dataset.view); });
+  // 검색(search.js): 현장 목록은 줄을 숨기고, 도면 목록은 묶음·파일을 걸러 다시 그린다. search.js 가 없는 옛 사본이면 검색 칸을 숨긴다
+  if (typeof attachListSearch === 'function') {
+    attachListSearch($('drawingSiteSearch'), $('drawingSiteList'), (li) => li.querySelector('b')?.textContent || '');   // 안내 글(터치하여…)은 빼고 현장 이름만
+    $('drawingFileSearch').addEventListener('input', debounce(() => { drawingState.query = $('drawingFileSearch').value; renderDrawingFiles(); }));
+  } else {
+    for (const id of ['drawingSiteSearch', 'drawingFileSearch']) show($(id), false);
+  }
   // 안드로이드는 터치를 놓을 때 커서를 다시 놓아 선택이 풀리므로 한 박자 뒤에 고른다
   $('pinMemoKeyboard').addEventListener('focus', (e) => { if (e.target.dataset.stale) setTimeout(() => e.target.select(), 0); });
   // 안드로이드 앱의 파일 선택 창은 accept의 첫 형식(PDF)만 보여 줄 수 있어 앱에서는 모든 파일을 보이고 uploadDrawingPdf가 거른다
@@ -2351,4 +2572,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES };
+if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES, annotationBounds, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState };
