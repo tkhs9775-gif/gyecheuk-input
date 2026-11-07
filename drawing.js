@@ -716,6 +716,23 @@ async function imageToPdfBase64(file) {
 
 async function uploadDrawingPdf(file) {
   if (!file) return;
+  if (CAD_DRAWING_RE.test(file.name)) {   // DWG·DXF → 시트별 PNG → 아래 JPG·PNG 도면과 같은 길
+    if (file.size === 0) { alert('비어 있는 파일입니다. 다른 파일을 골라 주세요.'); return; }
+    const note = $('drawingFolderNote'), btn = $('btnUploadDrawing');
+    btn.disabled = true;
+    let pngs;
+    try {
+      pngs = await cadToImageFiles(file, (t) => { note.textContent = t; });
+    } catch (err) {
+      alert(`DWG·DXF 도면을 열지 못했습니다: ${friendlyError(err, '파일을 읽지 못했습니다.')}`);
+      renderDrawingFiles();
+      return;
+    } finally {
+      btn.disabled = false;
+    }
+    for (const png of pngs) await uploadDrawingPdf(png);
+    return;
+  }
   const isImage = IMAGE_DRAWING_RE.test(file.name);
   if (!isImage && !file.name.toLowerCase().endsWith('.pdf')) { alert('PDF·JPG·PNG 파일만 도면으로 올릴 수 있습니다.'); return; }
   if (file.size === 0) { alert('비어 있는 파일입니다. 다른 파일을 골라 주세요.'); return; }

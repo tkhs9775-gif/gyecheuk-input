@@ -9,8 +9,8 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=60">
-<link rel="stylesheet" href="theme.css?v=60">
+<link rel="stylesheet" href="style.css?v=61">
+<link rel="stylesheet" href="theme.css?v=61">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -388,7 +388,7 @@
     <div class="drawing-tools">
       <p id="drawingFolderNote" class="muted" role="status">PDF를 터치하면 전체화면 야장으로 열립니다.</p>
       <button id="btnUploadDrawing" type="button" class="btn outline small">＋ 도면 추가 (PDF·JPG)</button>
-      <input id="inputDrawingPdf" type="file" accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png" hidden>
+      <input id="inputDrawingPdf" type="file" accept="application/pdf,.pdf,image/jpeg,.jpg,.jpeg,image/png,.png,.dwg,.dxf" hidden>
     </div>
     <ul id="drawingFileList" class="list"></ul>
   </div>
@@ -544,17 +544,18 @@
   </a>
 </nav>
 
-<script src="config.js?v=60"></script>
-<script src="weather.js?v=60"></script>
-<script src="entries.js?v=60"></script>
-<script src="push.js?v=60"></script>
-<script src="outbox.js?v=60"></script>
-<script src="phonecopy.js?v=60"></script>
-<script src="pinhistory.js?v=60"></script>
-<script src="drawing.js?v=60"></script>
-<script src="gps.js?v=60"></script>
-<script src="gallery.js?v=60"></script>
-<script src="camera.js?v=60"></script>
-<script src="app.js?v=60"></script>
+<script src="config.js?v=61"></script>
+<script src="weather.js?v=61"></script>
+<script src="entries.js?v=61"></script>
+<script src="push.js?v=61"></script>
+<script src="outbox.js?v=61"></script>
+<script src="phonecopy.js?v=61"></script>
+<script src="pinhistory.js?v=61"></script>
+<script src="dwgread.js?v=61"></script>
+<script src="drawing.js?v=61"></script>
+<script src="gps.js?v=61"></script>
+<script src="gallery.js?v=61"></script>
+<script src="camera.js?v=61"></script>
+<script src="app.js?v=61"></script>
 </body>
 </html>
