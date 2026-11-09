@@ -53,9 +53,11 @@ async function cadIdb(mode, fn) {
   });
 }
 const cadRecentList = async () => ((await cadIdb('readonly', (s) => s.getAll()).catch(() => [])) || []).sort((a, b) => b.at - a.at);
-async function cadRemember(name, buf) {
+// 보관 열쇠(name)는 폰에서 연 파일이면 파일 이름, 클라우드에서 받은 파일이면 'cloud:<파일ID>'(extra.key). 화면에는 title(파일 이름)을 보인다
+async function cadRemember(name, buf, extra = {}) {
+  const { key, ...more } = extra;
   try {
-    await cadIdb('readwrite', (s) => s.put({ name, buf, size: buf.byteLength, at: Date.now() }));
+    await cadIdb('readwrite', (s) => s.put({ ...more, name: key || name, title: name, buf, size: buf.byteLength, at: Date.now() }));
     const all = await cadRecentList();
     for (const old of all.slice(CAD_RECENT_MAX)) await cadIdb('readwrite', (s) => s.delete(old.name));
   } catch (err) { console.warn('최근 도면 보관 실패', err); }
@@ -63,7 +65,10 @@ async function cadRemember(name, buf) {
 
 // ---------- 1단계: 열기 화면 ----------
 
-function loadCadTab() { renderCadRecent(); }
+function loadCadTab() {
+  if (typeof renderCadSites === 'function') { showCadSites(true); renderCadSites(); }
+  renderCadRecent();
+}
 
 async function renderCadRecent() {
   const ul = $('cadRecent');
@@ -82,12 +87,13 @@ async function renderCadRecent() {
     li.setAttribute('role', 'button');
     const meta = document.createElement('div');
     meta.className = 'meta';
-    const b = document.createElement('b'); b.textContent = `📐 ${f.name}`;
-    const sm = document.createElement('small'); sm.textContent = `${(f.size / MB).toFixed(1)}MB · ${new Date(f.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+    const title = f.title || f.name;
+    const b = document.createElement('b'); b.textContent = `📐 ${title}`;
+    const sm = document.createElement('small'); sm.textContent = `${f.site ? `☁ ${f.site} · ` : ''}${(f.size / MB).toFixed(1)}MB · ${new Date(f.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
     meta.append(b, sm);
     const v = document.createElement('div'); v.className = 'val'; v.textContent = '›';
     li.append(meta, v);
-    const go = () => cadOpen(f.name, f.buf.slice(0));
+    const go = () => cadOpen(title, f.buf.slice(0));
     li.addEventListener('click', go);
     li.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
     return li;
@@ -96,9 +102,8 @@ async function renderCadRecent() {
 
 async function cadPickFile(file) {
   if (!file) return;
-  if (!/\.(dwg|dxf)$/i.test(file.name)) { alert('DWG·DXF 파일만 열 수 있습니다.'); return; }
-  if (!file.size) { alert('비어 있는 파일입니다.'); return; }
-  if (file.size > CAD_MAX_FILE) { alert(`도면 파일은 ${CAD_MAX_FILE / MB}MB 이하만 열 수 있습니다.`); return; }
+  const problem = cadFileProblem(file);   // cadfiles.js
+  if (problem) { alert(problem); return; }
   const buf = await file.arrayBuffer();
   cadRemember(file.name, buf.slice(0));
   cadOpen(file.name, buf);

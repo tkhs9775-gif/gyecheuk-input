@@ -9,8 +9,8 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=65">
-<link rel="stylesheet" href="theme.css?v=65">
+<link rel="stylesheet" href="style.css?v=66">
+<link rel="stylesheet" href="theme.css?v=66">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -515,13 +515,34 @@
 </dialog>
 
 <!-- CAD 탭: 폰에서 DWG·DXF 를 직접 연다(cad.js). 도면 탭의 [도면 추가]는 PDF·JPG 만, DWG 는 여기서 열어 [PDF 만들기]로 도면 탭에 보낸다 -->
+<!-- 현장 → 폴더(cadfiles.js): 클라우드 CAD/<현장>/ 의 DWG·DXF 만 보인다. 50MB 도면도 4MB 씩 나눠 받고 올린다 -->
 <main id="cad" class="screen hidden">
-  <h1 class="title">CAD 도면 보기</h1>
-  <p class="muted">폰에 있는 DWG·DXF 도면을 바로 엽니다. 확대·도면층·거리·면적·좌표를 보고, <b>도각 추적</b>으로 도면 틀마다 한 장씩 PDF 를 만들어 현장 폴더에 올릴 수 있습니다.</p>
-  <button id="cadOpenBtn" type="button" class="btn primary wide">📂 DWG·DXF 열기</button>
-  <input id="cadFile" type="file" hidden>
-  <h2 class="section">최근에 연 도면</h2>
-  <ul id="cadRecent" class="list"></ul>
+  <div id="cadSitesView">
+    <h1 class="title">CAD 도면</h1>
+    <p class="muted">현장을 누르면 그 현장의 CAD 폴더(DWG·DXF 만)가 열립니다. 확대·도면층·거리·면적·좌표를 보고, <b>도각 추적</b>으로 PDF 를 만들어 도면 탭 현장 폴더에 올릴 수 있습니다.</p>
+    <input id="cadSitesSearch" class="list-search" type="search" placeholder="현장 검색 (일부·초성 ㄷㅅ·여러 단어)" aria-label="현장 검색" autocomplete="off" enterkeyhint="search">
+    <ul id="cadSites" class="list"></ul>
+    <button id="cadOpenBtn" type="button" class="btn outline wide">📂 폰에 있는 DWG·DXF 바로 열기</button>
+    <input id="cadFile" type="file" hidden>
+    <h2 class="section">최근에 연 도면</h2>
+    <ul id="cadRecent" class="list"></ul>
+  </div>
+
+  <div id="cadFilesView" class="hidden">
+    <div class="bar-top">
+      <button id="cadBackSites" type="button" class="icon-btn" aria-label="현장 목록으로">
+        <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+      </button>
+      <h1 id="cadSiteName" class="title">CAD 폴더</h1>
+    </div>
+    <div class="drawing-tools">
+      <p id="cadFilesNote" class="muted" role="status"></p>
+      <button id="cadUploadBtn" type="button" class="btn outline small">＋ DWG·DXF 올리기</button>
+      <input id="cadUploadFile" type="file" hidden>
+    </div>
+    <input id="cadFileSearch" class="list-search" type="search" placeholder="도면 검색 (이름 일부·초성)" aria-label="CAD 도면 검색" autocomplete="off" enterkeyhint="search">
+    <ul id="cadFileList" class="list"></ul>
+  </div>
 </main>
 
 <div id="cadViewer" class="cad-viewer hidden" role="dialog" aria-modal="true" aria-label="CAD 도면 보기">
@@ -633,22 +654,23 @@
   </a>
 </nav>
 
-<script src="config.js?v=65"></script>
-<script src="weather.js?v=65"></script>
-<script src="entries.js?v=65"></script>
-<script src="push.js?v=65"></script>
-<script src="outbox.js?v=65"></script>
-<script src="phonecopy.js?v=65"></script>
-<script src="pinhistory.js?v=65"></script>
-<script src="perf.js?v=65"></script>
-<script src="search.js?v=65"></script>
-<script src="busy.js?v=65"></script>
-<script src="drawing.js?v=65"></script>
-<script src="cad-engine.js?v=65"></script>
-<script src="cad.js?v=65"></script>
-<script src="gps.js?v=65"></script>
-<script src="gallery.js?v=65"></script>
-<script src="camera.js?v=65"></script>
-<script src="app.js?v=65"></script>
+<script src="config.js?v=66"></script>
+<script src="weather.js?v=66"></script>
+<script src="entries.js?v=66"></script>
+<script src="push.js?v=66"></script>
+<script src="outbox.js?v=66"></script>
+<script src="phonecopy.js?v=66"></script>
+<script src="pinhistory.js?v=66"></script>
+<script src="perf.js?v=66"></script>
+<script src="search.js?v=66"></script>
+<script src="busy.js?v=66"></script>
+<script src="drawing.js?v=66"></script>
+<script src="cad-engine.js?v=66"></script>
+<script src="cad.js?v=66"></script>
+<script src="cadfiles.js?v=66"></script>
+<script src="gps.js?v=66"></script>
+<script src="gallery.js?v=66"></script>
+<script src="camera.js?v=66"></script>
+<script src="app.js?v=66"></script>
 </body>
 </html>

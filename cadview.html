@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CAD 보기</title>
+<!-- PC 프로그램 CAD 탭의 보기 창(iframe). PC 가 127.0.0.1 에서 이 폴더와 받아 둔 도면을 내주고, 주소의 ?src= 로 도면을 받는다.
+     엔진은 폰과 같다: libredwg(cad-worker.js, DWG→DXF) + CADPocket(cadcraft wasm). 진행 상황은 부모 창(PC 화면)에 postMessage 로 알린다 -->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #22282F; }
+  #cv { display: block; width: 100%; height: 100%; outline: none; }
+  #err { position: absolute; inset: 0; display: none; place-items: center; padding: 24px; color: #E6ECF7; font: 600 15px/1.6 "Malgun Gothic", sans-serif; text-align: center; white-space: pre-line; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<p id="err" role="alert"></p>
+<script type="module" src="cadview.js"></script>
+</body>
+</html>

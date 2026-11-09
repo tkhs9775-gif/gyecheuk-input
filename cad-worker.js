@@ -19,6 +19,12 @@ self.onmessage = async ({ data }) => {
       dxf = isDxf ? new Uint8Array(data.buf.slice(0)) : lib.dwg_write_dxf(data.buf);
       say('도면 파일을 읽는 중...');
     }
+    // PC 프로그램 보기 창(cadview.js)은 CADPocket 만 쓰므로 DXF 만 돌려준다(그릴 목록 만들기를 건너뛰어 큰 도면에서 수 초·메모리 절약)
+    if (data.onlyDxf) {
+      if (!dxf?.length) throw new Error('DWG 를 DXF 로 바꾸지 못했습니다. 파일이 손상됐거나 지원하지 않는 버전일 수 있습니다.');
+      self.postMessage({ ok: true, dxf }, [dxf.buffer]);
+      return;
+    }
     const ptr = lib.dwg_read_data(data.buf, isDxf ? Dwg_File_Type.DXF : Dwg_File_Type.DWG);
     if (ptr == null) throw new Error('도면 파일을 읽지 못했습니다. 파일이 손상됐거나 지원하지 않는 버전일 수 있습니다.');
     let db;

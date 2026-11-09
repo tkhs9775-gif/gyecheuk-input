@@ -793,3 +793,7 @@ body.cad-open { overflow: hidden; }
 /* CADPocket(cadcraft wasm) 화면: CAD 뷰어 위에 꽉 차게. 캔버스 크기는 eframe 이 맞춘다 */
 .cad-pocket { position: fixed; inset: 0; z-index: 31; background: #22282F; padding-bottom: env(safe-area-inset-bottom); }
 #cadPocketCanvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+/* CAD 탭 현장 폴더(cadfiles.js): 하위 폴더 이름 줄 */
+.list li.cad-folder-head { padding: 10px 6px 4px; font-size: 13px; font-weight: 700; color: var(--muted, #64748B); background: none; border: 0; box-shadow: none; }
+#cadSites { margin-bottom: 12px; }

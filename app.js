@@ -46,7 +46,7 @@ const state = {
   ready: false,   // 설정을 받아 화면을 그릴 수 있게 된 뒤에만 주소(#)에 따라 화면을 바꾼다
 };
 
-const FIELD_LABELS = { date: '날짜', site: '현장', user: '측정자', type: '계측기 종류', id: '계측기 ID', place: '위치', unit: '단위', value: '측정값', issue: '이상 상태', memo: '메모', photo: '사진', files: '파일', clientId: '입력 번호', fileId: '파일', subdir: '폴더', data: '야장 메모(너무 큼)', base64: '이미지' };
+const FIELD_LABELS = { date: '날짜', site: '현장', user: '측정자', type: '계측기 종류', id: '계측기 ID', place: '위치', unit: '단위', value: '측정값', issue: '이상 상태', memo: '메모', photo: '사진', files: '파일', clientId: '입력 번호', fileId: '파일', subdir: '폴더', data: '야장 메모(너무 큼)', base64: '이미지', name: '파일 이름', size: '파일 크기(80MB 이하)', offset: '이어 받을 위치', token: '올리기 번호' };
 const SERVER_ERRORS = {
   bad_code: '접속 코드가 맞지 않습니다.',
   locked: '시도가 너무 많습니다. 10분 후 다시 해주세요.',
@@ -56,6 +56,7 @@ const SERVER_ERRORS = {
   not_found: '기록을 찾을 수 없습니다. 이미 삭제됐을 수 있습니다.',
   invalid: '입력 내용을 확인해 주세요.',
   server: '서버가 잠시 바쁩니다. 잠시 후 다시 시도해 주세요.',
+  upload_expired: '올리기가 오래 멈춰 처음부터 다시 올려야 합니다. 다시 눌러 주세요.',
   bad_action: '앱과 서버 버전이 맞지 않습니다. 정보 탭에서 새로고침해 주세요.',
 };
 
