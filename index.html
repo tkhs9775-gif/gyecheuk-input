@@ -9,8 +9,8 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=64">
-<link rel="stylesheet" href="theme.css?v=64">
+<link rel="stylesheet" href="style.css?v=65">
+<link rel="stylesheet" href="theme.css?v=65">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -514,6 +514,78 @@
   </div>
 </dialog>
 
+<!-- CAD 탭: 폰에서 DWG·DXF 를 직접 연다(cad.js). 도면 탭의 [도면 추가]는 PDF·JPG 만, DWG 는 여기서 열어 [PDF 만들기]로 도면 탭에 보낸다 -->
+<main id="cad" class="screen hidden">
+  <h1 class="title">CAD 도면 보기</h1>
+  <p class="muted">폰에 있는 DWG·DXF 도면을 바로 엽니다. 확대·도면층·거리·면적·좌표를 보고, <b>도각 추적</b>으로 도면 틀마다 한 장씩 PDF 를 만들어 현장 폴더에 올릴 수 있습니다.</p>
+  <button id="cadOpenBtn" type="button" class="btn primary wide">📂 DWG·DXF 열기</button>
+  <input id="cadFile" type="file" hidden>
+  <h2 class="section">최근에 연 도면</h2>
+  <ul id="cadRecent" class="list"></ul>
+</main>
+
+<div id="cadViewer" class="cad-viewer hidden" role="dialog" aria-modal="true" aria-label="CAD 도면 보기">
+  <header class="pdf-topbar cad-top">
+    <button id="cadClose" type="button" class="icon-btn" aria-label="닫기">
+      <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+    </button>
+    <div class="pdf-title-wrap"><strong id="cadTitle">도면.dwg</strong></div>
+    <div class="cad-top-actions">
+      <button id="cadPocketBtn" type="button" class="pdf-sm-btn hidden" aria-label="CADPocket 화면으로">CP</button>
+      <button id="cadZoomOut" type="button" class="pdf-sm-btn" aria-label="축소">－</button>
+      <button id="cadZoomIn" type="button" class="pdf-sm-btn" aria-label="확대">＋</button>
+      <button id="cadFit" type="button" class="pdf-sm-btn" aria-label="전체 보기">⤢</button>
+      <button type="button" class="pdf-save-btn" data-sheet="pdf">PDF 만들기</button>
+    </div>
+  </header>
+  <div class="cad-stage">
+    <canvas id="cadCanvas"></canvas>
+    <canvas id="cadLoupe" class="cad-loupe hidden" aria-hidden="true"></canvas>
+    <span id="cadLoupeTag" class="cad-loupe-tag"></span>
+    <aside id="cadSheet" class="cad-sheet hidden">
+      <div class="row between"><strong id="cadSheetTitle"></strong><button id="cadSheetClose" type="button" class="close-pin-btn">닫기</button></div>
+      <div id="cadSheetBody"></div>
+    </aside>
+  </div>
+  <p id="cadInfo" class="cad-info" role="status" aria-live="polite"></p>
+  <nav id="cadTools" class="cad-tools" aria-label="CAD 도구">
+    <button type="button" data-tool="pan" aria-pressed="true">✋<span>이동</span></button>
+    <button type="button" data-tool="dist" aria-pressed="false">📏<span>거리</span></button>
+    <button type="button" data-tool="area" aria-pressed="false">⬠<span>면적</span></button>
+    <button type="button" data-tool="id" aria-pressed="false">⌖<span>좌표</span></button>
+    <button type="button" data-tool="pen" aria-pressed="false">✏️<span>펜</span></button>
+    <button id="cadUndo" type="button">↶<span>되돌리기</span></button>
+    <button id="cadAreaDone" type="button" class="hidden cad-done">✔<span>완료</span></button>
+  </nav>
+  <nav class="cad-tools cad-tools2" aria-label="CAD 보기">
+    <button type="button" data-sheet="layers">▤<span>도면층</span></button>
+    <button type="button" data-sheet="find">🔍<span>찾기</span></button>
+    <button type="button" data-sheet="blocks">▦<span>블록</span></button>
+    <button type="button" data-sheet="tags">🔖<span>뷰 태그</span></button>
+    <button type="button" data-sheet="meas">📋<span>기록</span></button>
+    <button id="cadBg" type="button">◐<span>배경</span></button>
+    <label class="cad-snap"><input id="cadSnap" type="checkbox" checked><span>스냅</span></label>
+  </nav>
+</div>
+
+<!-- CADPocket(cadcraft 엔진, wasm) 화면: 도면을 열면 이 화면이 먼저 뜬다 -->
+<div id="cadPocket" class="cad-pocket hidden" role="dialog" aria-modal="true" aria-label="CADPocket 도면 보기">
+  <canvas id="cadPocketCanvas"></canvas>
+</div>
+
+<dialog id="cadSiteDialog" aria-labelledby="cadSiteTitle">
+  <form method="dialog" class="dlg">
+    <h2 id="cadSiteTitle" class="dlg-title">어느 현장에 저장할까요?</h2>
+    <p id="cadSiteMsg" class="muted"></p>
+    <input id="cadSiteSearch" class="list-search" type="search" placeholder="현장 검색 (일부·초성·여러 단어)" aria-label="현장 검색" autocomplete="off" enterkeyhint="search">
+    <ul id="cadSiteList" class="list mlist cad-site-list"></ul>
+    <div class="row">
+      <button id="cadSiteCancel" type="button" class="btn outline">취소</button>
+      <button id="cadSiteOnlyPhone" type="button" class="btn outline grow">클라우드 말고 폰에만</button>
+    </div>
+  </form>
+</dialog>
+
 <main id="info" class="screen hidden">
   <h1 class="title">버전 및 관리자</h1>
   <dl class="card kv">
@@ -548,6 +620,10 @@
     <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
     <span>도면</span>
   </a>
+  <a href="#cad" data-screen="cad">
+    <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20 20 3v17z"/><path d="M8 20 20 8"/><path d="M14 20v-4h4"/></svg>
+    <span>CAD</span>
+  </a>
   <a href="#shot" data-screen="shot" class="cam" aria-label="사진만 찍기">
     <svg aria-hidden="true" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
   </a>
@@ -557,19 +633,22 @@
   </a>
 </nav>
 
-<script src="config.js?v=64"></script>
-<script src="weather.js?v=64"></script>
-<script src="entries.js?v=64"></script>
-<script src="push.js?v=64"></script>
-<script src="outbox.js?v=64"></script>
-<script src="phonecopy.js?v=64"></script>
-<script src="pinhistory.js?v=64"></script>
-<script src="perf.js?v=64"></script>
-<script src="search.js?v=64"></script>
-<script src="drawing.js?v=64"></script>
-<script src="gps.js?v=64"></script>
-<script src="gallery.js?v=64"></script>
-<script src="camera.js?v=64"></script>
-<script src="app.js?v=64"></script>
+<script src="config.js?v=65"></script>
+<script src="weather.js?v=65"></script>
+<script src="entries.js?v=65"></script>
+<script src="push.js?v=65"></script>
+<script src="outbox.js?v=65"></script>
+<script src="phonecopy.js?v=65"></script>
+<script src="pinhistory.js?v=65"></script>
+<script src="perf.js?v=65"></script>
+<script src="search.js?v=65"></script>
+<script src="busy.js?v=65"></script>
+<script src="drawing.js?v=65"></script>
+<script src="cad-engine.js?v=65"></script>
+<script src="cad.js?v=65"></script>
+<script src="gps.js?v=65"></script>
+<script src="gallery.js?v=65"></script>
+<script src="camera.js?v=65"></script>
+<script src="app.js?v=65"></script>
 </body>
 </html>
