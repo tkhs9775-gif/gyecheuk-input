@@ -627,7 +627,7 @@ function renderDrawingNote(counts) {
   const n = counts || viewCounts(buildDrawingGroups().groups);
   const view = drawingState.view;
   const text = {
-    original: n.original ? `원본 도면 ${n.original}개 · 터치하면 전체화면 야장으로 열립니다.` : '아직 이 현장에 올린 도면이 없습니다. [＋ 도면 추가]로 올려 주세요. (PDF·JPG·PNG·DWG·DXF)',
+    original: n.original ? `원본 도면 ${n.original}개 · 터치하면 전체화면 야장으로 열립니다.` : '아직 이 현장에 올린 도면이 없습니다. [＋ 도면 추가]로 올려 주세요. (PDF·JPG)',
     saved: n.saved ? `[다른이름 저장]으로 만든 도면 ${n.saved}개 · 원본별로 모았습니다.` : '아직 [다른이름 저장]한 도면이 없습니다.',
     typed: n.typed ? `[계측기별 PDF]로 만든 도면 ${n.typed}개 · 원본별로 모았습니다.` : '아직 [계측기별 PDF]로 만든 도면이 없습니다.',
   }[view];
@@ -764,15 +764,15 @@ function applyRenamed(renamed, from, to) {
   renderDrawingFiles();
 }
 
-const IMAGE_DRAWING_RE = /\.(jpe?g|png)$/i;
+const IMAGE_DRAWING_RE = /\.jpe?g$/i;
 const PDF_MAX_PAGE_PT = 14400;   // PDF 한 쪽의 최대 가로·세로
 
-// JPG·PNG 도면은 그림 한 장짜리 PDF로 바꿔 올린다. 이후 보기·동그라미·저장·내 위치는 PDF 도면과 똑같이 돈다
+// JPG 도면은 그림 한 장짜리 PDF로 바꿔 올린다. 이후 보기·동그라미·저장·내 위치는 PDF 도면과 똑같이 돈다
 async function imageToPdfBase64(file) {
   const PDFLib = await ensurePdfLib();
   const doc = await PDFLib.PDFDocument.create();
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const img = /\.png$/i.test(file.name) ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+  const img = await doc.embedJpg(bytes);
   const { width, height } = img.scale(Math.min(1, PDF_MAX_PAGE_PT / Math.max(img.width, img.height)));
   doc.addPage([width, height]).drawImage(img, { x: 0, y: 0, width, height });
   return uint8ToBase64(await doc.save());
@@ -780,25 +780,8 @@ async function imageToPdfBase64(file) {
 
 async function uploadDrawingPdf(file) {
   if (!file) return;
-  if (CAD_DRAWING_RE.test(file.name)) {   // DWG·DXF → 시트별 PNG → 아래 JPG·PNG 도면과 같은 길
-    if (file.size === 0) { alert('비어 있는 파일입니다. 다른 파일을 골라 주세요.'); return; }
-    const note = $('drawingFolderNote'), btn = $('btnUploadDrawing');
-    btn.disabled = true;
-    let pngs;
-    try {
-      pngs = await cadToImageFiles(file, (t) => { note.textContent = t; });
-    } catch (err) {
-      alert(`DWG·DXF 도면을 열지 못했습니다: ${friendlyError(err, '파일을 읽지 못했습니다.')}`);
-      renderDrawingFiles();
-      return;
-    } finally {
-      btn.disabled = false;
-    }
-    for (const png of pngs) await uploadDrawingPdf(png);
-    return;
-  }
   const isImage = IMAGE_DRAWING_RE.test(file.name);
-  if (!isImage && !file.name.toLowerCase().endsWith('.pdf')) { alert('PDF·JPG·PNG·DWG·DXF 파일만 도면으로 올릴 수 있습니다.'); return; }
+  if (!isImage && !file.name.toLowerCase().endsWith('.pdf')) { alert('PDF·JPG 파일만 도면으로 올릴 수 있습니다.'); return; }
   if (file.size === 0) { alert('비어 있는 파일입니다. 다른 파일을 골라 주세요.'); return; }
   if (file.size > MAX_DRAWING_BYTES) { alert(`도면 파일은 ${MAX_DRAWING_BYTES / MB}MB 이하만 올릴 수 있습니다. (이 파일 ${fmtSize(file.size)})`); return; }
   const btn = $('btnUploadDrawing');
