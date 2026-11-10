@@ -48,6 +48,7 @@ function perfTrace(kind) {
 // 서버 요청 한 번: api:<action>, 걸린 ms, 보낸·받은 글자 수, 결과(ok·오류 코드·network)
 function perfApi(action, ms, sent, got, result) {
   perfSave('api', { action, at: Date.now(), ms: Math.round(ms), sent, got, result });
+  try { window.errlogApi?.(action, ms, result); } catch { /* 오류 기록(errlog.js)이 없거나 실패해도 그대로 */ }
 }
 
 // 순수 함수: 기록 한 줄을 사람이 읽는 글로

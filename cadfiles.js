@@ -217,4 +217,83 @@ function initCadFiles() {
   $('cadUploadFile').addEventListener('change', (e) => { const f = e.target.files?.[0]; e.target.value = ''; cadUploadPick(f); });
 }
 
+// ---------- CAD 엔진(wasm 2개) 미리 받기 ----------
+// wasm 은 풀린 크기가 합쳐 약 21MB 지만 GitHub Pages 가 gzip 으로 보내 실제 전송은 약 6.4MB(2026-11-10 측정: 3.76MB + 2.66MB, Content-Type application/wasm).
+// 서비스 워커가 vendor/ 를 처음 쓸 때 폰에 저장하므로, 와이파이일 때 한가한 틈에 미리 받아 두면 현장(LTE)에서는 기다리지 않는다.
+// 주소에 ?v= 가 없다: wasm 은 cadpocket.js·libredwg-web.js 가 자기 옆 파일로 찾는다(서비스 워커 저장은 버전별 통이라 번호가 바뀌면 새로 받는다)
+const CAD_WASM = [
+  { name: 'cadpocket', url: 'vendor/cadpocket/cadpocket_bg.wasm', mb: 10.5 },       // mb = 풀린 크기(받는 중 표시용 약값)
+  { name: 'libredwg', url: 'vendor/libredwg/wasm/libredwg-web.wasm', mb: 10.8 },
+];
+const CAD_WARM_MS = 8000;   // 홈이 뜬 뒤 이만큼 기다렸다 받는다(pdf.js 미리 받기(4초)·시작 요청들과 겹치지 않게)
+let cadWasmP = null, cadWasmSink = null;
+
+// 와이파이(또는 유선)이고, 데이터 절약이 꺼져 있고, 속도가 4g 일 때만. 연결 정보가 없는 WebView 는 알 수 없으므로 받지 않는다(보수적)
+function cadWarmAllowed(conn, onLine = true) {
+  if (!conn || onLine === false || conn.saveData) return false;
+  if (conn.type !== 'wifi' && conn.type !== 'ethernet') return false;   // type 이 없거나 cellular 면 LTE 일 수 있다
+  return !conn.effectiveType || conn.effectiveType === '4g';
+}
+
+// 받다 만 파일·컴파일 못 하는 파일을 가리키는 오류인지(그냥 신호 끊김은 해당 없음)
+const cadWasmBroken = (err) => /wasm|webassembly|compile|magic word|Aborted/i.test(String(err?.message ?? err));
+
+async function cadWasmHit(url) {
+  return typeof caches !== 'undefined' && !!(await caches.match(url).catch(() => null));
+}
+
+// 폰에 저장된 wasm 을 지운다(다음에 새로 받게). which 가 없으면 둘 다
+async function cadWasmPurge(which) {
+  cadWasmP = null;
+  if (typeof caches === 'undefined') return;
+  for (const w of CAD_WASM.filter((x) => !which || x.name === which)) {
+    const abs = new URL(w.url, location.href).href;
+    for (const k of await caches.keys()) { try { await (await caches.open(k)).delete(abs); } catch { /* 지우지 못해도 다음 시도에서 다시 받는다 */ } }
+  }
+}
+
+async function cadWasmFetch(onProgress) {
+  const total = CAD_WASM.reduce((s, w) => s + w.mb, 0);
+  let before = 0;
+  for (const w of CAD_WASM) {
+    if (!(await cadWasmHit(w.url))) {
+      const res = await fetch(w.url);
+      if (!res.ok) throw new Error(`도면 엔진 파일을 받지 못했습니다 (${res.status}).`);
+      const chunks = [];
+      let got = 0;
+      const rd = res.body.getReader();
+      for (;;) {
+        const { done, value } = await rd.read();
+        if (done) break;
+        chunks.push(value);
+        got += value.length;
+        onProgress?.(Math.min(before + got / MB, total), total);
+      }
+      if (!WebAssembly.validate(await new Blob(chunks).arrayBuffer())) {   // 받다 끊겨 깨졌으면 저장분을 지우고 알린다
+        await cadSleep(500);   // 서비스 워커가 저장을 마칠 틈을 준 뒤 지운다
+        await cadWasmPurge(w.name);
+        throw new Error('도면 엔진 파일이 깨져서 받았습니다. wasm 을 다시 받아야 합니다.');
+      }
+    }
+    before += w.mb;
+  }
+}
+
+// 엔진을 폰에 받아 둔다. 이미 받는 중이면 그 받기에 합류(중복 금지)하고 진행 표시 함수만 바꾼다
+function cadWasmReady(onProgress) {
+  cadWasmSink = onProgress || null;
+  cadWasmP ??= cadWasmFetch((a, b) => cadWasmSink?.(a, b)).catch((err) => { cadWasmP = null; throw err; });
+  return cadWasmP;
+}
+
+const cadWasmProgressText = (a, b) => `도면 엔진을 받는 중... ${a.toFixed(1)} / ${b.toFixed(1)}MB (처음 한 번)`;
+
+// 앱이 한가할 때 조용히(실패해도 알리지 않는다)
+function cadWarm() {
+  if (cadWasmP || !navigator.serviceWorker?.controller) return;   // 서비스 워커가 없으면 저장되지 않으니 받아도 소용없다
+  if (!cadWarmAllowed(navigator.connection, navigator.onLine)) return;
+  cadWasmReady().catch(() => {});
+}
+
 if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', initCadFiles);
+if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', () => setTimeout(cadWarm, CAD_WARM_MS));

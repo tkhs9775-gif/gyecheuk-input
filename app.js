@@ -97,6 +97,55 @@ function signOut() {
 
 const networkError = (message) => Object.assign(new Error(message), { network: true });
 
+// ---------- 읽기 우회(중계 서버 캐시) ----------
+// 자주 여는 목록은 중계 서버(worker)가 기억했다 바로 준다. 느리거나(WORKER_WAIT_MS) 안 되면 예전처럼 구글 서버에 직접 묻는다. 쓰기는 늘 구글 서버로 직접
+const CACHED_READS = new Set(['config', 'drawing_list', 'cad_list']);   // worker/src/cache.js RULES 와 같다
+const FORGET_ALL = new Set(['add_site', 'remove_site', 'add_user', 'remove_user', 'add_instrument']);
+const FORGET_SITE = new Set(['drawing_upload', 'drawing_rename']);
+const WORKER_WAIT_MS = 2500;
+const WORKER_SKIP_MS = 5 * 60 * 1000;   // 바꿨다는 알림이 실패하면 이 시간(worker 캐시 최장 보관) 동안 구글 서버로만
+let workerSkipUntil = 0;
+let pendingForget = Promise.resolve();
+const readCacheOn = () => typeof READ_CACHE !== 'undefined' && READ_CACHE && typeof PUSH_URL !== 'undefined' && !!PUSH_URL;
+
+async function postJson(url, body, signal) {
+  const res = await fetch(url, { method: 'POST', body, signal });
+  let text = '';
+  let data = null;
+  try { text = await res.text(); data = JSON.parse(text); } catch (e) { if (e.name === 'AbortError') throw e; data = null; }
+  return { res, data, got: text.length };
+}
+
+// worker 답을 WORKER_WAIT_MS 까지 기다리고, 그 안에 안 오거나 실패하면 구글 서버에 직접 묻는다(그사이 worker 답이 먼저 오면 그걸 쓴다)
+async function workerFirst(body, signal, direct) {
+  await pendingForget;   // 방금 바꾼 것을 알리는 중이면 끝난 뒤에 읽는다(내가 올린 도면이 옛 목록에 빠져 보이지 않게)
+  if (Date.now() < workerSkipUntil) return direct();
+  return new Promise((resolve, reject) => {
+    let gas = null;
+    const toGas = () => { if (!gas) { gas = direct(); gas.then(resolve, reject); } };
+    const timer = setTimeout(toGas, WORKER_WAIT_MS);
+    postJson(PUSH_URL + '/read', body, signal)
+      .then((r) => {
+        if (!r.res.ok || !r.data || typeof r.data !== 'object') throw new Error(`worker ${r.res.status}`);
+        clearTimeout(timer);
+        resolve(r);
+      })
+      .catch(() => { clearTimeout(timer); toGas(); });
+  });
+}
+
+// 쓰기에 성공하면 worker 에 그 현장(또는 전부) 목록을 버리라고 알린다
+function forgetReads(action, payload, data) {
+  if (!readCacheOn()) return;
+  let scope = null;
+  if (FORGET_ALL.has(action) || (action === 'cad_upload_chunk' && data.done)) scope = {};   // CAD 조각 요청에는 현장 이름이 없어 전부 버린다(올리기 끝날 때 한 번)
+  else if (FORGET_SITE.has(action)) scope = { site: payload.site };
+  if (!scope) return;
+  pendingForget = fetch(PUSH_URL + '/forget', { method: 'POST', body: JSON.stringify({ code: state.code, ...scope }) })
+    .then((res) => { if (!res.ok) throw new Error(`forget ${res.status}`); })
+    .catch((err) => { console.warn('읽기 캐시 비우기 실패, 잠시 구글 서버로만 읽습니다', err); workerSkipUntil = Date.now() + WORKER_SKIP_MS; });
+}
+
 // One POST per call. A string body keeps it a "simple" request, so the browser skips the CORS preflight Apps Script cannot answer.
 // Network trouble (offline, timeout, non-JSON page) is flagged err.network so callers can keep the input and retry later.
 // The time limit grows with the body size: a slow signal needs longer for photos and survey files.
@@ -110,8 +159,8 @@ async function api(action, payload = {}, opts = {}) {
   let data;
   let got = 0;
   try {
-    const res = await fetch(API_URL, { method: 'POST', body, signal: ctl.signal });
-    try { const text = await res.text(); got = text.length; data = JSON.parse(text); } catch (e) { if (e.name === 'AbortError') throw e; data = null; }
+    const direct = () => postJson(API_URL, body, ctl.signal);
+    ({ data, got } = await (readCacheOn() && CACHED_READS.has(action) ? workerFirst(body, ctl.signal, direct) : direct()));
     // Apps Script answers JSON even for its own errors; an HTML page (sign-in, quota, broken deployment) is not a verdict on the input.
     if (!data || typeof data !== 'object') throw networkError('서버 응답이 올바르지 않습니다(배포 확인).');
   } catch (err) {
@@ -124,6 +173,7 @@ async function api(action, payload = {}, opts = {}) {
   window.perfApi?.(action, performance.now() - t0, body.length, got, data.ok ? 'ok' : String(data.error || 'error'));
   if (data.ok) {
     announceSaved(action, payload, data);
+    forgetReads(action, payload, data);
     return data;
   }
   const err = new Error(SERVER_ERRORS[data.error] ?? '서버 오류');
@@ -1115,6 +1165,15 @@ $('instForm').addEventListener('submit', addInstrument);
 $('shot').addEventListener('submit', saveShot);
 $('instrument').addEventListener('change', updateValueInfo);
 $('perfClear').addEventListener('click', () => { window.perfClear?.(); renderPerfLog(); });
+// 정보 탭 '오류 기록': 펼칠 때만 중계 서버에서 읽는다(errlog.js). 옛 앱 사본에 errlog.js 가 없으면 칸을 숨긴다
+async function renderErrlog() {
+  const box = $('errlogList');
+  box.textContent = '불러오는 중…';
+  try { box.textContent = await window.errlogFetchReport(); } catch { box.textContent = '불러오지 못했습니다. 신호를 확인하세요.'; }
+}
+show($('errlogBox'), typeof window.errlogFetchReport === 'function');
+$('errlogBox').addEventListener('toggle', () => { if ($('errlogBox').open) renderErrlog(); });
+$('errlogReload').addEventListener('click', renderErrlog);
 // 목록 검색(search.js). 옛 앱 사본에 search.js 가 없으면 검색 칸만 숨기고 나머지는 그대로
 if (typeof attachListSearch === 'function') {
   $('instrumentSearch').addEventListener('input', debounce(filterInstruments));

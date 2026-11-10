@@ -3,17 +3,30 @@
 const V = new URL(self.location.href).searchParams.get('v') || '0';
 const CACHE = `shell-${V}`;
 const NET_WAIT_MS = 3000;   // 화면 파일(index.html)을 이만큼 기다려도 안 오면 폰에 저장해 둔 것으로 연다
-const SHELL = [
-  './', 'index.html', 'logo.png', 'mark.png', 'manifest.json',
-  `style.css?v=${V}`, `theme.css?v=${V}`, `brand.css?v=${V}`, `config.js?v=${V}`, `pinhistory.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
-  `perf.js?v=${V}`, `search.js?v=${V}`, `busy.js?v=${V}`, `cad-engine.js?v=${V}`, `cad.js?v=${V}`, `cadfiles.js?v=${V}`, `cad-worker.js?v=${V}`, `outbox.js?v=${V}`, `phonecopy.js?v=${V}`, `drawing.js?v=${V}`, `gps.js?v=${V}`, `gallery.js?v=${V}`, `camera.js?v=${V}`, `app.js?v=${V}`,
+// 핵심 파일: 앱이 열리는 데 꼭 필요하다(index.html이 부르고 app.js가 바로 쓰는 것). 하나라도 못 받으면 설치를 멈춘다 → 옛 화면이 그대로 남는다.
+const CORE = [
+  './', 'index.html',
+  `style.css?v=${V}`, `theme.css?v=${V}`, `brand.css?v=${V}`, `config.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
+  `outbox.js?v=${V}`, `drawing.js?v=${V}`, `phonecopy.js?v=${V}`, `pinhistory.js?v=${V}`, `perf.js?v=${V}`, `busy.js?v=${V}`,
+  `gps.js?v=${V}`, `gallery.js?v=${V}`, `camera.js?v=${V}`, `app.js?v=${V}`,
 ];
+// 나머지: 못 받아도 설치는 진행한다(파일 하나 때문에 전원이 옛 화면에 묶이지 않게). 안 받아진 것은 처음 쓸 때 받아 저장한다(아래 fetch).
+// 앱이 이 파일들 없이도 열리게 만들어져 있다(app.js가 typeof 로 확인). 목록은 tests/sw-shell.test.js 가 index.html 과 맞는지 검사한다
+const LATER = [
+  'logo.png', 'mark.png', 'manifest.json',
+  `search.js?v=${V}`, `errlog.js?v=${V}`, `cad-engine.js?v=${V}`, `cad.js?v=${V}`, `cadfiles.js?v=${V}`, `cad-worker.js?v=${V}`,
+];
+const SHELL = [...CORE, ...LATER];
 
 // 설치할 때는 브라우저 캐시를 거치지 않고 새로 받는다: 묵은 index.html이 옛 ?v= 파일을 가리키면 오프라인에서 앱이 열리지 않는다
+// cache.add 는 404 같은 실패 응답이면 거절한다. 핵심은 하나라도 거절되면 설치 실패, 나머지는 결과를 기다리되 실패는 넘어간다
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE)
-      .then((cache) => cache.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+      .then((cache) => {
+        const add = (u) => cache.add(new Request(u, { cache: 'reload' }));
+        return Promise.all(CORE.map(add)).then(() => Promise.allSettled(LATER.map(add)));
+      })
       .then(() => self.skipWaiting()),
   );
 });
@@ -32,8 +45,9 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET' || url.origin !== self.location.origin) return;
 
   // vendor/(pdf.js 등 큰 라이브러리)는 SHELL에 넣지 않는다: 설치 때 다 받으면 첫 설치가 무거워진다.
-  // 대신 처음 쓸 때 받아서 저장해 두고(지연 캐시), 그 뒤로는 저장분을 먼저 쓴다. 주소에 ?v= 가 있어 번호가 바뀌면 새로 받는다
-  if (url.pathname.includes('/vendor/')) {
+  // ?v= 가 붙은 파일은 번호가 바뀌면 주소가 달라지므로 저장분을 먼저 쓴다. 설치 때 못 받은 LATER 파일도 여기서 처음 쓸 때 받는다.
+  // 둘 다 저장분이 없으면 받아서 저장해 두고(지연 캐시), 그 뒤로는 저장분을 먼저 쓴다
+  if (url.pathname.includes('/vendor/') || url.searchParams.has('v')) {
     const got = caches.match(req).then((hit) => (hit ? { res: hit, fresh: false } : fetch(req).then((res) => ({ res, fresh: true }))));
     event.waitUntil(got.then(({ res, fresh }) => {
       if (!fresh || !res.ok || res.headers.get('X-Offline-Copy')) return undefined;   // 앱(APK)이 대신 준 사본은 저장하지 않는다(아래 index.html과 같은 이유)
@@ -41,11 +55,6 @@ self.addEventListener('fetch', (event) => {
       return caches.open(CACHE).then((cache) => cache.put(req, copy));
     }).catch(() => {}));
     event.respondWith(got.then(({ res }) => res));
-    return;
-  }
-  // ?v= 가 붙은 파일은 번호가 바뀌면 주소가 달라지므로 저장분을 먼저 쓴다
-  if (url.searchParams.has('v')) {
-    event.respondWith(caches.match(req).then((hit) => hit || fetch(req)));   // 앱이 대신 준 사본은 cache에 넣지 않으므로 여기도 저장 안 함
     return;
   }
   // 나머지(index.html, 로고 등)는 인터넷이 되면 항상 최신을 받고, 안 되면 저장분을 쓴다.

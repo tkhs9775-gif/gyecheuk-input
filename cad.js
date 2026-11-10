@@ -135,7 +135,15 @@ async function cadOpen(name, buf) {
   busyShow('도면을 여는 중...');
   try {
     // 작업자가 읽기 전에 멈추면(파일 받기 실패 등, 메시지 없음) 새 작업자로 한 번 더
-    const res = await cadParse(name, buf).catch((err) => { if (!err.crash) throw err; busyText('다시 시도하는 중...'); return cadParse(name, buf); });
+    // 엔진 파일(wasm 약 6MB 전송)이 폰에 없으면 먼저 받으며 받은 양을 보여 준다(미리 받는 중이면 거기에 합류). 못 받아도 아래에서 자기 오류를 낸다
+    await cadWasmReady((a, b) => busyText(cadWasmProgressText(a, b))).catch(() => {});
+    const res = await cadParse(name, buf).catch(async (err) => {
+      if (err.crash) { busyText('다시 시도하는 중...'); return cadParse(name, buf); }
+      if (!cadWasmBroken(err)) throw err;
+      await cadWasmPurge('libredwg');   // 깨진 엔진 파일이면 폰 저장분을 지우고 새로 받아 한 번 더
+      await cadWasmReady((a, b) => busyText(cadWasmProgressText(a, b)));
+      return cadParse(name, buf);
+    });
     busyText('화면에 그리는 중...');
     await busyYield();
     Object.assign(cad, {
@@ -810,7 +818,12 @@ const pocketWanted = () => store.get('cad_pocket') !== '0' && !!document.createE
 async function pocketStart() {
   pocketP ??= (async () => {
     const m = await import(`./${POCKET_JS}`);
-    await m.default();
+    try { await m.default(); } catch (err) {
+      if (!cadWasmBroken(err)) throw err;
+      await cadWasmPurge('cadpocket');   // 깨진 엔진 파일이면 폰 저장분을 지우고 새로 받아 한 번 더
+      await cadWasmReady((a, b) => busyText(cadWasmProgressText(a, b)));
+      await m.default();
+    }
     const h = new m.CadPocket();
     await h.start($('cadPocketCanvas'),
       () => $('cadFile').click(),

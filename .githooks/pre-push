@@ -1,0 +1,20 @@
+#!/bin/sh
+# 푸시 전 자동 시험(빠른 단위 시험 + 핵심 화면 시험). 실패하면 푸시를 막는다.
+# 설치(한 번만): web 폴더에서  git config core.hooksPath .githooks
+# 비상 우회: git push --no-verify
+# 필요한 것: web 폴더 바로 위(gyecheuk-cloud)에 run-tests.js 와 tests/ 가 있어야 한다. 없으면 시험 없이 통과시킨다.
+TOP=$(git rev-parse --show-toplevel)
+RUNNER="$TOP/../run-tests.js"
+if [ ! -f "$RUNNER" ]; then
+  echo "[pre-push] $RUNNER 가 없어 시험을 건너뜁니다."
+  exit 0
+fi
+echo "[pre-push] 푸시 전 시험을 돌립니다(약 2~3분). 급하면 취소하고: git push --no-verify"
+if node "$RUNNER" push; then
+  echo "[pre-push] 시험 통과. 푸시합니다."
+  exit 0
+fi
+echo ""
+echo "[pre-push] 시험 실패 — 푸시를 막았습니다. 위 '실패' 줄을 먼저 확인하세요."
+echo "[pre-push] 비상으로 그냥 올려야 하면: git push --no-verify"
+exit 1
