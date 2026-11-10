@@ -4,5 +4,5 @@ const PUSH_URL = 'https://gyecheuk-push.gyecheuk-push.workers.dev';
 // 직원 폰에 깔린 앱(APK)이 이 판 번호보다 낮으면 정보 탭에 새 앱 설치 안내를 띄운다. 새 APK를 배포할 때 android/app/build.gradle의 versionCode와 같이 올린다
 const LATEST_APK = 29;
 // 자주 여는 목록(설정·도면 목록·CAD 목록)을 위 중계 서버가 기억했다 바로 주게 한다. 중계 서버에 읽기 캐시를 배포한 뒤 true. false면 예전처럼 구글 서버로만 간다
-const READ_CACHE = false;
+const READ_CACHE = true;
 const API_URL ='https://script.google.com/macros/s/AKfycbyBN3orbfqcmmava2HkYEks2c4bm2Xs46a6bJ2hk9jjPtrdiObksxYxLfdywgQCdKr1Bg/exec';
