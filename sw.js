@@ -4,8 +4,8 @@ const V = new URL(self.location.href).searchParams.get('v') || '0';
 const CACHE = `shell-${V}`;
 const NET_WAIT_MS = 3000;   // 화면 파일(index.html)을 이만큼 기다려도 안 오면 폰에 저장해 둔 것으로 연다
 const SHELL = [
-  './', 'index.html', 'logo.png', 'manifest.json',
-  `style.css?v=${V}`, `theme.css?v=${V}`, `config.js?v=${V}`, `pinhistory.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
+  './', 'index.html', 'logo.png', 'mark.png', 'manifest.json',
+  `style.css?v=${V}`, `theme.css?v=${V}`, `brand.css?v=${V}`, `config.js?v=${V}`, `pinhistory.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
   `perf.js?v=${V}`, `search.js?v=${V}`, `busy.js?v=${V}`, `cad-engine.js?v=${V}`, `cad.js?v=${V}`, `cadfiles.js?v=${V}`, `cad-worker.js?v=${V}`, `outbox.js?v=${V}`, `phonecopy.js?v=${V}`, `drawing.js?v=${V}`, `gps.js?v=${V}`, `gallery.js?v=${V}`, `camera.js?v=${V}`, `app.js?v=${V}`,
 ];
 

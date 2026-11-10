@@ -1,0 +1,168 @@
+/* B안 디자인 층 (화면 v68, 2026-11-10) — style.css·theme.css 위에 얹는다. 빼면(index.html·sw.js의 brand.css 한 줄) 옛 모양으로 돌아간다.
+   기준: 시작 화면 회사 로고 색. 파랑 #357FC9(K 마크) · 남색 #192B54(영문) · 회색 #999999(한글).
+   흰 글자를 얹는 버튼·파랑 글자는 #2B6FB3(흰 바탕 5.2:1). 로고 파랑 #357FC9 위 흰 글자는 4.2:1이라 큰 글자(타일 제목)·아이콘·띠에만 쓴다.
+   블랙 테마는 theme.css 값(html[data-theme="dark"], 더 강한 선택자)이 그대로 이긴다. 여기서는 머리띠·아래 메뉴처럼 새로 생긴 면만 다크 값을 따로 준다. */
+
+:root {
+  --brand: #357FC9; --navy: #192B54; --head: #192B54;
+  --bg: #F4F7FB; --card: #FFFFFF; --text: #192B54; --muted: #5B6478; --line: #E3E9F2;
+  --accent: #2B6FB3; --chip: #E6F0FA; --err: #B3261E; --err-bg: #FBE7E5;
+}
+html[data-theme="dark"] { --brand: #2D68FA; --head: #101A30; --navy: #E6EBF5; }
+
+/* ---------- 머리띠(남색 띠): 홈 · 하위 화면(.bar-top) · 탭 첫 화면 · 접속 ---------- */
+.screen > .hero,
+.screen > .bar-top,
+#drawingSitesView > .bar-top, #drawingFilesView > .bar-top,
+#cadSitesView > .bar-top, #cadFilesView > .bar-top {
+  margin: calc(-16px - env(safe-area-inset-top)) -16px 16px;
+  padding: calc(14px + env(safe-area-inset-top)) 16px 18px;
+  border-radius: 0 0 24px 24px;
+  background: var(--head);
+  color: #FFF;
+}
+.screen > .bar-top,
+#drawingSitesView > .bar-top, #drawingFilesView > .bar-top,
+#cadSitesView > .bar-top, #cadFilesView > .bar-top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.bar-top .title, .hero .title { flex: 1; min-width: 0; color: #FFF; font-size: 19px; line-height: 1.3; overflow-wrap: anywhere; }
+.bar-top .icon-btn, .hero .icon-btn.gear { flex: none; width: 44px; height: 44px; border: 0; border-radius: 22px; background: rgba(255, 255, 255, .12); color: #FFF; }
+.bar-top > .muted, .bar-top > .weather-line { flex: 1 0 100%; margin: 0; color: rgba(255, 255, 255, .78); font-size: 13px; line-height: 1.5; }
+.bar-top > .muted b { color: #FFF; }
+.bar-top > .seg { flex: 1 0 100%; margin: 2px 0 0; border-radius: 12px; background: rgba(255, 255, 255, .1); box-shadow: none; }
+.bar-top > .seg a, .bar-top > .seg button { min-height: 42px; border-radius: 9px; color: rgba(255, 255, 255, .8); }
+.bar-top > .seg a[aria-current="page"], .bar-top > .seg button[aria-pressed="true"] { background: #FFF; color: #192B54; box-shadow: none; }
+html[data-theme="dark"] .bar-top > .seg { background: rgba(255, 255, 255, .08); box-shadow: none; }
+html[data-theme="dark"] .bar-top > .seg a[aria-current="page"], html[data-theme="dark"] .bar-top > .seg button[aria-pressed="true"] { background: var(--accent-fill); color: #FFF; }
+html[data-theme="dark"] .bar-top button.icon-btn { background: rgba(255, 255, 255, .1); }
+
+/* 회사 마크 + KIEUM E&C 작은 글씨 */
+.brand-mark { flex: none; width: 38px; height: 38px; padding: 3px; border-radius: 9px; background: #FFF; }
+.hero-title { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.kicker { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: rgba(255, 255, 255, .6); }
+.hero-row { display: flex; align-items: center; gap: 10px; }
+
+/* ---------- 홈 ---------- */
+.hero { display: flex; flex-direction: column; gap: 12px; }
+.hero .top { display: flex; gap: 8px; }
+.pick { flex: none; min-width: 0; display: flex; flex-direction: column; padding: 6px 12px 4px; border: 1px solid rgba(255, 255, 255, .2); border-radius: 12px; background: rgba(255, 255, 255, .1); cursor: pointer; }
+.pick-site { flex: 1 1 0; }
+.pick-label { font-size: 11px; color: rgba(255, 255, 255, .7); }
+.hero select.pill { width: 100%; max-width: 100%; min-height: 30px; padding: 0; border: 0; border-radius: 0; background: transparent; color: #FFF; font-size: 16px; font-weight: 700; text-overflow: ellipsis; }
+.hero select.pill option { color: #192B54; background: #FFF; }
+.hero select.pill:focus { outline: 0; }
+.pick:focus-within { outline: 3px solid #8DBDF0; outline-offset: 2px; }
+.hero .weather { margin: 0; padding: 0; border: 0; background: transparent; color: #FFF; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.hero .weather .w-main { font-size: 15px; }
+.hero .weather .w-sub { margin: 0; font-size: 12px; color: rgba(255, 255, 255, .75); }
+#home .between { margin-top: 4px; }
+#home .between .title { font-size: 20px; }
+
+.tile { flex-direction: row; align-items: center; justify-content: flex-start; gap: 14px; min-height: 84px; margin-top: 12px; padding: 16px 18px; border-radius: 16px; background: linear-gradient(135deg, #357FC9, #2B6FB3); box-shadow: 0 6px 16px rgba(53, 127, 201, .28); }
+.tile-icon { flex: none; width: 50px; height: 50px; display: grid; place-items: center; border-radius: 14px; background: rgba(255, 255, 255, .18); }
+.tile-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tile-text b { font-size: 20px; }
+.tile-text small { font-size: 13px; font-weight: 500; }
+.tile-chev { flex: none; }
+
+/* ---------- 접속 화면 ---------- */
+.gate-hero {
+  margin: calc(-16px - env(safe-area-inset-top)) -16px 20px;
+  padding: calc(48px + env(safe-area-inset-top)) 24px 40px;
+  border-radius: 0 0 32px 32px;
+  background: var(--head);
+  color: #FFF;
+}
+.gate-mark { width: 76px; height: 76px; padding: 6px; border-radius: 18px; background: #FFF; box-shadow: 0 6px 18px rgba(0, 0, 0, .25); animation: logo-in .6s cubic-bezier(.2, .7, .2, 1) both; }
+.gate-badge { background: rgba(53, 127, 201, .35); color: #FFF; }
+.gate-hero .title { color: #FFF; font-size: 24px; }
+.gate-hero .muted { color: rgba(255, 255, 255, .78); }
+@media (prefers-reduced-motion: reduce) { .gate-mark { animation: fade-only .4s ease-out both; } }
+
+/* ---------- 시작 화면 ---------- */
+.splash-rule, .splash-bar span { background: var(--brand); }
+
+/* ---------- 칸 · 카드 · 목록 ---------- */
+.card { border-color: var(--line); border-radius: 14px; padding: 16px; }
+.label { font-size: 13px; font-weight: 700; }
+input[type="text"], input[type="password"], input[type="date"], input[type="search"], select#instrument, select#shotSite, .list-search { border-color: var(--line); border-radius: 12px; }
+input[type="text"], input[type="password"], input[type="date"] { min-height: 52px; }
+.select-card { border-radius: 12px; }
+#valueCard { border: 2px solid var(--brand); box-shadow: 0 4px 16px rgba(53, 127, 201, .12); }
+#value, .multi input { border-bottom-color: var(--brand); }
+#prev { padding: 8px 12px; border-radius: 10px; background: var(--chip); }
+#prev:empty { display: none; }
+
+.list li { border-color: var(--line); border-radius: 14px; padding: 12px 14px; }
+.list .meta b { font-size: 17px; }
+.list .meta small { font-size: 13px; }
+.list .val { font-size: 20px; color: var(--text); }
+.list li.folder { background: var(--chip); }
+.section { margin: 22px 4px 8px; font-size: 15px; font-weight: 700; color: var(--text); }
+
+/* ---------- 칩 ---------- */
+.chips button { min-height: 44px; padding: 0 16px; border-color: var(--line); border-radius: 22px; font-size: 15px; }
+.chips button[aria-pressed="true"] { border-color: #192B54; background: #192B54; color: #FFF; }
+.issue-chips button.warn[aria-pressed="true"] { border-color: var(--err); background: var(--err); color: #FFF; }
+
+/* ---------- 버튼 ---------- */
+.btn { min-height: 52px; border-radius: 12px; font-size: 16px; }
+.btn.small { min-height: 44px; font-size: 15px; }
+.btn.primary { border-color: var(--accent); background: var(--accent); box-shadow: 0 3px 10px rgba(43, 111, 179, .25); }
+.btn.outline { border-color: var(--line); color: var(--text); }
+.btn.danger { border-color: #F2C4BF; color: var(--err); }
+input[type="file"]::file-selector-button { border-color: var(--accent); border-radius: 10px; color: var(--accent); }
+.keep input { accent-color: var(--accent); }
+.bar-bottom { box-shadow: 0 -4px 12px rgba(25, 43, 84, .06); }
+
+/* ---------- 아래 메뉴: 남색 띠, 고른 칸은 흰 글자 + 파랑 점, 카메라는 파랑 원 ---------- */
+#tabbar { background: var(--head); border-top: 0; }
+#tabbar a { color: rgba(255, 255, 255, .62); }
+#tabbar a[aria-current="page"] { color: #FFF; }
+#tabbar a:not(.cam)::after { content: ""; width: 5px; height: 5px; border-radius: 3px; background: transparent; }
+#tabbar a[aria-current="page"]:not(.cam)::after { background: var(--brand); }
+#tabbar a.cam { color: #FFF; }
+#tabbar a.cam svg, #tabbar a.cam[aria-current="page"] svg { box-sizing: content-box; width: 26px; height: 26px; margin: 0; padding: 13px; border-radius: 50%; background: var(--brand); box-shadow: 0 4px 12px rgba(53, 127, 201, .35); }
+#tabbar a.cam[aria-current="page"] svg { outline: 2px solid #FFF; outline-offset: 0; }
+html[data-theme="dark"] #tabbar { background: var(--head); border-top-color: var(--hairline); }
+
+/* ---------- 확인 창: 아래에서 올라오는 판 ---------- */
+dialog { width: 100%; max-width: 520px; margin: auto auto 0; border-radius: 24px 24px 0 0; max-height: 92vh; max-height: 92dvh; padding-bottom: env(safe-area-inset-bottom); }
+dialog::backdrop { background: rgba(14, 24, 48, .6); }
+dialog[open] { animation: sheet-up .28s cubic-bezier(.32, .72, 0, 1) both; }
+.dlg { padding: 12px 18px 20px; }
+.dlg::before { content: ""; display: block; width: 40px; height: 4px; margin: 0 auto 14px; border-radius: 2px; background: #C9D2DF; }
+.dlg-title { font-size: 20px; }
+@keyframes sheet-up { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { dialog[open] { animation: none; } }
+
+/* ---------- 도면 보기(PDF 야장): 남색 위 줄, 밝은 아래 도구 줄 ---------- */
+.pdf-topbar { background: #192B54; }
+.pdf-sm-btn { border: 0; border-radius: 9px; background: rgba(255, 255, 255, .1); }
+.pdf-sm-btn[aria-pressed="true"] { background: var(--brand); }
+.pdf-save-btn { border-radius: 10px; background: var(--accent); }
+.pdf-stage-wrap { background: #DDE3EC; }
+.pdf-fab-group { background: var(--card); border-top: 1px solid var(--line); }
+.pin-legend-item { border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--text); box-shadow: none; }
+.pin-legend-item[aria-pressed="true"] { border-color: #192B54; background: #192B54; color: #FFF; }
+.circle-pin-fab, .pdf-tool-fab { flex: 1 1 0; justify-content: center; height: 48px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--card); color: var(--text); box-shadow: none; }
+.circle-pin-fab[aria-pressed="true"], .pdf-tool-fab[aria-pressed="true"] { transform: none; border-color: var(--accent); background: var(--accent); color: #FFF; }
+.pin-memo-box { border: 0; border-radius: 18px; }
+.gps-panel { background: #24366E; }
+/* 다크: 위 줄은 블랙, 아래 줄·버튼은 theme.css 값(더 강한 선택자)이 이긴다 */
+html[data-theme="dark"] .pdf-sm-btn[aria-pressed="true"] { background: var(--accent-fill); }
+
+/* ---------- CAD 보기: 위 줄 남색, 고른 도구 파랑 ---------- */
+.cad-top { background: #192B54; }
+.cad-tools button[aria-pressed="true"] { background: var(--accent); }
+html[data-theme="dark"] .cad-top { background: #0E131D; }
+html[data-theme="dark"] .issue-chips button.warn[aria-pressed="true"] { border-color: var(--err); background: var(--err-bg); color: var(--err); }
+/* 계측기 번호 창은 가운데 그대로: 도면을 찍은 손가락 자리 클릭 처리(drawing.js swallowNextClick)와
+   tests/ui-drawing-realtouch.js 가 검증한 배치를 바꾸지 않는다 */
+#pinNumDialog { width: min(92vw, 488px); margin: auto; border-radius: 24px; padding-bottom: 0; animation: none; }
+#pinNumDialog .dlg { padding: 20px; }
+#pinNumDialog .dlg::before { display: none; }
+/* 확인 창의 숫자 칸(입력 수정 값 1·2·3 등): 다른 입력 칸과 같은 모양 */
+.field input[type="number"] { width: 100%; min-height: 52px; padding: 0 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+html[data-theme="dark"] .field input[type="number"] { background: var(--field); border-color: var(--field-line); }
+/* 도면 보기·지도·CAD 위 줄의 뒤로/닫기 버튼: 머리띠 버튼과 같은 반투명 원 */
+.pdf-topbar .icon-btn { border: 0; background: rgba(255, 255, 255, .12); color: #FFF; }
