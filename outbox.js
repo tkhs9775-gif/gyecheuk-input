@@ -36,6 +36,7 @@ async function runStore(mode, fn) {
 
 const outboxPut = (item) => runStore('readwrite', (s) => s.put(item));
 const outboxDelete = (id) => runStore('readwrite', (s) => s.delete(id));
+const outboxGet = (id) => runStore('readonly', (s) => s.get(id));
 const outboxAll = async () => (await runStore('readonly', (s) => s.getAll())).sort((a, b) => a.createdAt - b.createdAt);
 
 // 서버가 입력 자체를 거부한 것: 다시 보내도 결과가 같으므로 바로 실패로 표시한다
@@ -72,20 +73,42 @@ function notifySent(item, data) {
   try { onOutboxSent(item, data); } catch (err) { console.warn('보낸 뒤 처리 실패', err); }
 }
 
+// 보내기 직전 화면이 항목을 고칠 기회(도면: 같은 이름 저장본과 합치기). 훅(beforeOutboxSend)은 drawing.js 가 정의한다. 실패하면 던진다(보내지 않음)
+async function prepareForSend(item) {
+  if (typeof beforeOutboxSend !== 'function') return item;
+  return (await beforeOutboxSend(item)) || item;
+}
+
+// 같은 도면(현장·폴더·이름)이 아직 보관함에 있으면 그 옛 항목은 지운다: 새 항목이 그 뒤의 값까지 다 담고 있고, 같은 이름이라 서버에서도 덮어쓴다
+function supersedes(a, b) {
+  if (a.kind !== 'drawing' || b.kind !== 'drawing' || a.id === b.id) return false;
+  const fa = a.payload?.file || {};
+  const fb = b.payload?.file || {};
+  return a.payload?.site === b.payload?.site && fa.subdir === fb.subdir && fa.name === fb.name;
+}
+async function dropSuperseded(item) {
+  if (item.kind !== 'drawing') return;
+  try {
+    for (const old of await outboxAll()) if (supersedes(item, old)) await outboxDelete(old.id);
+  } catch (err) { console.warn('보관함 옛 도면 정리 실패', err); }
+}
+
 // 바로 보내 보고, 신호 문제로 못 보내면 이 폰에 보관한다. 'sent' 또는 'queued'를 돌려주고,
 // 서버가 거부한 경우(입력 오류 등)는 그대로 던져서 화면이 고치게 한다.
 // background: 사진·파일처럼 수십 초 걸리는 저장은 보관함에 먼저 넣고 바로 'background'를 돌려준다. 전송은 보관함이 뒤에서 한다
 // (앱을 닫아도 다음에 열 때 이어서 보낸다. 서버가 거부하면 맨 위 줄에 '전송하지 못한 입력'으로 남는다)
 async function submitOrQueue(req, background = false) {
-  const item = { ...req, createdAt: Date.now(), tries: 0, state: 'wait' };
+  let item = { ...req, createdAt: Date.now(), tries: 0, state: 'wait' };
   // 보관함(IndexedDB)을 못 쓰는 폰이면 예전처럼 기다려서 보낸다. 신호가 없으면 아래에서 'queued'
   if (background && navigator.onLine !== false && await outboxPut(item).then(() => true, () => false)) {
+    await dropSuperseded(item);
     renderOutbox();
     flushOutbox();
     return 'background';
   }
   if (navigator.onLine !== false) {
     try {
+      item = await prepareForSend(item);
       const data = await api(item.action, await requestBody(item));
       notifySent(item, data);
       return 'sent';
@@ -98,6 +121,7 @@ async function submitOrQueue(req, background = false) {
   } catch {
     throw new Error('이 폰에 임시 보관하지 못했습니다. 신호가 잡히는 곳에서 다시 저장해 주세요.');
   }
+  await dropSuperseded(item);
   renderOutbox();
   return 'queued';
 }
@@ -124,8 +148,11 @@ async function doFlush() {
   let sent = 0;
   let items;
   try { items = (await outboxAll()).filter((i) => i.state !== 'failed'); } catch { return 0; }
-  for (const item of items) {
+  for (let item of items) {
     try {
+      if (!(await outboxGet(item.id).catch(() => item))) continue;   // 이번 차례 도중 새 저장본으로 바뀌어 지워진 항목
+      const ready = await prepareForSend(item);
+      if (ready !== item) { item = ready; await outboxPut(item).catch(() => {}); }   // 합친 내용을 남겨 둔다(보내다 끊겨도 다음에 그대로)
       const data = await api(item.action, await requestBody(item));
       await outboxDelete(item.id);
       sent += 1;
@@ -240,4 +267,4 @@ function initOutbox() {
   renderOutbox();
 }
 
-if (typeof module !== 'undefined') module.exports = { classifyFailure, netBarContent, outboxItemText, MAX_SERVER_TRIES };
+if (typeof module !== 'undefined') module.exports = { classifyFailure, netBarContent, outboxItemText, supersedes, MAX_SERVER_TRIES };

@@ -7,10 +7,11 @@
 //    OCR 판독으로 글씨체를 알아보고 텍스트 형태로 자동 변환해 메모에 넣어줌
 // 5) 진짜 야장처럼 도면 위에 바로 자유 펜 필기도 가능하며 클라우드와 기기에 저장됨
 
-// pdf.js(3.11.174)는 CDN 대신 앱 안(web/vendor/)에 둔다: 서비스 워커가 폰에 저장해 두므로 탭을 열 때마다 1.4MB를 내려받지 않고, 신호 없는 현장에서도 도면이 열린다
+// pdf.js(4.10.38 legacy 빌드)는 CDN 대신 앱 안(web/vendor/)에 둔다: 서비스 워커가 폰에 저장해 두므로 탭을 열 때마다 1.8MB를 내려받지 않고, 신호 없는 현장에서도 도면이 열린다.
+// 4.x 는 ES 모듈(.mjs)뿐이라 import() 로 읽는다. 이름은 .js 로 둔다: APK 의 오프라인 응답(MainActivity.mimeOf)이 .mjs 를 JS 로 알려 주지 않아서
 const DRAWING_BUILD = (typeof document !== 'undefined' && document.currentScript && new URL(document.currentScript.src).searchParams.get('v')) || '-';
-const PDFJS_URL = `vendor/pdf.min.js?v=${DRAWING_BUILD}`;
-const PDFJS_WORKER = `vendor/pdf.worker.min.js?v=${DRAWING_BUILD}`;
+const PDFJS_URL = `vendor/pdf4.min.js?v=${DRAWING_BUILD}`;
+const PDFJS_WORKER = `vendor/pdf4.worker.min.js?v=${DRAWING_BUILD}`;
 const TESSERACT_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const PDFLIB_CDN = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js';
 const WEEKDAYS_KO = ['일', '월', '화', '수', '목', '금', '토'];
@@ -54,10 +55,21 @@ async function ensureLib(src, globalName, integrity = '') {
   return window[globalName];
 }
 
-async function ensurePdfJs() {
-  const lib = await ensureLib(PDFJS_URL, 'pdfjsLib');
-  lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
-  return lib;
+let pdfJsLoad = null;
+function ensurePdfJs() {
+  if (!pdfJsLoad) {
+    pdfJsLoad = import(new URL(PDFJS_URL, document.baseURI).href).then((lib) => {
+      if (!lib?.getDocument) throw new Error('도면 기능 파일이 올바르지 않습니다. 정보 탭에서 새로고침해 주세요.');
+      lib.GlobalWorkerOptions.workerSrc = new URL(PDFJS_WORKER, document.baseURI).href;
+      return lib;
+    }, () => {
+      pdfJsLoad = null;   // 실패하면 다음에 다시 받는다
+      throw new Error(navigator.onLine === false
+        ? '신호가 없어 도면 기능 파일을 내려받지 못했습니다. 신호가 잡히면 다시 열어 주세요.'
+        : '도면 기능 파일을 내려받지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    });
+  }
+  return pdfJsLoad;
 }
 
 // 앱을 연 뒤 한가할 때 pdf.js 본체와 워커 파일을 미리 받아 둔다(app.js 가 부른다): 도면 탭을 처음 눌러도 기다리지 않고, 서비스 워커가 그 김에 폰에 저장한다
@@ -2239,18 +2251,14 @@ async function doSaveDrawingNotes(showAlert) {
   const phoneFiles = () => (pdfBase64 ? [{ name: newFileName, base64: pdfBase64, folder: subdir }] : []);
 
   try {
-    // PDF 만들기(pdf-lib 받기 → 문서 열기 → 동그라미 그려 넣기)는 서버 확인(아래 합치기, 왕복 1.5~3초)과 나란히 돌린다.
-    // 합치기로 메모가 바뀌는 드문 경우에만 새 문서로 다시 만든다(문서에 그려 넣으므로 같은 문서를 두 번 쓰면 두 겹이 된다)
+    // PDF 만들기(pdf-lib 받기 → 문서 열기 → 동그라미 그려 넣기). 같은 이름 저장본 확인(서버 왕복 1.5~3초)은 여기서 기다리지 않고
+    // 보관함이 올리기 직전에 한다(beforeOutboxSend) — 버튼은 PDF 를 만든 뒤 바로 끝난다
     const bytes = drawingState.rawPdfBytes;
-    const build = (notes) => (bytes ? buildAnnotatedPdfBase64(null, null, notes, tr).catch((err) => { console.warn('메모 합치기 실패', err); return null; }) : Promise.resolve(null));
     // 메모는 복사본으로 고정: 만드는 동안 더 적은 값이 그림에는 없는데 메모 JSON 에만 들어가는 어긋남을 막는다(그 값은 dirty 가 남아 닫을 때 다시 저장된다)
-    let notesAtBuild = structuredClone(drawingState.notes);
-    let built = build(notesAtBuild);
-    // 계측용 도면이거나 오늘 저장본을 이어 적는 중(여럿이 나눠 적는 날): 다른 폰이 먼저 저장한 같은 이름 저장본이 있으면 그 값을 먼저 합친다(PDF 에 굽기 전에)
-    if ((file.templateOf || stemOf(file.name) === stemOf(newFileName)) && await mergeRivalSave(newFileName, file)) {
-      notesAtBuild = structuredClone(drawingState.notes);
-      built = build(notesAtBuild);
-    }
+    const notesAtBuild = structuredClone(drawingState.notes);
+    const built = bytes ? buildAnnotatedPdfBase64(null, null, notesAtBuild, tr).catch((err) => { console.warn('메모 합치기 실패', err); return null; }) : Promise.resolve(null);
+    // 계측용 도면이거나 오늘 저장본을 이어 적는 중(여럿이 나눠 적는 날): 다른 폰이 먼저 저장한 같은 이름 저장본이 있을 수 있다
+    const rivalCheck = file.templateOf || stemOf(file.name) === stemOf(newFileName);
     // '원본이름_수정날짜(요일한글자).pdf' 로 야장 메모가 합쳐진 새 PDF. 합치기 라이브러리를 못 받으면 원본 그대로 올린다(메모는 서버에 따로 남는다)
     if (bytes) {
       pdfBase64 = await built;
@@ -2269,7 +2277,10 @@ async function doSaveDrawingNotes(showAlert) {
       kind: 'drawing',
       label: `도면 ${newFileName}`,
       payload: { site: drawingState.site, file: { name: newFileName, base64: pdfBase64, replaceSameName: true, subdir, user: $('user')?.value || '', notes: savedNotes } },
-      meta: { site: drawingState.site, familyName, subdir, templateId: file.templateOf ? file.id : '' },
+      meta: {
+        site: drawingState.site, familyName, subdir, templateId: file.templateOf ? file.id : '',
+        rival: rivalCheck ? { fileName: newFileName, excludeId: file.id, bytesId: fullNotes.sourceId, today: todayKst() } : null,
+      },
     }, true);
 
     if (notesVersion === ver) drawingState.dirty = false;
@@ -2353,22 +2364,41 @@ async function fetchRival(callApi, site, fileName, excludeId, check = () => {}) 
     // 남의 저장본이 있는 건 아는데 그 값을 못 받았으면 덮어쓰지 않는다(적은 값은 폰에 남아 다음 저장 때 다시 시도). rival 표시: 닫으며 저장할 때도 알림을 띄운다
     const e = new Error('다른 폰이 먼저 저장한 같은 이름 도면의 메모를 확인하지 못했습니다. 신호가 잡히면 다시 저장해 주세요.');
     e.rival = true;
+    e.network = !!err.network;   // 신호 문제면 보관함이 횟수를 세지 않고 신호가 잡힐 때 다시 한다
     throw e;
   }
 }
 
-async function mergeRivalSave(newFileName, file) {
-  const stillMine = () => { if (drawingState.currentFile !== file) throw new Error('저장하는 사이 다른 도면이 열려 저장을 멈췄습니다. 다시 저장해 주세요.'); };
-  const { rival, theirs } = await fetchRival(api, drawingState.site, newFileName, file.id, stillMine);
-  if (!rival) return false;
-  stillMine();
-  if (!theirs?.updated || !Array.isArray(theirs.data?.pins)) return false;   // 메모 없이 올린 파일(PC 등)이면 합칠 것이 없다
-  const merged = mergeNotesForSave(drawingState.notes, normalizeNotes(theirs.data), todayKst());
-  if (JSON.stringify(merged.pins) === JSON.stringify(drawingState.notes.pins)) return false;   // 달라진 게 없으면 PDF 를 다시 만들 필요 없다
-  drawingState.notes = merged;
-  renderPagePins();
-  updatePageInfo();
-  return true;
+// 보관함(outbox.js)이 도면 업로드를 보내기 직전에 부른다: 같은 이름 저장본을 다른 폰이 먼저 올렸으면 그 오늘 값을 합치고 PDF 를 다시 만든 항목을 돌려준다.
+// 안 하면 replaceSameName 으로 먼저 적은 값이 사라진다. 저장 버튼이 이 왕복(1.5~3초)을 기다리지 않게 여기로 옮겼다.
+// 그쪽 메모를 못 받으면 던진다 → 보관함이 올리지 않고 나중에 다시 한다(덮어쓰지 않음)
+async function beforeOutboxSend(item) {
+  const r = item?.kind === 'drawing' ? item.meta?.rival : null;
+  const sent = item?.payload?.file;
+  if (!r || !sent?.notes) return item;
+  const { rival, theirs } = await fetchRival(api, item.meta.site, r.fileName, r.excludeId);
+  if (!rival || !theirs?.updated || !Array.isArray(theirs.data?.pins)) return item;   // 메모 없이 올린 파일(PC 등)이면 합칠 것이 없다
+  const their = normalizeNotes(theirs.data);
+  const merged = mergeNotesForSave(sent.notes, their, r.today);
+  if (JSON.stringify(merged.pins) === JSON.stringify(sent.notes.pins)) return item;   // 달라진 게 없으면 PDF 를 다시 만들 필요 없다
+  // 그 도면이 아직 열려 있으면 화면에도 합친 값을 보여 준다(저장 대상은 아래 merged)
+  if (drawingState.currentFile?.id === r.excludeId) {
+    drawingState.notes = mergeNotesForSave(drawingState.notes, their, r.today);
+    persistNotesNow();
+    renderPagePins();
+    updatePageInfo();
+  }
+  const bytes = await getCachedPdfBytes(r.bytesId) || await loadPdfBytes(r.bytesId);
+  let base64 = null;
+  try {
+    await ensurePdfLib();
+    base64 = await buildAnnotatedPdfBase64(null, loadPdfForAnnotate(bytes), merged);
+  } catch (err) {
+    console.warn('합친 메모를 PDF 에 굽지 못해 원본 그대로 올림(메모는 서버에 따로 남음)', err);
+    base64 = uint8ToBase64(bytes);
+  }
+  const notes = typeof trimNotesForCell === 'function' ? trimNotesForCell(merged) : merged;
+  return { ...item, payload: { ...item.payload, file: { ...sent, base64, notes } } };
 }
 
 // 순수 함수: 내 메모(mine)에 그쪽 메모(theirs)를 합친다. 내 동그라미는 그대로 두고, 그쪽에만 있는 동그라미는 그쪽이 오늘 값을 적은 것만 더한다
