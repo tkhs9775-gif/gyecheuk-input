@@ -237,7 +237,9 @@ html[data-theme="dark"] .sched-notice .sn-date { color: #FBBF24; }
 .sched-cell .nt { position: absolute; top: 1px; right: 2px; font-size: 10px; line-height: 1; }
 .sd-person { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 16px; color: #FFF; font-size: 15px; font-weight: 800; }
 .sd-person.none { background: var(--chip); color: var(--muted); font-size: 14px; }
-.sd-body { flex: 1; min-width: 0; }
+.sd-body { flex: 1; min-width: 0; cursor: pointer; }
+.sched-edit { margin-right: -6px; color: var(--accent); font-size: 17px; }
+.sched-edit:active { background: var(--chip); color: var(--accent); }
 /* 줄바꿈: 낱말 중간에서 끊지 않는다(keep-all), 너무 긴 번지만 어디서든. 줄 길이를 고르게(pretty) */
 .sd-main { margin: 0; font-size: 15.5px; font-weight: 700; line-height: 1.45; color: var(--text); word-break: keep-all; overflow-wrap: anywhere; text-wrap: pretty; }
 .sd-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 5px 0 0; }
@@ -334,3 +336,6 @@ html[data-theme="dark"] .card-photo-box { background: #0E1420; }
 .sched-month { white-space: nowrap; font-size: 17px; letter-spacing: -.01em; }
 .sched-nav { width: 38px; height: 38px; }
 .sched-today { padding: 0 10px; margin-left: 2px; }
+
+/* 기입·수정 함께 쓰는 창: hidden 이 버튼 display 규칙에 지지 않게 */
+#schedAddDialog [hidden] { display: none !important; }

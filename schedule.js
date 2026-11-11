@@ -188,13 +188,21 @@ function schedItemEl(it) {
   if (it.memo && it.memo !== 'MEMO') tag(it.memo, 'memo');
   if (tags.childElementCount) body.append(tags);
   if (it.user) { const by = document.createElement('p'); by.className = 'sd-by'; by.textContent = `${it.user} 기입`; body.append(by); }
+  // 줄을 누르거나 ✎ 를 누르면 수정 창, ✕ 는 바로 지우기(확인 후)
+  body.addEventListener('click', () => schedOpenEdit(it));
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'sched-del sched-edit';
+  edit.setAttribute('aria-label', `${main} 일정 수정`);
+  edit.textContent = '✎';
+  edit.addEventListener('click', () => schedOpenEdit(it));
   const del = document.createElement('button');
   del.type = 'button';
   del.className = 'sched-del';
   del.setAttribute('aria-label', `${main} 일정 삭제`);
   del.textContent = '✕';
   del.addEventListener('click', () => schedDelete(it));
-  li.append(who, body, del);
+  li.append(who, body, edit, del);
   return li;
 }
 
@@ -244,15 +252,17 @@ function schedShift(delta) {
   schedGo(month, `${month}-${schedPad(keepDay)}`);
 }
 
-async function schedDelete(it) {
-  if (!confirm(`'${SchedParse.splitTitle(it.title).main}' 일정을 지울까요?\n(${schedLabel(it.date)})`)) return;
+async function schedDelete(it, busyEl = $('schedDayDialog')) {
+  if (!confirm(`'${SchedParse.splitTitle(it.title).main}' 일정을 지울까요?\n(${schedLabel(it.date)})`)) return false;
   try {
-    await withBusy($('schedDayDialog'), () => api('schedule_delete', { ids: [it.id] }));
+    await withBusy(busyEl, () => api('schedule_delete', { ids: [it.id] }));
     flash('일정을 지웠습니다');
     await schedLoad();
+    return true;
   } catch (err) {
-    if (err.isAuth) { signOut(); return; }
+    if (err.isAuth) { signOut(); return false; }
     alert(`지우지 못했습니다. ${errorText(err)}`);
+    return false;
   }
 }
 
@@ -271,12 +281,43 @@ async function schedSend(items, source) {
 
 // ---------- 기입 창 ----------
 
+// 같은 창을 기입·수정에 함께 쓴다. sched.editing 이 있으면 수정(파일 버튼 숨김, 삭제 버튼 보임)
+function schedFormMode(item) {
+  sched.editing = item || null;
+  $('schedAddTitle').textContent = item ? '일정 수정' : '일정 기입';
+  $('schedAddSubmit').textContent = item ? '저장' : '기입';
+  $('schedFileBtn').hidden = Boolean(item);
+  $('schedFileHint').hidden = Boolean(item);
+  $('schedEditDelete').hidden = !item;
+  $('schedAddError').textContent = '';
+}
+
 function schedOpenAdd() {
+  schedFormMode(null);
   $('schedDate').value = sched.selected || todayKst();
   $('schedText').value = '';
   $('schedMemo').value = '';
-  $('schedAddError').textContent = '';
   $('schedAddDialog').showModal();
+}
+
+function schedOpenEdit(it) {
+  schedFormMode(it);
+  $('schedDate').value = it.date;
+  $('schedText').value = it.title;
+  $('schedMemo').value = it.memo === 'MEMO' ? '' : it.memo;   // 계획서 MEMO 칸 표시는 숨겨 두고 그대로 지킨다
+  if ($('schedDayDialog').open) $('schedDayDialog').close();
+  $('schedAddDialog').showModal();
+}
+
+const SCHED_EDIT_ERRORS = { duplicate: '같은 날짜에 같은 일정이 이미 있습니다.', not_found: '이 일정은 이미 지워졌습니다. 새로고침해 주세요.' };
+
+async function schedSubmitEdit(it, date, title, memo) {
+  await withBusy($('schedAddForm'), () => api('schedule_update', { user: schedUser(), id: it.id, item: { date, title, memo: memo || (it.memo === 'MEMO' ? 'MEMO' : '') } }));
+  $('schedAddDialog').close();
+  flash('일정을 고쳤습니다');
+  await schedLoad();
+  schedGo(date.slice(0, 7), date);
+  schedOpenDay(date);
 }
 
 async function schedSubmitAdd(e) {
@@ -286,6 +327,7 @@ async function schedSubmitAdd(e) {
   if (!date) { $('schedAddError').textContent = '날짜를 골라 주세요.'; return; }
   if (!title) { $('schedAddError').textContent = '내용을 적거나, 옆 「파일」 버튼으로 계획서를 올려 주세요.'; $('schedText').focus(); return; }
   try {
+    if (sched.editing) { await schedSubmitEdit(sched.editing, date, title, $('schedMemo').value.trim()); return; }
     const r = await withBusy($('schedAddForm'), () => schedSend([{ date, title, memo: $('schedMemo').value.trim() }], ''));
     $('schedAddDialog').close();
     flash(r.added ? '일정을 기입했습니다' : '같은 일정이 이미 있습니다');
@@ -293,7 +335,7 @@ async function schedSubmitAdd(e) {
     schedOpenDay(date);
   } catch (err) {
     if (err.isAuth) { signOut(); return; }
-    $('schedAddError').textContent = `기입하지 못했습니다. ${errorText(err)}`;
+    $('schedAddError').textContent = (sched.editing && SCHED_EDIT_ERRORS[err.code]) || `${sched.editing ? '고치지' : '기입하지'} 못했습니다. ${errorText(err)}`;
   }
 }
 
@@ -505,6 +547,10 @@ $('schedToday').addEventListener('click', () => { const t = todayKst(); schedGo(
 $('schedAdd').addEventListener('click', schedOpenAdd);
 $('schedAddForm').addEventListener('submit', schedSubmitAdd);
 $('schedAddCancel').addEventListener('click', () => $('schedAddDialog').close());
+$('schedEditDelete').addEventListener('click', async () => {
+  const it = sched.editing;
+  if (it && await schedDelete(it, $('schedAddForm'))) { $('schedAddDialog').close(); schedOpenDay(it.date); }
+});
 // 앱(APK) 파일 선택창은 accept 의 첫 형식만 보여 주므로 앱에서는 비우고 고른 뒤에 검사한다(drawing.js 와 같은 이유)
 if (!window.AndroidGallery) $('schedFile').accept = '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png';
 $('schedFileBtn').addEventListener('click', () => $('schedFile').click());
