@@ -91,6 +91,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        String pushOpen = getIntent() == null ? null : getIntent().getStringExtra(PushService.EXTRA_OPEN);
+        if (pushOpen != null) pendingOpen = pushOpen;   // 꺼져 있던 앱을 알림으로 연 경우: 화면이 다 뜨면 takeOpen 으로 가져간다
 
         // 서비스 워커가 화면 파일을 받으러 나가는 요청도 신호가 없으면 앱 안 화면 파일로 답한다(offlineAsset)
         ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
@@ -669,6 +671,49 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String getToken() {
             return getSharedPreferences(PushService.PREFS, MODE_PRIVATE).getString(PushService.KEY_TOKEN, "");
+        }
+
+        // 푸시 주소가 비어 있으면 구글에 다시 달라고 한다(받으면 저장 → 웹 화면이 잠시 뒤 다시 읽어 등록)
+        @JavascriptInterface
+        public void refreshToken() {
+            FirebaseMessaging.getInstance().getToken().addOnSuccessListener(t ->
+                getSharedPreferences(PushService.PREFS, MODE_PRIVATE).edit().putString(PushService.KEY_TOKEN, t).apply());
+        }
+
+        // 휴대폰 설정에서 이 앱 알림이 켜져 있는지(정보 탭 「알림」 카드)
+        @JavascriptInterface
+        public boolean notificationsEnabled() {
+            return getSystemService(android.app.NotificationManager.class).areNotificationsEnabled();
+        }
+
+        @JavascriptInterface
+        public void openSettings() {
+            Intent i = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        }
+
+        // 알림을 눌러 앱을 열었으면 그 알림의 {"kind","date"} 를 한 번 돌려준다(웹 화면이 그 날짜 창을 연다)
+        @JavascriptInterface
+        public String takeOpen() {
+            String o = pendingOpen;
+            pendingOpen = "";
+            return o == null ? "" : o;
+        }
+    }
+
+    private volatile String pendingOpen = "";
+
+    // 앱이 이미 켜져 있을 때 알림을 누르면 여기로 온다(launchMode singleTop)
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String open = intent.getStringExtra(PushService.EXTRA_OPEN);
+        if (open != null && !open.isEmpty()) {
+            pendingOpen = open;
+            if (webView != null) webView.evaluateJavascript("window.onPushOpen && window.onPushOpen()", null);
         }
     }
 

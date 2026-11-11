@@ -9,9 +9,9 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=75">
-<link rel="stylesheet" href="theme.css?v=75">
-<link rel="stylesheet" href="brand.css?v=75">
+<link rel="stylesheet" href="style.css?v=77">
+<link rel="stylesheet" href="theme.css?v=77">
+<link rel="stylesheet" href="brand.css?v=77">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -98,6 +98,12 @@
   </a>
 
   <!-- 일정 캘린더(schedule.js): 날짜를 누르면 그날 일정이 창으로 뜬다(창 안에서 ‹ › 로 앞뒤 날). 지난 달도 ‹ 로 넘겨 본다 -->
+  <!-- 안 읽은 상황 메모 안내(B안): 앱을 켜면 맨 먼저 눈에 띄게. 누르면 그 날 창 -->
+  <button id="memoBanner" type="button" class="memo-banner" hidden>
+    <span class="mb-pulse" aria-hidden="true"></span>
+    <span class="mb-text"><strong id="memoBannerCount"></strong><span id="memoBannerLine"></span></span>
+    <span class="mb-go" aria-hidden="true">확인 ›</span>
+  </button>
   <section id="sched" class="sched" aria-labelledby="schedMonth">
     <div class="sched-head">
       <button id="schedPrev" type="button" class="sched-nav" aria-label="이전 달"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
@@ -285,12 +291,29 @@
       <div class="sd-title"><h2 id="schedDayTitle"></h2><p id="schedDaySub"></p></div>
       <button id="schedDayNext" type="button" class="sched-nav" aria-label="다음 날"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
     </div>
+    <div id="schedFilter" class="sd-filter" role="group" aria-label="담당별로 보기" hidden></div>
     <ul id="schedList" class="sd-list"></ul>
     <div class="row sd-foot">
       <button id="schedDayClose" type="button" class="btn outline">닫기</button>
-      <button id="schedDayAdd" type="button" class="btn primary grow">＋ 이 날 일정 기입</button>
+      <button id="schedDayMemo" type="button" class="btn tonal">＋ 메모</button>
+      <button id="schedDayAdd" type="button" class="btn primary grow">＋ 일정 기입</button>
     </div>
   </div>
+</dialog>
+
+<!-- 날짜 메모(상황 보고): 그날 창 맨 위에 접힌 채로 보이고, 눌러서 펼친 사람이 '확인'으로 남는다 -->
+<dialog id="schedMemoDialog" aria-labelledby="schedMemoTitle">
+  <form id="schedMemoForm" class="dlg" novalidate>
+    <h2 id="schedMemoTitle" class="dlg-title">메모 기입</h2>
+    <p id="schedMemoDate" class="sched-memo-date"></p>
+    <label class="field"><span class="label">내용</span><textarea id="schedMemoText" rows="5" maxlength="1000" placeholder="예: B동 흙막이 균열 발견, 내일 오전 재측정 필요"></textarea></label>
+    <small class="sched-hint">저장하면 이 날짜에 빨간 점이 찍히고, 다른 사람이 눌러 읽으면 누가 확인했는지 남습니다.</small>
+    <p id="schedMemoError" class="dlg-err" role="alert"></p>
+    <div class="row">
+      <button id="schedMemoCancel" type="button" class="btn outline">취소</button>
+      <button type="submit" class="btn primary grow">저장</button>
+    </div>
+  </form>
 </dialog>
 
 <!-- 일정 기입: 한 건 직접 입력, 또는 옆 버튼으로 주간 계획서(PDF·JPG·PNG)를 읽어 한꺼번에 -->
@@ -743,6 +766,15 @@
     <dt>앱 버전</dt><dd id="appVersion"></dd>
     <dt>관리자</dt><dd id="adminInfo"></dd>
   </dl>
+  <!-- 알림: 이 기기가 알림을 받을 수 있는지 보고, 이 기기에만 시험 알림을 보낸다 -->
+  <div id="pushCard" class="card push-card" hidden>
+    <div class="pc-row"><span class="pc-label">알림</span><span id="pushStatus" class="pc-status"></span></div>
+    <p id="pushHint" class="pc-hint"></p>
+    <div class="row">
+      <button id="pushSettings" type="button" class="btn outline" hidden>알림 설정 열기</button>
+      <button id="pushTest" type="button" class="btn tonal grow">🔔 이 기기로 알림 시험</button>
+    </div>
+  </div>
   <button id="openManage" type="button" class="btn outline wide">현장·측정자 관리</button>
   <div id="apkNotice" class="card apk-notice hidden" role="status"></div>
   <button id="reloadApp" type="button" class="btn outline wide">최신 버전으로 새로고침</button>
@@ -789,30 +821,30 @@
   </a>
 </nav>
 
-<script src="config.js?v=75"></script>
-<script src="errlog.js?v=75"></script>
-<script src="weather.js?v=75"></script>
-<script src="entries.js?v=75"></script>
-<script src="push.js?v=75"></script>
-<script src="outbox.js?v=75"></script>
-<script src="phonecopy.js?v=75"></script>
-<script src="pinhistory.js?v=75"></script>
-<script src="perf.js?v=75"></script>
-<script src="search.js?v=75"></script>
-<script src="busy.js?v=75"></script>
-<script src="drawing.js?v=75"></script>
-<script src="cad-engine.js?v=75"></script>
-<script src="cad.js?v=75"></script>
-<script src="cadfiles.js?v=75"></script>
-<script src="gps.js?v=75"></script>
-<script src="gallery.js?v=75"></script>
-<script src="camera.js?v=75"></script>
-<script src="app.js?v=75"></script>
-<script src="ocr-kit.js?v=75"></script>
-<script src="schedule-parse.js?v=75"></script>
-<script src="schedule.js?v=75"></script>
-<script src="card-enhance.js?v=75"></script>
-<script src="card-crop.js?v=75"></script>
-<script src="contacts.js?v=75"></script>
+<script src="config.js?v=77"></script>
+<script src="errlog.js?v=77"></script>
+<script src="weather.js?v=77"></script>
+<script src="entries.js?v=77"></script>
+<script src="push.js?v=77"></script>
+<script src="outbox.js?v=77"></script>
+<script src="phonecopy.js?v=77"></script>
+<script src="pinhistory.js?v=77"></script>
+<script src="perf.js?v=77"></script>
+<script src="search.js?v=77"></script>
+<script src="busy.js?v=77"></script>
+<script src="drawing.js?v=77"></script>
+<script src="cad-engine.js?v=77"></script>
+<script src="cad.js?v=77"></script>
+<script src="cadfiles.js?v=77"></script>
+<script src="gps.js?v=77"></script>
+<script src="gallery.js?v=77"></script>
+<script src="camera.js?v=77"></script>
+<script src="app.js?v=77"></script>
+<script src="ocr-kit.js?v=77"></script>
+<script src="schedule-parse.js?v=77"></script>
+<script src="schedule.js?v=77"></script>
+<script src="card-enhance.js?v=77"></script>
+<script src="card-crop.js?v=77"></script>
+<script src="contacts.js?v=77"></script>
 </body>
 </html>

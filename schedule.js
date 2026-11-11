@@ -13,6 +13,9 @@ const sched = {
   month: '',          // 보고 있는 달 'YYYY-MM'
   selected: '',       // 고른 날 'YYYY-MM-DD'
   byDate: new Map(),  // 날짜 → 일정 목록(보이는 달력 범위만)
+  memoBy: new Map(),  // 날짜 → 메모(상황 보고) 목록
+  openMemos: new Set(),   // 그날 창에서 펼쳐 둔 메모 id
+  filter: '',         // 그날 창 담당별 보기('' = 전체)
   seq: 0,
   import: null,       // { result, fileName, entries, checked:Set }
 };
@@ -47,26 +50,35 @@ function schedCacheKey(from) { return `sched:${from}`; }
 async function schedLoad() {
   const { from, to } = schedRange(sched.month);
   const cached = (() => { try { return JSON.parse(store.get(schedCacheKey(from)) || 'null'); } catch { return null; } })();
-  if (Array.isArray(cached)) schedSet(cached);
+  if (cached) schedSet(cached);
   const seq = ++sched.seq;
   try {
-    const { items } = await api('schedule_list', { from, to });
+    const { items, memos } = await api('schedule_list', { from, to });
     if (seq !== sched.seq) return;
-    const list = Array.isArray(items) ? items : [];
-    store.set(schedCacheKey(from), JSON.stringify(list));
-    schedSet(list);
+    const data = { items: Array.isArray(items) ? items : [], memos: Array.isArray(memos) ? memos : [] };
+    store.set(schedCacheKey(from), JSON.stringify(data));
+    schedSet(data);
     $('schedNote').textContent = '';
+    if (!sched.openedFromPush) { sched.openedFromPush = true; takePushOpen(); }   // 알림을 눌러 켰으면 그 날 창
   } catch (err) {
     if (seq !== sched.seq) return;
     if (err.isAuth) { signOut(); return; }
     $('schedNote').textContent = err.code === 'bad_action'
       ? '서버가 아직 옛 버전이라 일정을 볼 수 없습니다(관리자: Code.gs 새 버전 배포).'
       : `${cached ? '저장해 둔 일정을 보여 줍니다. ' : ''}${err.network ? '신호가 없어 최신 일정을 받지 못했습니다.' : `일정을 불러오지 못했습니다. ${errorText(err)}`}`;
-    if (!cached) schedSet([]);
+    if (!cached) schedSet({ items: [], memos: [] });
   }
 }
 
-function schedSet(list) {
+// data = { items, memos } (예전 저장본은 일정 배열만)
+function schedSet(data) {
+  const list = Array.isArray(data) ? data : (data.items || []);
+  sched.memoBy = new Map();
+  for (const m of (Array.isArray(data) ? [] : data.memos || [])) {
+    if (!m || !m.date) continue;
+    if (!sched.memoBy.has(m.date)) sched.memoBy.set(m.date, []);
+    sched.memoBy.get(m.date).push({ ...m, reads: Array.isArray(m.reads) ? m.reads : [] });
+  }
   sched.byDate = new Map();
   for (const it of list) {
     if (!it || !it.date) continue;
@@ -95,7 +107,7 @@ function schedRender() {
     if (d === sched.selected) b.classList.add('sel');
     b.dataset.date = d;
     b.setAttribute('aria-pressed', String(d === sched.selected));
-    b.setAttribute('aria-label', `${schedLabel(d)}${d === today ? ' 오늘' : ''} 일정 ${list.length}건`);
+    b.setAttribute('aria-label', `${schedLabel(d)}${d === today ? ' 오늘' : ''} 일정 ${list.length}건${(sched.memoBy.get(d) || []).length ? ` 메모 ${(sched.memoBy.get(d) || []).length}건${(sched.memoBy.get(d) || []).some(schedMemoUnread) ? '(안 읽음)' : ''}` : ''}`);
     const num = document.createElement('span');
     num.className = 'n';
     num.textContent = String(Number(d.slice(8, 10)));
@@ -108,16 +120,21 @@ function schedRender() {
       n.textContent = '📢';
       b.append(n);
     }
-    if (list.length) {
-      const cnt = document.createElement('span');
-      cnt.className = list.some(schedMine) ? 'c mine' : 'c';
-      cnt.textContent = String(list.length);
-      b.append(cnt);
+    // 숫자 대신 점: 파란 점 = 일정 있음, 빨간 점 = 메모(상황 보고). 내가 아직 안 읽은 메모가 있으면 꽉 찬 빨강, 다 읽었으면 테두리만
+    const memos = sched.memoBy.get(d) || [];
+    if (list.length || memos.length) {
+      const dots = document.createElement('span');
+      dots.className = 'dots';
+      dots.setAttribute('aria-hidden', 'true');
+      if (list.length) { const s = document.createElement('i'); s.className = list.some(schedMine) ? 'dot s mine' : 'dot s'; dots.append(s); }
+      if (memos.length) { const m = document.createElement('i'); m.className = memos.some(schedMemoUnread) ? 'dot m' : 'dot m read'; dots.append(m); }
+      b.append(dots);
     }
     cells.push(b);
   }
   $('schedGrid').replaceChildren(...cells);
   schedRenderNotice();
+  schedRenderBanner();
   schedRenderDay();
 }
 
@@ -187,7 +204,8 @@ function schedItemEl(it) {
   if (memoLine) tag('공지', 'notice');
   if (it.memo && it.memo !== 'MEMO') tag(it.memo, 'memo');
   if (tags.childElementCount) body.append(tags);
-  if (it.user) { const by = document.createElement('p'); by.className = 'sd-by'; by.textContent = `${it.user} 기입`; body.append(by); }
+  // 계획서에서 온 일정은 '누가 넣었나' 줄을 빼서 한 줄이라도 짧게(직접 기입한 것만 표시)
+  if (it.user && !it.source) { const by = document.createElement('p'); by.className = 'sd-by'; by.textContent = `${it.user} 기입`; body.append(by); }
   // 줄을 누르거나 ✎ 를 누르면 수정 창, ✕ 는 바로 지우기(확인 후)
   body.addEventListener('click', () => schedOpenEdit(it));
   const edit = document.createElement('button');
@@ -206,26 +224,174 @@ function schedItemEl(it) {
   return li;
 }
 
-function schedRenderDay() {
-  const d = sched.selected;
-  if (!d) return;
-  // 공지(연차 등)는 맨 위 → 내 현장 → 담당 직원별 → 이름순(같은 사람 일정이 붙어 보이게)
-  const list = [...(sched.byDate.get(d) || [])].sort((a, b) => {
+// 공지(연차 등)는 맨 위 → 내 현장 → 담당 직원별 → 이름순(같은 사람 일정이 붙어 보이게)
+function schedSortDay(list) {
+  return [...list].sort((a, b) => {
     const A = SchedParse.splitTitle(a.title); const B = SchedParse.splitTitle(b.title);
     return Number(SchedParse.isNotice(b)) - Number(SchedParse.isNotice(a)) || Number(schedMine(b)) - Number(schedMine(a)) || (A.person || '힣').localeCompare(B.person || '힣') || A.main.localeCompare(B.main);
   });
+}
+
+// 일이 많은 날: 창 위 꼬리표(전체·내 현장·공지·담당별)로 골라 보면 스크롤이 짧아진다. 고른 꼬리표는 앞뒤 날로 넘겨도 유지
+const SCHED_FILTER_MIN = 6;
+function schedFilterOf(key) {
+  if (key === 'mine') return schedMine;
+  if (key === 'notice') return SchedParse.isNotice;
+  if (key.startsWith('p:')) return (it) => SchedParse.splitTitle(it.title).person === key.slice(2);
+  return () => true;
+}
+
+function schedRenderFilter(all) {
+  const box = $('schedFilter');
+  const opts = [['', '전체', all.length]];
+  const add = (key, label) => { const n = all.filter(schedFilterOf(key)).length; if (n && n < all.length) opts.push([key, label, n]); };
+  add('mine', '내 현장');
+  add('notice', '공지');
+  for (const p of [...new Set(all.map((x) => SchedParse.splitTitle(x.title).person).filter(Boolean))].sort()) add(`p:${p}`, `담당 ${p}`);
+  if (!opts.some(([k]) => k === sched.filter)) sched.filter = '';
+  box.hidden = all.length < SCHED_FILTER_MIN || opts.length < 2;
+  if (box.hidden) { sched.filter = ''; box.replaceChildren(); return; }
+  box.replaceChildren(...opts.map(([key, label, n]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'sd-chip';
+    b.setAttribute('aria-pressed', String(key === sched.filter));
+    if (key.startsWith('p:')) { const dot = document.createElement('i'); dot.style.background = schedPersonColor(key.slice(2)); b.append(dot); }
+    b.append(`${label} ${n}`);
+    b.addEventListener('click', () => { sched.filter = key; schedRenderDay(); $('schedList').scrollTop = 0; });
+    return b;
+  }));
+}
+
+// ---------- 날짜 메모(상황 보고) ----------
+const schedMemoUnread = (m) => { const me = schedUser(); return m.user !== me && !m.reads.some((r) => r.user === me); };
+const schedHm = (at) => String(at || '').slice(11, 16);
+
+// 접힌 메모 한 장: 누르면 펼쳐지고, 처음 펼친 사람은 서버에 '확인'으로 남는다
+function schedMemoEl(m) {
+  const open = sched.openMemos.has(m.id);
+  const li = document.createElement('li');
+  li.className = `sd-memo${schedMemoUnread(m) ? ' unread' : ''}${open ? ' open' : ''}`;
+  const head = document.createElement('button');
+  head.type = 'button';
+  head.className = 'sm-head';
+  head.setAttribute('aria-expanded', String(open));
+  const dot = document.createElement('i');
+  dot.className = 'sm-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  const who = document.createElement('span');
+  who.className = 'sm-who';
+  who.textContent = `메모 · ${m.user}${schedHm(m.at) ? ` ${schedHm(m.at)}` : ''}`;
+  const st = document.createElement('span');
+  st.className = 'sm-state';
+  st.textContent = schedMemoUnread(m) ? '눌러서 확인' : `확인 ${m.reads.length}명`;
+  head.append(dot, who, st);
+  head.addEventListener('click', () => schedToggleMemo(m));
+  li.append(head);
+  if (open) {
+    const body = document.createElement('div');
+    body.className = 'sm-body';
+    const text = document.createElement('p');
+    text.className = 'sm-text';
+    text.textContent = m.text;
+    const reads = document.createElement('p');
+    reads.className = 'sm-reads';
+    reads.textContent = m.reads.length ? `확인: ${m.reads.map((r) => `${r.user}${schedHm(r.at) ? ` ${schedHm(r.at)}` : ''}`).join(' · ')}` : '아직 확인한 사람이 없습니다';
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'sm-del';
+    del.textContent = '메모 삭제';
+    del.addEventListener('click', () => schedDeleteMemo(m));
+    body.append(text, reads, del);
+    li.append(body);
+  }
+  return li;
+}
+
+async function schedToggleMemo(m) {
+  if (sched.openMemos.has(m.id)) { sched.openMemos.delete(m.id); schedRenderDay(); return; }
+  sched.openMemos.add(m.id);
+  await schedToggleMemoRead(m);
+}
+
+// 펼친 메모를 '확인'으로 남긴다(처음 한 번만 서버에)
+async function schedToggleMemoRead(m) {
+  const unread = schedMemoUnread(m);
+  if (unread) m.reads = [...m.reads, { user: schedUser(), at: '' }];   // 화면은 바로, 서버 기록은 뒤에서
+  schedRender();
+  if (!unread) return;
+  try {
+    const r = await api('memo_read', { user: schedUser(), id: m.id });
+    if (Array.isArray(r.reads)) { m.reads = r.reads; schedRender(); }
+  } catch (err) {
+    if (err.isAuth) { signOut(); return; }
+    m.reads = m.reads.filter((x) => x.at || x.user !== schedUser());
+    schedRender();
+    flash(`확인 기록을 남기지 못했습니다. ${errorText(err)}`);
+  }
+}
+
+async function schedDeleteMemo(m) {
+  if (!confirm(`${m.user} 님의 메모를 지울까요?`)) return;
+  try {
+    await withBusy($('schedDayDialog'), () => api('memo_delete', { id: m.id }));
+    flash('메모를 지웠습니다');
+    await schedLoad();
+  } catch (err) {
+    if (err.isAuth) { signOut(); return; }
+    alert(`지우지 못했습니다. ${errorText(err)}`);
+  }
+}
+
+function schedOpenMemo() {
+  $('schedMemoDate').textContent = `${schedLabel(sched.selected)} · ${schedUser()}`;
+  $('schedMemoText').value = '';
+  $('schedMemoError').textContent = '';
+  $('schedDayDialog').close();
+  $('schedMemoDialog').showModal();
+  $('schedMemoText').focus();
+}
+
+async function schedSubmitMemo(e) {
+  e.preventDefault();
+  const text = $('schedMemoText').value.trim();
+  if (!text) { $('schedMemoError').textContent = '내용을 적어 주세요.'; $('schedMemoText').focus(); return; }
+  const date = sched.selected;
+  try {
+    await withBusy($('schedMemoForm'), () => api('memo_add', { user: schedUser(), date, text }));
+    $('schedMemoDialog').close();
+    flash('메모를 남겼습니다');
+    await schedLoad();
+    schedOpenDay(date);
+  } catch (err) {
+    if (err.isAuth) { signOut(); return; }
+    $('schedMemoError').textContent = err.code === 'bad_action' ? '서버가 아직 옛 버전입니다(관리자: Code.gs 새 버전 배포).' : `저장하지 못했습니다. ${errorText(err)}`;
+  }
+}
+
+function schedRenderDay() {
+  const d = sched.selected;
+  if (!d) return;
+  const all = schedSortDay(sched.byDate.get(d) || []);
+  const memos = [...(sched.memoBy.get(d) || [])].sort((a, b) => String(b.at).localeCompare(String(a.at)));   // 새 메모가 위
   $('schedDayTitle').textContent = `${schedLabel(d)}${d === todayKst() ? ' · 오늘' : ''}`;
-  const people = [...new Set(list.map((x) => SchedParse.splitTitle(x.title).person).filter(Boolean))];
-  $('schedDaySub').textContent = list.length ? `일정 ${list.length}건${people.length ? ` · 담당 ${people.join('·')}` : ''}` : '';
+  const people = [...new Set(all.map((x) => SchedParse.splitTitle(x.title).person).filter(Boolean))];
+  const parts = [];
+  if (all.length) parts.push(`일정 ${all.length}건`);
+  if (memos.length) parts.push(`메모 ${memos.length}건`);
+  if (people.length) parts.push(`담당 ${people.join('·')}`);
+  $('schedDaySub').textContent = parts.join(' · ');
+  schedRenderFilter(all);
+  const list = all.filter(schedFilterOf(sched.filter));
   const ul = $('schedList');
-  if (!list.length) {
+  if (!all.length && !memos.length) {
     const li = document.createElement('li');
     li.className = 'sd-empty';
-    li.textContent = '이 날 일정이 없습니다. 아래 「＋ 이 날 일정 기입」으로 추가하세요.';
+    li.textContent = '이 날 일정이 없습니다. 아래 「＋ 일정 기입」으로 추가하세요.';
     ul.replaceChildren(li);
     return;
   }
-  ul.replaceChildren(...list.map(schedItemEl));
+  ul.replaceChildren(...memos.map(schedMemoEl), ...list.map(schedItemEl));
 }
 
 // 날짜를 누르면 그날 일정 창. 창 안 ‹ › 로 앞뒤 날(달이 바뀌면 달력도 따라간다)
@@ -519,6 +685,27 @@ async function schedSaveImport() {
 // ---------- 시작 ----------
 
 let schedStarted = false;
+// ---------- 안 읽은 메모 안내 띠(B안) ----------
+// 오늘이 든 달을 읽었을 때만 새로 센다(다른 달을 보고 있어도 띠는 그대로)
+const SCHED_UNREAD_DAYS = 30;
+function schedRenderBanner() {
+  const today = todayKst();
+  const { from, to } = schedRange(sched.month);
+  if (today >= from && today <= to) {
+    const since = SchedParse.addDays(today, -SCHED_UNREAD_DAYS);
+    sched.unread = [...sched.memoBy.values()].flat().filter((m) => m.date >= since && schedMemoUnread(m))
+      .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  }
+  const list = sched.unread || [];
+  const box = $('memoBanner');
+  box.hidden = !list.length;
+  if (!list.length) return;
+  const m = list[0];
+  $('memoBannerCount').textContent = `안 읽은 상황 메모 ${list.length}건`;
+  $('memoBannerLine').textContent = `${Number(m.date.slice(5, 7))}/${Number(m.date.slice(8, 10))} ${m.user} · 눌러서 확인`;
+  box.setAttribute('aria-label', `안 읽은 상황 메모 ${list.length}건. 누르면 ${schedLabel(m.date)} 창을 엽니다`);
+}
+
 function schedOnOpen() {
   if (!schedStarted) {
     schedStarted = true;
@@ -541,6 +728,10 @@ $('schedDayPrev').addEventListener('click', () => schedOpenDay(SchedParse.addDay
 $('schedDayNext').addEventListener('click', () => schedOpenDay(SchedParse.addDays(sched.selected, 1)));
 $('schedDayClose').addEventListener('click', () => $('schedDayDialog').close());
 $('schedDayAdd').addEventListener('click', () => { $('schedDayDialog').close(); schedOpenAdd(); });
+$('schedDayMemo').addEventListener('click', schedOpenMemo);
+$('memoBanner').addEventListener('click', () => { const m = (sched.unread || [])[0]; if (m) { sched.openMemos.add(m.id); schedOpenDay(m.date); schedToggleMemoRead(m); } });
+$('schedMemoForm').addEventListener('submit', schedSubmitMemo);
+$('schedMemoCancel').addEventListener('click', () => { $('schedMemoDialog').close(); schedOpenDay(sched.selected); });
 $('schedPrev').addEventListener('click', () => schedShift(-1));
 $('schedNext').addEventListener('click', () => schedShift(1));
 $('schedToday').addEventListener('click', () => { const t = todayKst(); schedGo(t.slice(0, 7), t); });

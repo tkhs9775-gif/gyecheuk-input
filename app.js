@@ -239,7 +239,7 @@ function route() {
   showScreen(name);
   if (name === 'drawing') loadDrawingTab();
   if (name === 'cad' && typeof loadCadTab === 'function') loadCadTab();
-  if (name === 'info') renderInfo();
+  if (name === 'info') { renderInfo(); window.renderPushStatus?.(); }
   if (name === 'gallery') loadGallery();
 }
 

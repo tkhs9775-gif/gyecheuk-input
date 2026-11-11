@@ -339,3 +339,78 @@ html[data-theme="dark"] .card-photo-box { background: #0E1420; }
 
 /* 기입·수정 함께 쓰는 창: hidden 이 버튼 display 규칙에 지지 않게 */
 #schedAddDialog [hidden] { display: none !important; }
+
+/* ---------- 2026-11-11 일정 점 · 날짜 메모(상황 보고) · 담당별 보기 ---------- */
+/* 칸: 숫자 대신 점. 파랑 = 일정, 빨강 = 메모(안 읽음은 꽉 참, 읽음은 테두리만) */
+.sched-cell .dots { display: flex; gap: 4px; height: 8px; align-items: center; }
+.sched-cell .dot { display: block; width: 7px; height: 7px; border-radius: 50%; }
+.sched-cell .dot.s { background: #8DB4E8; }
+.sched-cell .dot.s.mine { background: var(--accent); }
+.sched-cell .dot.m { background: #E5484D; box-shadow: 0 0 0 2px rgba(229, 72, 77, .18); }
+.sched-cell .dot.m.read { background: transparent; box-shadow: inset 0 0 0 1.6px #E5484D; }
+.sched-cell.sel .dot.s, .sched-cell.sel .dot.s.mine { background: #FFF; }
+.sched-cell.sel .dot.m { background: #FFB4B6; box-shadow: none; }
+.sched-cell.sel .dot.m.read { background: transparent; box-shadow: inset 0 0 0 1.6px #FFD1D2; }
+html[data-theme="dark"] .sched-cell .dot.s { background: #5B7FB8; }
+html[data-theme="dark"] .sched-cell .dot.s.mine { background: #6EA2FF; }
+
+/* 날짜 창 아래 버튼: 닫기 · ＋ 메모(앱 파랑의 옅은 판) · ＋ 일정 기입 */
+.btn.tonal { border: 1px solid transparent; background: var(--chip); color: var(--accent); font-weight: 800; }
+.btn.tonal:active { filter: brightness(.95); }
+html[data-theme="dark"] .btn.tonal { background: rgba(110, 162, 255, .16); color: #9DC1FF; }
+.sd-foot { gap: 8px; }
+.sd-foot .btn { padding-left: 12px; padding-right: 12px; white-space: nowrap; }
+
+/* 담당별 보기 꼬리표: 목록 위에 고정(목록만 스크롤), 넘치면 옆으로 밀기 */
+.sd-filter { flex: none; display: flex; gap: 6px; padding: 8px 2px 6px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid var(--line); }
+.sd-filter::-webkit-scrollbar { display: none; }
+.sd-chip { flex: none; display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 16px; background: transparent; color: var(--text); font: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.sd-chip i { width: 8px; height: 8px; border-radius: 50%; }
+.sd-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: #FFF; }
+html[data-theme="dark"] .sd-chip[aria-pressed="true"] { background: var(--accent-fill, #2D68FA); border-color: var(--accent-fill, #2D68FA); }
+.sd-chip:focus-visible { outline: 3px solid #8DBDF0; outline-offset: 1px; }
+
+/* 메모 카드: 접힌 채로 맨 위. 안 읽은 것은 빨간 테두리 */
+.sd-memo { margin: 2px 0 8px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--card, transparent); overflow: hidden; }
+.sd-memo.unread { border-color: #E5484D; background: rgba(229, 72, 77, .06); }
+.sm-head { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 10px 12px; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.sm-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: transparent; box-shadow: inset 0 0 0 2px #E5484D; }
+.sd-memo.unread .sm-dot { background: #E5484D; box-shadow: 0 0 0 3px rgba(229, 72, 77, .2); }
+.sm-who { flex: 1; min-width: 0; font-size: 15px; font-weight: 800; }
+.sm-state { flex: none; font-size: 12px; font-weight: 700; color: var(--muted); }
+.sd-memo.unread .sm-state { color: #C2282D; }
+html[data-theme="dark"] .sd-memo.unread .sm-state { color: #FF8A8E; }
+.sm-head::after { content: '›'; flex: none; font-size: 20px; line-height: 1; color: var(--muted); transition: transform .15s; }
+.sd-memo.open .sm-head::after { transform: rotate(90deg); }
+.sm-body { padding: 0 14px 12px 32px; }
+.sm-text { margin: 0; font-size: 15px; line-height: 1.55; white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; color: var(--text); }
+.sm-reads { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.sm-del { margin-top: 6px; padding: 4px 0; border: 0; background: transparent; color: var(--err); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.sched-memo-date { margin: -4px 0 10px; font-size: 14px; font-weight: 700; color: var(--muted); }
+#schedMemoText { width: 100%; min-height: 120px; resize: vertical; font: inherit; font-size: 16px; line-height: 1.5; }
+
+/* ---------- 안 읽은 상황 메모 안내 띠(B안) ---------- */
+.memo-banner { width: 100%; display: flex; align-items: center; gap: 12px; margin: 0 0 12px; padding: 13px 14px; border: 1.5px solid #F2B8BA; border-radius: 16px; background: linear-gradient(135deg, #FFF5F5, #FFFFFF 70%); color: var(--text); font: inherit; text-align: left; cursor: pointer; box-shadow: 0 6px 18px rgba(229, 72, 77, .12); }
+.memo-banner[hidden] { display: none; }
+.memo-banner:active { transform: scale(.99); }
+.mb-pulse { position: relative; flex: none; width: 12px; height: 12px; border-radius: 50%; background: #E5484D; }
+.mb-pulse::after { content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 2px solid #E5484D; opacity: .5; animation: mb-ring 1.6s ease-out infinite; }
+@keyframes mb-ring { from { transform: scale(.6); opacity: .7; } to { transform: scale(1.5); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .mb-pulse::after { animation: none; } }
+.mb-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.mb-text strong { font-size: 15px; font-weight: 800; color: #B4232A; }
+.mb-text span { font-size: 13px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mb-go { flex: none; padding: 6px 12px; border-radius: 14px; background: #E5484D; color: #FFF; font-size: 13px; font-weight: 800; }
+html[data-theme="dark"] .memo-banner { border-color: rgba(229, 72, 77, .5); background: linear-gradient(135deg, rgba(229, 72, 77, .16), rgba(18, 24, 38, .9) 70%); }
+html[data-theme="dark"] .mb-text strong { color: #FF8A8E; }
+
+/* ---------- 정보 탭 알림 카드 ---------- */
+.push-card[hidden] { display: none; }
+.push-card .pc-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.push-card .pc-label { font-weight: 800; }
+.push-card .pc-status { font-size: 13px; font-weight: 800; padding: 3px 10px; border-radius: 12px; background: var(--chip); color: var(--accent); }
+.push-card .pc-status[data-tone="ok"] { background: #E3F5EC; color: #0E7A50; }
+.push-card .pc-status[data-tone="warn"] { background: #FFF4DB; color: #9A6200; }
+.push-card .pc-status[data-tone="bad"] { background: #FDE7E8; color: #B4232A; }
+.push-card .pc-hint { margin: 8px 0 10px; font-size: 13px; color: var(--muted); line-height: 1.5; word-break: keep-all; }
+.push-card .row { gap: 8px; }
