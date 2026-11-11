@@ -9,9 +9,9 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=78">
-<link rel="stylesheet" href="theme.css?v=78">
-<link rel="stylesheet" href="brand.css?v=78">
+<link rel="stylesheet" href="style.css?v=79">
+<link rel="stylesheet" href="theme.css?v=79">
+<link rel="stylesheet" href="brand.css?v=79">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -86,24 +86,17 @@
   </button>
   </header>
 
-  <div class="row between">
-    <h2 class="title">오늘의 계측·측량</h2>
-    <span id="today" class="muted"></span>
-  </div>
-
-  <a id="goInput" href="#input" class="tile">
-    <span class="tile-icon"><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>
-    <span class="tile-text"><b>계측·측량 입력</b></span>
-    <svg class="tile-chev" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
-  </a>
-
-  <!-- 일정 캘린더(schedule.js): 날짜를 누르면 그날 일정이 창으로 뜬다(창 안에서 ‹ › 로 앞뒤 날). 지난 달도 ‹ 로 넘겨 본다 -->
-  <!-- 안 읽은 상황 메모 안내(B안): 앱을 켜면 맨 먼저 눈에 띄게. 누르면 그 날 창 -->
-  <button id="memoBanner" type="button" class="memo-banner" hidden>
-    <span class="mb-pulse" aria-hidden="true"></span>
-    <span class="mb-text"><strong id="memoBannerCount"></strong><span id="memoBannerLine"></span></span>
-    <span class="mb-go" aria-hidden="true">확인 ›</span>
-  </button>
+  <!-- 오늘의 공지(2026-11-11 8차): 예전 「계측·측량 입력」 칸 자리. 오늘 메모(상황 보고, 안 읽은 것 먼저)·오늘 연차 등 공지·
+       다른 날 안 읽은 메모·앞으로 7일 공지를 한 판에. 줄을 누르면 그날 창(메모는 펼쳐져 '확인'으로 남는다) -->
+  <section id="todayBoard" class="today-board" aria-labelledby="tbTitle">
+    <div class="tb-head">
+      <h2 id="tbTitle" class="tb-title"><span class="tb-ico" aria-hidden="true">📢</span>오늘의 공지</h2>
+      <span id="tbDate" class="tb-date"></span>
+      <span id="tbUnread" class="tb-unread" hidden></span>
+      <button id="tbMemo" type="button" class="tb-add" aria-label="오늘 메모 남기기">＋ 메모</button>
+    </div>
+    <ul id="tbList" class="tb-list" aria-live="polite"></ul>
+  </section>
   <section id="sched" class="sched" aria-labelledby="schedMonth">
     <div class="sched-head">
       <button id="schedPrev" type="button" class="sched-nav" aria-label="이전 달"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
@@ -112,7 +105,6 @@
       <button id="schedToday" type="button" class="sched-today">오늘</button>
       <button id="schedAdd" type="button" class="sched-add-top" aria-label="일정 기입">＋ 기입</button>
     </div>
-    <div id="schedNotice" class="sched-notice" role="region" aria-label="이번 달 공지(연차 등)" hidden></div>
     <div class="sched-week" aria-hidden="true"><span class="sun">일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span class="sat">토</span></div>
     <div id="schedGrid" class="sched-grid" role="group" aria-label="날짜"></div>
     <p id="schedNote" class="sched-note muted" role="status"></p>
@@ -830,30 +822,30 @@
   </a>
 </nav>
 
-<script src="config.js?v=78"></script>
-<script src="errlog.js?v=78"></script>
-<script src="weather.js?v=78"></script>
-<script src="entries.js?v=78"></script>
-<script src="push.js?v=78"></script>
-<script src="outbox.js?v=78"></script>
-<script src="phonecopy.js?v=78"></script>
-<script src="pinhistory.js?v=78"></script>
-<script src="perf.js?v=78"></script>
-<script src="search.js?v=78"></script>
-<script src="busy.js?v=78"></script>
-<script src="drawing.js?v=78"></script>
-<script src="cad-engine.js?v=78"></script>
-<script src="cad.js?v=78"></script>
-<script src="cadfiles.js?v=78"></script>
-<script src="gps.js?v=78"></script>
-<script src="gallery.js?v=78"></script>
-<script src="camera.js?v=78"></script>
-<script src="app.js?v=78"></script>
-<script src="ocr-kit.js?v=78"></script>
-<script src="schedule-parse.js?v=78"></script>
-<script src="schedule.js?v=78"></script>
-<script src="card-enhance.js?v=78"></script>
-<script src="card-crop.js?v=78"></script>
-<script src="contacts.js?v=78"></script>
+<script src="config.js?v=79"></script>
+<script src="errlog.js?v=79"></script>
+<script src="weather.js?v=79"></script>
+<script src="entries.js?v=79"></script>
+<script src="push.js?v=79"></script>
+<script src="outbox.js?v=79"></script>
+<script src="phonecopy.js?v=79"></script>
+<script src="pinhistory.js?v=79"></script>
+<script src="perf.js?v=79"></script>
+<script src="search.js?v=79"></script>
+<script src="busy.js?v=79"></script>
+<script src="drawing.js?v=79"></script>
+<script src="cad-engine.js?v=79"></script>
+<script src="cad.js?v=79"></script>
+<script src="cadfiles.js?v=79"></script>
+<script src="gps.js?v=79"></script>
+<script src="gallery.js?v=79"></script>
+<script src="camera.js?v=79"></script>
+<script src="app.js?v=79"></script>
+<script src="ocr-kit.js?v=79"></script>
+<script src="schedule-parse.js?v=79"></script>
+<script src="schedule.js?v=79"></script>
+<script src="card-enhance.js?v=79"></script>
+<script src="card-crop.js?v=79"></script>
+<script src="contacts.js?v=79"></script>
 </body>
 </html>

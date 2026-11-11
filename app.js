@@ -1034,7 +1034,7 @@ function openApp() {
   state.ready = true;
   renderPeople();
   refreshWeather();
-  $('today').textContent = new Date().toLocaleDateString('ko-KR', { timeZone: TZ, month: 'long', day: 'numeric', weekday: 'short' });
+  if ($('today')) $('today').textContent = new Date().toLocaleDateString('ko-KR', { timeZone: TZ, month: 'long', day: 'numeric', weekday: 'short' });
   $('date').value = todayKst();
   renderTypes();
   renderIssues();

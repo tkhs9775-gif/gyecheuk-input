@@ -256,7 +256,24 @@
     return s || String(title || '');
   }
 
-  const api = { parseWeeklyPlan, entriesOf, findPeriod, noteDate, mondayOf, addDays, dowOf, splitTitle, isNotice, noticeText, DAYS };
+  // 홈 「오늘의 공지」 판(2026-11-11 8차, 휴대폰·PC 공용): 오늘 메모(안 읽은 것 → 새것 순) · 오늘 공지(연차 등)
+  // · 지난 sinceDays 일 안 다른 날의 안 읽은 메모 · 앞으로 aheadDays 일 공지. byDate/memoBy = Map(날짜 → 목록)
+  function todayBoard(today, byDate, memoBy, isUnread, { sinceDays = 30, aheadDays = 7 } = {}) {
+    const byAt = (a, b) => String(b.at || '').localeCompare(String(a.at || ''));
+    const memos = [...(memoBy.get(today) || [])].sort((a, b) => Number(isUnread(b)) - Number(isUnread(a)) || byAt(a, b));
+    const notices = (byDate.get(today) || []).filter(isNotice);
+    const since = addDays(today, -sinceDays);
+    const end = addDays(today, aheadDays);
+    const otherUnread = [];
+    for (const [d, list] of memoBy) if (d !== today && d >= since && d <= end) for (const m of list) if (isUnread(m)) otherUnread.push(m);
+    otherUnread.sort(byAt);
+    const upcoming = [];
+    for (const [d, list] of byDate) if (d > today && d <= end) for (const it of list) if (isNotice(it)) upcoming.push(it);
+    upcoming.sort((a, b) => a.date.localeCompare(b.date) || String(a.title).localeCompare(String(b.title)));
+    return { memos, notices, otherUnread, upcoming, unread: memos.filter(isUnread).length + otherUnread.length };
+  }
+
+  const api = { parseWeeklyPlan, entriesOf, findPeriod, noteDate, mondayOf, addDays, dowOf, splitTitle, isNotice, noticeText, todayBoard, DAYS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SchedParse = api;
 })(typeof window !== 'undefined' ? window : globalThis);

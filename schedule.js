@@ -133,45 +133,8 @@ function schedRender() {
     cells.push(b);
   }
   $('schedGrid').replaceChildren(...cells);
-  schedRenderNotice();
-  schedRenderBanner();
+  schedRenderBoard();
   schedRenderDay();
-}
-
-// 달력 위 공지 띠: 보이는 달의 연차·휴가 등. 지난 날은 흐리게, 누르면 그날 창
-function schedRenderNotice() {
-  const box = $('schedNotice');
-  const today = todayKst();
-  const list = [];
-  for (const [d, items] of sched.byDate) {
-    if (d.slice(0, 7) !== sched.month) continue;
-    for (const it of items) if (SchedParse.isNotice(it)) list.push(it);
-  }
-  list.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
-  box.hidden = !list.length;
-  if (!list.length) { box.replaceChildren(); return; }
-  const head = document.createElement('p');
-  head.className = 'sn-head';
-  head.textContent = `📢 공지 ${list.length}건`;
-  const ul = document.createElement('ul');
-  ul.className = 'sn-list';
-  for (const it of list) {
-    const li = document.createElement('li');
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = it.date < today ? 'sn-item past' : 'sn-item';
-    const d = document.createElement('span');
-    d.className = 'sn-date';
-    d.textContent = `${Number(it.date.slice(5, 7))}/${Number(it.date.slice(8, 10))}(${'일월화수목금토'[schedDow(it.date)]})${it.date === today ? ' 오늘' : ''}`;
-    const t = document.createElement('span');
-    t.className = 'sn-text';
-    t.textContent = SchedParse.noticeText(it.title);
-    b.append(d, t);
-    b.addEventListener('click', () => schedOpenDay(it.date));
-    li.append(b);
-    ul.append(li);
-  }
-  box.replaceChildren(head, ul);
 }
 
 // 담당 직원 한 글자마다 정해진 색(같은 사람은 늘 같은 색)
@@ -689,25 +652,83 @@ async function schedSaveImport() {
 // ---------- 시작 ----------
 
 let schedStarted = false;
-// ---------- 안 읽은 메모 안내 띠(B안) ----------
-// 오늘이 든 달을 읽었을 때만 새로 센다(다른 달을 보고 있어도 띠는 그대로)
-const SCHED_UNREAD_DAYS = 30;
-function schedRenderBanner() {
+// ---------- 오늘의 공지 판(2026-11-11 8차) ----------
+// 오늘이 든 달을 읽었을 때만 새로 만든다(다른 달을 보고 있어도 판은 그대로). 규칙은 SchedParse.todayBoard(휴대폰·PC 공용)
+const SCHED_BOARD_MEMOS = 3;   // 오늘 메모는 3줄까지, 나머지는 「외 N건」
+const schedShort = (iso) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}(${'일월화수목금토'[schedDow(iso)]})`;
+function schedOpenMemoFromBoard(m) { sched.openMemos.add(m.id); schedOpenDay(m.date); schedToggleMemoRead(m); }
+
+function schedBoardRow(cls, parts, onClick, label) {
+  const li = document.createElement('li');
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = `tb-row ${cls}`;
+  for (const [c, text] of parts) { const s = document.createElement('span'); s.className = c; s.textContent = text; b.append(s); }
+  if (label) b.setAttribute('aria-label', label);
+  b.addEventListener('click', onClick);
+  li.append(b);
+  return li;
+}
+
+function schedRenderBoard() {
   const today = todayKst();
   const { from, to } = schedRange(sched.month);
-  if (today >= from && today <= to) {
-    const since = SchedParse.addDays(today, -SCHED_UNREAD_DAYS);
-    sched.unread = [...sched.memoBy.values()].flat().filter((m) => m.date >= since && schedMemoUnread(m))
-      .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  if (today >= from && today <= to) sched.board = SchedParse.todayBoard(today, sched.byDate, sched.memoBy, schedMemoUnread);
+  const bd = sched.board || { memos: [], notices: [], otherUnread: [], upcoming: [], unread: 0 };
+  $('tbDate').textContent = schedShort(today);
+  $('tbUnread').hidden = !bd.unread;
+  $('tbUnread').textContent = `안 읽음 ${bd.unread}`;
+  $('todayBoard').classList.toggle('has-unread', bd.unread > 0);
+  const rows = [];
+  // 1) 오늘 공지(연차·휴가 등)
+  for (const it of bd.notices) {
+    const text = SchedParse.noticeText(it.title);
+    const kind = (text.match(/연차|반차|휴가|휴무|병가|경조|공지/) || ['공지'])[0];
+    rows.push(schedBoardRow('notice', [['tb-tag', kind], ['tb-text', text]], () => schedOpenDay(today), `공지: ${text}`));
   }
-  const list = sched.unread || [];
-  const box = $('memoBanner');
-  box.hidden = !list.length;
-  if (!list.length) return;
-  const m = list[0];
-  $('memoBannerCount').textContent = `안 읽은 상황 메모 ${list.length}건`;
-  $('memoBannerLine').textContent = `${Number(m.date.slice(5, 7))}/${Number(m.date.slice(8, 10))} ${m.user} · 눌러서 확인`;
-  box.setAttribute('aria-label', `안 읽은 상황 메모 ${list.length}건. 누르면 ${schedLabel(m.date)} 창을 엽니다`);
+  // 2) 오늘 메모(상황 보고) — 안 읽은 것 먼저
+  for (const m of bd.memos.slice(0, SCHED_BOARD_MEMOS)) {
+    const unread = schedMemoUnread(m);
+    const first = String(m.text || '').split(/\r?\n/)[0];
+    rows.push(schedBoardRow(`memo${unread ? ' unread' : ''}`,
+      [['tb-dot', ''], ['tb-who', `${m.user}${schedHm(m.at) ? ` ${schedHm(m.at)}` : ''}`], ['tb-text', first], ['tb-state', unread ? '확인' : `확인 ${m.reads.length}`]],
+      () => schedOpenMemoFromBoard(m), `메모 ${m.user}: ${first}${unread ? ' (안 읽음, 누르면 확인)' : ''}`));
+  }
+  if (bd.memos.length > SCHED_BOARD_MEMOS) {
+    rows.push(schedBoardRow('more', [['tb-text', `오늘 메모 외 ${bd.memos.length - SCHED_BOARD_MEMOS}건`], ['tb-go', '보기 ›']], () => schedOpenDay(today)));
+  }
+  // 3) 다른 날 안 읽은 메모
+  if (bd.otherUnread.length) {
+    const m = bd.otherUnread[0];
+    rows.push(schedBoardRow('memo unread other',
+      [['tb-dot', ''], ['tb-who', schedShort(m.date)], ['tb-text', `${m.user} 메모${bd.otherUnread.length > 1 ? ` 외 ${bd.otherUnread.length - 1}건` : ''}`], ['tb-state', '확인']],
+      () => schedOpenMemoFromBoard(m), `다른 날 안 읽은 메모 ${bd.otherUnread.length}건. 누르면 ${schedLabel(m.date)}`));
+  }
+  if (!rows.length) {
+    const li = document.createElement('li');
+    li.className = 'tb-empty';
+    li.textContent = '오늘은 공지가 없습니다. 메모를 남기면 모두에게 알림과 함께 여기에 올라옵니다.';
+    rows.push(li);
+  }
+  // 4) 앞으로 7일 공지: 한 줄 꼬리표
+  if (bd.upcoming.length) {
+    const li = document.createElement('li');
+    li.className = 'tb-ahead';
+    const h = document.createElement('span');
+    h.className = 'tb-ahead-h';
+    h.textContent = '다가오는';
+    li.append(h);
+    for (const it of bd.upcoming.slice(0, 4)) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tb-chip';
+      b.textContent = `${schedShort(it.date)} ${SchedParse.noticeText(it.title)}`;
+      b.addEventListener('click', () => schedOpenDay(it.date));
+      li.append(b);
+    }
+    rows.push(li);
+  }
+  $('tbList').replaceChildren(...rows);
 }
 
 function schedOnOpen() {
@@ -733,7 +754,7 @@ $('schedDayNext').addEventListener('click', () => schedOpenDay(SchedParse.addDay
 $('schedDayClose').addEventListener('click', () => $('schedDayDialog').close());
 $('schedDayAdd').addEventListener('click', () => { $('schedDayDialog').close(); schedOpenAdd(); });
 $('schedDayMemo').addEventListener('click', schedOpenMemo);
-$('memoBanner').addEventListener('click', () => { const m = (sched.unread || [])[0]; if (m) { sched.openMemos.add(m.id); schedOpenDay(m.date); schedToggleMemoRead(m); } });
+$('tbMemo').addEventListener('click', () => { sched.selected = todayKst(); schedOpenMemo(todayKst()); });
 $('schedMemoForm').addEventListener('submit', schedSubmitMemo);
 // 기입 창 위 [일정 | 메모] 전환: 적던 날짜·글을 가지고 다른 창으로 넘어간다
 $('schedAddToMemo').addEventListener('click', () => { const d = $('schedDate').value; const t = $('schedText').value; $('schedAddDialog').close(); schedOpenMemo(d, t); });

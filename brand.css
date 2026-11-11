@@ -423,3 +423,50 @@ html[data-theme="dark"] .mb-text strong { color: #FF8A8E; }
 .kind-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 html[data-theme="dark"] .kind-tabs { background: rgba(255, 255, 255, .06); }
 html[data-theme="dark"] .kind-tab[aria-pressed="true"] { background: rgba(110, 162, 255, .18); color: #9DC1FF; box-shadow: none; }
+
+/* ---------- 오늘의 공지 판(2026-11-11 8차): 예전 「계측·측량 입력」 칸 자리 ----------
+   흰 카드 + 위쪽 얇은 회사 파랑 띠. 안 읽은 메모가 있으면 띠가 빨강으로 바뀌고 「안 읽음 N」 꼬리표가 숨 쉰다 */
+.today-board { position: relative; margin: 14px 0 12px; padding: 12px 12px 8px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); box-shadow: 0 4px 14px rgba(25, 43, 84, .07); overflow: hidden; }
+.today-board::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: linear-gradient(90deg, var(--brand), #6FA8E0); }
+.today-board.has-unread::before { background: linear-gradient(90deg, #E5484D, #F59E0B); }
+.tb-head { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 2px 6px; }
+.tb-title { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 17px; font-weight: 800; letter-spacing: -.2px; white-space: nowrap; }
+.tb-ico { font-size: 16px; }
+.tb-date { flex: none; overflow: hidden; color: var(--muted); font-size: 13px; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.tb-unread { flex: none; padding: 1px 8px; border-radius: 10px; background: #E5484D; color: #FFF; font-size: 12px; font-weight: 800; line-height: 18px; animation: tb-breathe 2.2s ease-in-out infinite; }
+.tb-unread[hidden] { display: none; }
+@keyframes tb-breathe { 50% { box-shadow: 0 0 0 4px rgba(229, 72, 77, .18); } }
+.tb-add { flex: none; margin-left: auto; min-height: 32px; padding: 0 12px; border: 0; border-radius: 16px; background: var(--chip); color: var(--accent); font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; }
+.tb-add:active { filter: brightness(.95); }
+.tb-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.tb-row { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 0; border-radius: 11px; background: #F5F8FC; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.tb-row:active { filter: brightness(.96); }
+.tb-row:focus-visible, .tb-chip:focus-visible, .tb-add:focus-visible { outline: 3px solid #8DBDF0; outline-offset: 1px; }
+.tb-text { flex: 1; min-width: 0; overflow: hidden; font-size: 14px; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+.tb-row.notice { background: rgba(245, 158, 11, .12); }
+.tb-tag { flex: none; padding: 0 8px; border-radius: 9px; background: #F59E0B; color: #FFF; font-size: 12px; font-weight: 800; line-height: 20px; }
+.tb-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; box-shadow: inset 0 0 0 1.8px #E5484D; }
+.tb-row.memo.unread { background: rgba(229, 72, 77, .08); }
+.tb-row.memo.unread .tb-dot { background: #E5484D; box-shadow: 0 0 0 3px rgba(229, 72, 77, .18); }
+.tb-who { flex: none; color: var(--muted); font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tb-state { flex: none; color: var(--muted); font-size: 12px; font-weight: 700; }
+.tb-row.memo.unread .tb-state { padding: 0 9px; border-radius: 10px; background: #E5484D; color: #FFF; font-weight: 800; line-height: 20px; }
+.tb-row.more { min-height: 36px; background: transparent; }
+.tb-row.more .tb-text { color: var(--muted); font-size: 13px; }
+.tb-go { flex: none; color: var(--accent); font-size: 13px; font-weight: 800; }
+.tb-empty { padding: 10px 6px 12px; color: var(--muted); font-size: 13px; line-height: 1.5; word-break: keep-all; }
+.tb-ahead { display: flex; align-items: center; gap: 6px; padding: 6px 2px 4px; overflow-x: auto; scrollbar-width: none; }
+.tb-ahead::-webkit-scrollbar { display: none; }
+.tb-ahead-h { flex: none; color: var(--muted); font-size: 12px; font-weight: 800; }
+.tb-chip { flex: none; min-height: 30px; padding: 0 10px; border: 1px solid #F2C98A; border-radius: 15px; background: transparent; color: #A65A00; font: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+html[data-theme="dark"] .today-board { box-shadow: none; }
+html[data-theme="dark"] .tb-row { background: rgba(255, 255, 255, .05); }
+html[data-theme="dark"] .tb-row.notice { background: rgba(245, 158, 11, .14); }
+html[data-theme="dark"] .tb-row.memo.unread { background: rgba(229, 72, 77, .14); }
+html[data-theme="dark"] .tb-row.more { background: transparent; }
+html[data-theme="dark"] .tb-add { background: rgba(110, 162, 255, .16); color: #9DC1FF; }
+html[data-theme="dark"] .tb-chip { border-color: rgba(251, 191, 36, .45); color: #FBBF24; }
+@media (prefers-reduced-motion: reduce) { .tb-unread { animation: none; } }
+/* 좁은 폰(360px)에서도 머리줄이 한 줄에: 글씨 조금 작게, 확성기 그림은 빼고, 그래도 넘치면 다음 줄로 */
+.tb-head { flex-wrap: wrap; gap: 6px; }
+@media (max-width: 400px) { .tb-ico { display: none; } .tb-title { font-size: 16px; } .tb-add { padding: 0 10px; } .tb-unread { padding: 1px 7px; } }
