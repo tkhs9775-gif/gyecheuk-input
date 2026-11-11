@@ -246,7 +246,17 @@
     return { main, company, person };
   }
 
-  const api = { parseWeeklyPlan, entriesOf, findPeriod, noteDate, mondayOf, addDays, dowOf, splitTitle, DAYS };
+  // 공지(연차·휴가 등): 계획서 MEMO 칸에서 온 일정이거나 제목에 연차·반차·휴가·휴무·공지가 든 일정
+  const NOTICE_WORD = /연차|반차|휴가|휴무|공지|병가|경조/;
+  function isNotice(it) { return it.memo === 'MEMO' || NOTICE_WORD.test(it.title || ''); }
+  // 공지 글에서 날짜 표기(옆에 날짜를 따로 보여 주므로)를 뺀다: '홍정규 과장 - 2026년 11월 10일 연차' → '홍정규 과장 연차'
+  function noticeText(title) {
+    const DATE = /\s*[-–·,]?\s*(?:(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*\d{1,2}\s*일|\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.?|(?<![\d-])\d{1,2}\/\d{1,2}(?![\d-]))\s*(?:\([월화수목금토일]\))?/g;
+    const s = String(title || '').replace(DATE, ' ').replace(/\s+/g, ' ').trim();
+    return s || String(title || '');
+  }
+
+  const api = { parseWeeklyPlan, entriesOf, findPeriod, noteDate, mondayOf, addDays, dowOf, splitTitle, isNotice, noticeText, DAYS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SchedParse = api;
 })(typeof window !== 'undefined' ? window : globalThis);

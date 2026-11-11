@@ -100,6 +100,14 @@ function schedRender() {
     num.className = 'n';
     num.textContent = String(Number(d.slice(8, 10)));
     b.append(num);
+    if (list.some(SchedParse.isNotice)) {
+      b.classList.add('notice');
+      const n = document.createElement('span');
+      n.className = 'nt';
+      n.setAttribute('aria-hidden', 'true');
+      n.textContent = '📢';
+      b.append(n);
+    }
     if (list.length) {
       const cnt = document.createElement('span');
       cnt.className = list.some(schedMine) ? 'c mine' : 'c';
@@ -109,7 +117,44 @@ function schedRender() {
     cells.push(b);
   }
   $('schedGrid').replaceChildren(...cells);
+  schedRenderNotice();
   schedRenderDay();
+}
+
+// 달력 위 공지 띠: 보이는 달의 연차·휴가 등. 지난 날은 흐리게, 누르면 그날 창
+function schedRenderNotice() {
+  const box = $('schedNotice');
+  const today = todayKst();
+  const list = [];
+  for (const [d, items] of sched.byDate) {
+    if (d.slice(0, 7) !== sched.month) continue;
+    for (const it of items) if (SchedParse.isNotice(it)) list.push(it);
+  }
+  list.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  box.hidden = !list.length;
+  if (!list.length) { box.replaceChildren(); return; }
+  const head = document.createElement('p');
+  head.className = 'sn-head';
+  head.textContent = `📢 공지 ${list.length}건`;
+  const ul = document.createElement('ul');
+  ul.className = 'sn-list';
+  for (const it of list) {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = it.date < today ? 'sn-item past' : 'sn-item';
+    const d = document.createElement('span');
+    d.className = 'sn-date';
+    d.textContent = `${Number(it.date.slice(5, 7))}/${Number(it.date.slice(8, 10))}(${'일월화수목금토'[schedDow(it.date)]})${it.date === today ? ' 오늘' : ''}`;
+    const t = document.createElement('span');
+    t.className = 'sn-text';
+    t.textContent = SchedParse.noticeText(it.title);
+    b.append(d, t);
+    b.addEventListener('click', () => schedOpenDay(it.date));
+    li.append(b);
+    ul.append(li);
+  }
+  box.replaceChildren(head, ul);
 }
 
 // 담당 직원 한 글자마다 정해진 색(같은 사람은 늘 같은 색)
@@ -119,7 +164,7 @@ const schedPersonColor = (ch) => SCHED_PERSON_COLORS[ch.charCodeAt(0) % SCHED_PE
 // 그날 일정 한 줄: [담당 직원 동그라미] 현장(굵게, 단어 단위 줄바꿈) / 시공사 · 비고 꼬리표 · 기입한 사람
 function schedItemEl(it) {
   const { main, company, person } = SchedParse.splitTitle(it.title);
-  const memoLine = it.memo === 'MEMO';   // 계획서 아래 MEMO 칸에서 온 일정(연차 등)
+  const memoLine = SchedParse.isNotice(it);   // 공지(연차 등): 창 맨 위에 눈에 띄게
   const li = document.createElement('li');
   li.className = 'sd-item';
   if (schedMine(it)) li.classList.add('mine');
@@ -127,19 +172,20 @@ function schedItemEl(it) {
   const who = document.createElement('span');
   who.className = 'sd-person';
   who.setAttribute('aria-hidden', 'true');
-  if (person) { who.textContent = person; who.style.background = schedPersonColor(person); who.title = `담당 ${person}`; } else { who.textContent = memoLine ? '📝' : '·'; who.classList.add('none'); }
+  if (person) { who.textContent = person; who.style.background = schedPersonColor(person); who.title = `담당 ${person}`; } else { who.textContent = memoLine ? '📢' : '·'; who.classList.add('none'); }
   const body = document.createElement('div');
   body.className = 'sd-body';
   const title = document.createElement('p');
   title.className = 'sd-main';
-  title.textContent = main;
+  title.textContent = memoLine ? SchedParse.noticeText(it.title) : main;
   body.append(title);
   const tags = document.createElement('p');
   tags.className = 'sd-tags';
   const tag = (text, cls) => { const t = document.createElement('span'); t.className = `sd-tag ${cls}`; t.textContent = text; tags.append(t); };
   if (schedMine(it)) tag('내 현장', 'mine');
   if (company) tag(company, 'company');
-  if (it.memo && !memoLine) tag(it.memo, 'memo');
+  if (memoLine) tag('공지', 'notice');
+  if (it.memo && it.memo !== 'MEMO') tag(it.memo, 'memo');
   if (tags.childElementCount) body.append(tags);
   if (it.user) { const by = document.createElement('p'); by.className = 'sd-by'; by.textContent = `${it.user} 기입`; body.append(by); }
   const del = document.createElement('button');
@@ -155,10 +201,10 @@ function schedItemEl(it) {
 function schedRenderDay() {
   const d = sched.selected;
   if (!d) return;
-  // 내 현장 → 담당 직원별 → 이름순(같은 사람 일정이 붙어 보이게). MEMO(연차 등)는 맨 아래
+  // 공지(연차 등)는 맨 위 → 내 현장 → 담당 직원별 → 이름순(같은 사람 일정이 붙어 보이게)
   const list = [...(sched.byDate.get(d) || [])].sort((a, b) => {
     const A = SchedParse.splitTitle(a.title); const B = SchedParse.splitTitle(b.title);
-    return Number(schedMine(b)) - Number(schedMine(a)) || Number(a.memo === 'MEMO') - Number(b.memo === 'MEMO') || (A.person || '힣').localeCompare(B.person || '힣') || A.main.localeCompare(B.main);
+    return Number(SchedParse.isNotice(b)) - Number(SchedParse.isNotice(a)) || Number(schedMine(b)) - Number(schedMine(a)) || (A.person || '힣').localeCompare(B.person || '힣') || A.main.localeCompare(B.main);
   });
   $('schedDayTitle').textContent = `${schedLabel(d)}${d === todayKst() ? ' · 오늘' : ''}`;
   const people = [...new Set(list.map((x) => SchedParse.splitTitle(x.title).person).filter(Boolean))];

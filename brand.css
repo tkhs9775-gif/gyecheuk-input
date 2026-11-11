@@ -218,7 +218,23 @@ dialog.sched-day-dialog { width: min(94vw, 520px); max-height: 86vh; max-height:
 .sd-item { display: flex; align-items: flex-start; gap: 10px; padding: 11px 6px 11px 4px; border-bottom: 1px solid var(--line); }
 .sd-item:last-child { border-bottom: 0; }
 .sd-item.mine { margin: 2px 0; padding-left: 8px; border: 0; border-radius: 12px; background: var(--chip); }
-.sd-item.memo .sd-main { font-weight: 600; color: var(--muted); }
+.sd-item.memo { margin: 2px 0 6px; padding-left: 8px; border: 1.5px solid #F2A93B; border-radius: 12px; background: rgba(245, 158, 11, .13); }
+.sd-item.memo .sd-main { font-weight: 800; color: var(--text); }
+.sd-item.memo .sd-person.none { background: #F59E0B; color: #FFF; font-size: 16px; }
+.sd-tag.notice { background: #F59E0B; color: #FFF; font-weight: 800; }
+/* 달력 위 공지 띠(연차·휴가 등) */
+.sched-notice { margin: 0 0 10px; padding: 10px 12px; border: 1.5px solid #F2A93B; border-left-width: 5px; border-radius: 12px; background: rgba(245, 158, 11, .12); }
+.sched-notice .sn-head { margin: 0 0 6px; font-size: 14px; font-weight: 800; color: #B45309; }
+html[data-theme="dark"] .sched-notice .sn-head { color: #FBBF24; }
+.sched-notice .sn-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.sched-notice .sn-item { width: 100%; display: flex; align-items: baseline; gap: 10px; padding: 6px 4px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.sched-notice .sn-item:active { background: rgba(245, 158, 11, .2); }
+.sched-notice .sn-item:focus-visible { outline: 3px solid #F2A93B; }
+.sched-notice .sn-date { flex: none; min-width: 64px; font-size: 13px; font-weight: 800; color: #B45309; font-variant-numeric: tabular-nums; }
+html[data-theme="dark"] .sched-notice .sn-date { color: #FBBF24; }
+.sched-notice .sn-text { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
+.sched-notice .sn-item.past { opacity: .5; }
+.sched-cell .nt { position: absolute; top: 1px; right: 2px; font-size: 10px; line-height: 1; }
 .sd-person { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 16px; color: #FFF; font-size: 15px; font-weight: 800; }
 .sd-person.none { background: var(--chip); color: var(--muted); font-size: 14px; }
 .sd-body { flex: 1; min-width: 0; }
