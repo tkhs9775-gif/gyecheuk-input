@@ -462,6 +462,7 @@ async function openSiteDrawingFolder(site) {
   $('drawingSiteTitle').textContent = `${site} 도면`;
   show($('drawingSitesView'), false);
   show($('drawingFilesView'), true);
+  window.contactsOpenSite?.(site);   // 폴더 위 현장 담당자 명함(contacts.js)
 
   const cachedFiles = readCached(`drawings_${site}`);
   drawingState.files = fileListOf(cachedFiles);

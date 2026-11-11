@@ -251,7 +251,7 @@ function showGate() {
 // ---------- recent list ----------
 
 function renderRecent(rows, emptyText = '아직 입력한 내역이 없습니다. 아래 「계측·측량 입력」에서 시작해 주세요.') {
-  for (const id of ['recentHome', 'recentInput']) {
+  for (const id of ['recentInput']) {   // 홈의 최근 입력은 캘린더로 바뀌었다(2026-11-11). 입력 화면 목록만 남는다
     const ul = $(id);
     if (rows.length === 0) {
       const li = document.createElement('li');
@@ -1040,6 +1040,7 @@ function openApp() {
   renderIssues();
   if (!restoreDraft()) selectType(siteTypes()[0] ?? OTHER);
   route();
+  window.schedOnOpen?.();   // 홈 캘린더(schedule.js, app.js 다음에 읽힌다 — 아직이면 그쪽이 읽힐 때 스스로 그린다)
   if (apkOutdated()) flash(`📱 새 앱(1.${LATEST_APK})이 나왔습니다 · 정보 탭에서 확인`);
   // 홈이 뜬 뒤 한가할 때 도면 엔진(pdf.js)을 미리 받아 둔다: 도면 탭을 처음 눌러도 기다리지 않는다
   setTimeout(() => { if (typeof warmDrawing === 'function') warmDrawing(); }, WARM_DRAWING_MS);

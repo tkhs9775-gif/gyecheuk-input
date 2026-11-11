@@ -9,9 +9,9 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=71">
-<link rel="stylesheet" href="theme.css?v=71">
-<link rel="stylesheet" href="brand.css?v=71">
+<link rel="stylesheet" href="style.css?v=72">
+<link rel="stylesheet" href="theme.css?v=72">
+<link rel="stylesheet" href="brand.css?v=72">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -93,12 +93,30 @@
 
   <a id="goInput" href="#input" class="tile">
     <span class="tile-icon"><svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>
-    <span class="tile-text"><b>계측·측량 입력</b><small>값 · 사진 · 이상 보고</small></span>
+    <span class="tile-text"><b>계측·측량 입력</b></span>
     <svg class="tile-chev" aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
   </a>
 
-  <h2 class="section">내 최근 입력 5건</h2>
-  <ul id="recentHome" class="list"></ul>
+  <!-- 일정 캘린더(schedule.js): 날짜를 누르면 아래에 그날 일정. 지난 달도 ‹ 로 넘겨 본다 -->
+  <section id="sched" class="sched" aria-labelledby="schedMonth">
+    <div class="sched-head">
+      <button id="schedPrev" type="button" class="sched-nav" aria-label="이전 달"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+      <h2 id="schedMonth" class="sched-month" aria-live="polite"></h2>
+      <button id="schedNext" type="button" class="sched-nav" aria-label="다음 달"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+      <button id="schedToday" type="button" class="sched-today">오늘</button>
+    </div>
+    <div class="sched-week" aria-hidden="true"><span class="sun">일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span class="sat">토</span></div>
+    <div id="schedGrid" class="sched-grid" role="group" aria-label="날짜"></div>
+    <p id="schedNote" class="sched-note muted" role="status"></p>
+  </section>
+
+  <section class="sched-day" aria-labelledby="schedDayTitle">
+    <div class="sched-day-head">
+      <h2 id="schedDayTitle" class="sched-day-title"></h2>
+      <button id="schedAdd" type="button" class="btn primary small sched-add">＋ 일정 기입</button>
+    </div>
+    <ul id="schedList" class="list sched-list"></ul>
+  </section>
 </main>
 
 <form id="input" class="screen hidden" novalidate>
@@ -264,6 +282,83 @@
   </form>
 </dialog>
 
+<!-- 일정 기입: 한 건 직접 입력, 또는 옆 버튼으로 주간 계획서(PDF·JPG·PNG)를 읽어 한꺼번에 -->
+<dialog id="schedAddDialog" aria-labelledby="schedAddTitle">
+  <form id="schedAddForm" class="dlg" novalidate>
+    <h2 id="schedAddTitle" class="dlg-title">일정 기입</h2>
+    <label class="field"><span class="label">날짜</span><input id="schedDate" type="date" required></label>
+    <div class="field">
+      <label class="label" for="schedText">내용</label>
+      <div class="sched-input-row">
+        <input id="schedText" type="text" maxlength="200" placeholder="예: 역삼동 667-6 계측관리" autocomplete="off" enterkeyhint="done">
+        <button id="schedFileBtn" type="button" class="sched-file-btn" aria-describedby="schedFileHint">
+          <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M12 18v-6M9 15l3-3 3 3"/></svg>
+          <span>파일</span>
+        </button>
+      </div>
+      <small id="schedFileHint" class="sched-hint">파일 버튼: 주간 계획서 PDF·JPG·PNG 를 올리면 글자를 읽어 ㅇ 표시된 요일에 한꺼번에 넣습니다</small>
+      <input id="schedFile" type="file" hidden>
+    </div>
+    <label class="field"><span class="label">비고 (선택)</span><input id="schedMemo" type="text" maxlength="200" placeholder="예: 계측관리" autocomplete="off"></label>
+    <p id="schedAddError" class="dlg-err" role="alert"></p>
+    <div class="row">
+      <button id="schedAddCancel" type="button" class="btn outline">취소</button>
+      <button type="submit" class="btn primary grow">기입</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 계획서 판독 결과: 저장 전에 날짜별로 확인하고 빼고 싶은 줄은 체크를 끈다 -->
+<dialog id="schedImportDialog" class="sched-import" aria-labelledby="schedImportTitle">
+  <form method="dialog" class="dlg">
+    <h2 id="schedImportTitle" class="dlg-title">계획서 판독 결과</h2>
+    <p id="schedImportInfo" class="muted"></p>
+    <label class="field"><span class="label">이 계획서의 주 (그 주 아무 날이나 고르면 월요일 기준으로 맞춥니다)</span><input id="schedWeek" type="date"></label>
+    <p id="schedImportWarn" class="dlg-err" role="alert"></p>
+    <div id="schedImportList" class="sched-preview"></div>
+    <div class="row">
+      <button id="schedImportCancel" type="button" class="btn outline">취소</button>
+      <button id="schedImportSave" type="button" class="btn primary grow">추가</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 명함 등록·수정: 찍거나 고르면 글자를 읽어 칸을 채운다. 틀린 칸은 고친 뒤 저장 -->
+<dialog id="contactDialog" class="contact-dialog" aria-labelledby="contactTitle">
+  <form id="contactForm" class="dlg" novalidate>
+    <h2 id="contactTitle" class="dlg-title">명함 등록</h2>
+    <p id="contactSite" class="muted"></p>
+    <div class="card-shot">
+      <img id="contactPhoto" class="card-photo hidden" alt="명함 사진">
+      <div id="contactShotBtns" class="card-shot-btns">
+        <button id="contactCamBtn" type="button" class="btn primary small">📷 명함 촬영</button>
+        <button id="contactPickBtn" type="button" class="btn outline small">🖼 사진에서 고르기</button>
+      </div>
+      <p id="contactOcrNote" class="card-ocr-note" role="status">명함을 화면 가득, 반듯하게 찍으면 이름·전화·이메일을 자동으로 채웁니다.</p>
+      <input id="contactCam" type="file" accept="image/*" capture="environment" hidden>
+      <input id="contactPick" type="file" accept="image/*" hidden>
+    </div>
+    <div class="card-fields">
+      <label class="field"><span class="label">이름 (담당자)</span><input id="cfName" type="text" maxlength="100" autocomplete="off" required></label>
+      <label class="field"><span class="label">직함</span><input id="cfTitle" type="text" maxlength="100" autocomplete="off" placeholder="예: 현장소장"></label>
+      <label class="field wide"><span class="label">회사</span><input id="cfCompany" type="text" maxlength="100" autocomplete="off"></label>
+      <label class="field wide"><span class="label">부서·현장</span><input id="cfDept" type="text" maxlength="100" autocomplete="off"></label>
+      <label class="field"><span class="label">휴대폰</span><input id="cfMobile" type="tel" maxlength="100" autocomplete="off" inputmode="tel"></label>
+      <label class="field"><span class="label">전화</span><input id="cfPhone" type="tel" maxlength="100" autocomplete="off" inputmode="tel"></label>
+      <label class="field"><span class="label">팩스</span><input id="cfFax" type="tel" maxlength="100" autocomplete="off" inputmode="tel"></label>
+      <label class="field"><span class="label">이메일</span><input id="cfEmail" type="email" maxlength="100" autocomplete="off" inputmode="email"></label>
+      <label class="field wide"><span class="label">주소</span><input id="cfAddress" type="text" maxlength="300" autocomplete="off"></label>
+      <label class="field wide"><span class="label">메모 (선택)</span><input id="cfMemo" type="text" maxlength="300" autocomplete="off" placeholder="예: 오전에만 통화 가능"></label>
+    </div>
+    <p id="contactError" class="dlg-err" role="alert"></p>
+    <div class="row">
+      <button id="contactDelete" type="button" class="btn outline danger hidden">삭제</button>
+      <button id="contactCancel" type="button" class="btn outline">취소</button>
+      <button type="submit" class="btn primary grow">저장</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="outboxDialog" aria-labelledby="outboxTitle">
   <div class="dlg">
     <h2 id="outboxTitle" class="dlg-title">전송 대기 입력</h2>
@@ -398,6 +493,14 @@
         <button type="button" data-view="typed" aria-pressed="false">계측기별</button>
       </nav>
     </div>
+    <!-- 현장 담당자 명함(contacts.js): 명함을 찍으면 글자를 읽어(OCR) 칸을 채우고, 확인 후 저장하면 이 현장 폴더 위에 늘 보인다 -->
+    <section id="siteContacts" class="contacts" aria-labelledby="contactsTitle">
+      <div class="contacts-head">
+        <h2 id="contactsTitle">현장 담당자</h2>
+        <button id="contactAdd" type="button" class="btn outline small contact-add">＋ 명함 등록</button>
+      </div>
+      <div id="contactCards" class="contact-cards"></div>
+    </section>
     <div class="drawing-tools">
       <p id="drawingFolderNote" class="muted" role="status">PDF를 터치하면 전체화면 야장으로 열립니다.</p>
       <button id="btnUploadDrawing" type="button" class="btn outline small">＋ 도면 추가 (PDF·JPG)</button>
@@ -671,24 +774,29 @@
   </a>
 </nav>
 
-<script src="config.js?v=71"></script>
-<script src="errlog.js?v=71"></script>
-<script src="weather.js?v=71"></script>
-<script src="entries.js?v=71"></script>
-<script src="push.js?v=71"></script>
-<script src="outbox.js?v=71"></script>
-<script src="phonecopy.js?v=71"></script>
-<script src="pinhistory.js?v=71"></script>
-<script src="perf.js?v=71"></script>
-<script src="search.js?v=71"></script>
-<script src="busy.js?v=71"></script>
-<script src="drawing.js?v=71"></script>
-<script src="cad-engine.js?v=71"></script>
-<script src="cad.js?v=71"></script>
-<script src="cadfiles.js?v=71"></script>
-<script src="gps.js?v=71"></script>
-<script src="gallery.js?v=71"></script>
-<script src="camera.js?v=71"></script>
-<script src="app.js?v=71"></script>
+<script src="config.js?v=72"></script>
+<script src="errlog.js?v=72"></script>
+<script src="weather.js?v=72"></script>
+<script src="entries.js?v=72"></script>
+<script src="push.js?v=72"></script>
+<script src="outbox.js?v=72"></script>
+<script src="phonecopy.js?v=72"></script>
+<script src="pinhistory.js?v=72"></script>
+<script src="perf.js?v=72"></script>
+<script src="search.js?v=72"></script>
+<script src="busy.js?v=72"></script>
+<script src="drawing.js?v=72"></script>
+<script src="cad-engine.js?v=72"></script>
+<script src="cad.js?v=72"></script>
+<script src="cadfiles.js?v=72"></script>
+<script src="gps.js?v=72"></script>
+<script src="gallery.js?v=72"></script>
+<script src="camera.js?v=72"></script>
+<script src="app.js?v=72"></script>
+<script src="ocr-kit.js?v=72"></script>
+<script src="schedule-parse.js?v=72"></script>
+<script src="schedule.js?v=72"></script>
+<script src="card-parse.js?v=72"></script>
+<script src="contacts.js?v=72"></script>
 </body>
 </html>

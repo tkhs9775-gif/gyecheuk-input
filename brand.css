@@ -166,3 +166,105 @@ html[data-theme="dark"] .issue-chips button.warn[aria-pressed="true"] { border-c
 html[data-theme="dark"] .field input[type="number"] { background: var(--field); border-color: var(--field-line); }
 /* 도면 보기·지도·CAD 위 줄의 뒤로/닫기 버튼: 머리띠 버튼과 같은 반투명 원 */
 .pdf-topbar .icon-btn { border: 0; background: rgba(255, 255, 255, .12); color: #FFF; }
+
+/* ---------- 홈 일정 캘린더 (2026-11-11, schedule.js) ----------
+   구성은 Astryx Calendar 를 따른다: 월 머리줄(‹ 제목 › 오늘) · 7칸 요일 · 날짜 격자(앞뒤 달 흐리게, 오늘 테두리, 고른 날 채움) · 아래 그날 일정.
+   날짜 칸의 숫자 알약 = 그날 일정 수. 파란 알약은 지금 고른 현장 일정이 들어 있는 날 */
+:root { --sun: #C62828; --sat: #2B6FB3; }
+html[data-theme="dark"] { --sun: #FF7B72; --sat: #5B9CFF; }
+.sched { margin-top: 16px; padding: 14px 10px 10px; border: 1px solid var(--line); border-radius: 20px; background: var(--card); }
+.sched-head { display: flex; align-items: center; gap: 4px; padding: 0 4px 8px; }
+.sched-month { flex: 1; margin: 0; text-align: center; font-size: 18px; font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+.sched-nav { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 22px; background: var(--chip); color: var(--accent); cursor: pointer; }
+.sched-today { flex: none; min-height: 36px; margin-left: 4px; padding: 0 12px; border: 1px solid var(--line); border-radius: 18px; background: transparent; color: var(--accent); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.sched-week, .sched-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.sched-week span { padding: 4px 0 6px; text-align: center; font-size: 12px; font-weight: 700; color: var(--muted); }
+.sched-week .sun { color: var(--sun); }
+.sched-week .sat { color: var(--sat); }
+.sched-grid { gap: 2px; }
+.sched-cell { position: relative; min-width: 0; height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 3px; padding: 6px 0 0; border: 2px solid transparent; border-radius: 12px; background: transparent; color: var(--text); font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.sched-cell .n { font-size: 15px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.sched-cell.sun .n { color: var(--sun); }
+.sched-cell.sat .n { color: var(--sat); }
+.sched-cell.out { opacity: .38; }
+.sched-cell.today { border-color: var(--accent); }
+.sched-cell.today .n { font-weight: 800; }
+.sched-cell .c { min-width: 20px; padding: 0 5px; border-radius: 9px; background: var(--chip); color: var(--accent); font-size: 11px; font-weight: 800; line-height: 17px; font-variant-numeric: tabular-nums; }
+.sched-cell .c.mine { background: var(--accent); color: #FFF; }
+.sched-cell.sel { background: var(--accent); border-color: var(--accent); }
+.sched-cell.sel .n { color: #FFF; }
+.sched-cell.sel .c { background: rgba(255, 255, 255, .92); color: #192B54; }
+.sched-cell:active { transform: scale(.94); }
+.sched-cell:focus-visible, .sched-nav:focus-visible, .sched-today:focus-visible { outline: 3px solid #8DBDF0; outline-offset: 1px; }
+html[data-theme="dark"] .sched-cell.sel { background: var(--accent-fill, #2D68FA); border-color: var(--accent-fill, #2D68FA); }
+html[data-theme="dark"] .sched-cell .c.mine { background: var(--accent-fill, #2D68FA); }
+.sched-note:empty { display: none; }
+.sched-note { margin: 8px 4px 0; font-size: 13px; }
+
+.sched-day { margin-top: 18px; }
+.sched-day-head { display: flex; align-items: center; gap: 10px; margin: 0 4px 10px; }
+.sched-day-title { flex: 1; min-width: 0; margin: 0; font-size: 16px; font-weight: 800; color: var(--text); overflow-wrap: anywhere; }
+.sched-add { flex: none; min-height: 44px; padding: 0 14px; font-size: 15px; }
+.sched-list li.sched-item { align-items: center; gap: 8px; }
+.sched-list li.sched-item.mine { border-left: 4px solid var(--accent); }
+.sched-list .meta { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.sched-list .meta b { font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+.sched-list .meta small { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.sched-del { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 20px; background: transparent; color: var(--muted); font-size: 16px; cursor: pointer; }
+.sched-del:active { background: var(--err-bg); color: var(--err); }
+
+/* 기입 창: 내용 칸 옆 파일 버튼 */
+.sched-input-row { display: flex; gap: 8px; align-items: stretch; margin-top: 6px; }
+.sched-input-row input { flex: 1; min-width: 0; margin: 0; }
+.sched-file-btn { flex: none; width: 64px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 1px solid var(--accent); border-radius: 14px; background: var(--chip); color: var(--accent); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.sched-file-btn:active { transform: scale(.96); }
+.sched-hint { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+/* 판독 결과 창: 날짜별 묶음 + 체크 */
+.sched-preview { max-height: min(48vh, 420px); overflow-y: auto; margin: 6px 0 14px; padding-right: 2px; overscroll-behavior: contain; }
+.sched-pv-day h3 { position: sticky; top: 0; z-index: 1; margin: 0; padding: 8px 2px 6px; background: var(--card); font-size: 14px; font-weight: 800; color: var(--accent); }
+.sched-pv-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.sched-pv-item input { flex: none; width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--accent); }
+.sched-pv-item span { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.sched-pv-item b { font-size: 14px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.sched-pv-item small { color: var(--muted); font-size: 12px; }
+.sched-pv-item:has(input:not(:checked)) b { color: var(--muted); text-decoration: line-through; }
+@media (prefers-reduced-motion: reduce) { .sched-cell:active, .sched-file-btn:active { transform: none; } }
+
+/* ---------- 현장 담당자 명함 (2026-11-11, contacts.js) ----------
+   도면 탭 현장 폴더 맨 위. 리멤버 카드처럼: 이니셜 원 · '담당자' 꼬리표 + 이름(크게) + 직함 · 회사·부서 · 누르면 바로 거는 전화/메일 알약 */
+.contacts { margin: 0 0 14px; }
+.contacts-head { display: flex; align-items: center; gap: 8px; margin: 0 4px 8px; }
+.contacts-head h2 { flex: 1; margin: 0; font-size: 15px; font-weight: 800; color: var(--text); }
+.contact-add { flex: none; min-height: 40px; padding: 0 14px; font-size: 14px; }
+.contact-cards { display: flex; flex-direction: column; gap: 10px; }
+.contacts-empty { margin: 0; padding: 14px 16px; border: 1.5px dashed var(--line); border-radius: 16px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.contact-card { position: relative; padding: 14px 16px 12px; border: 1px solid var(--line); border-left: 5px solid var(--brand); border-radius: 16px; background: var(--card); box-shadow: 0 2px 10px rgba(25, 43, 84, .06); cursor: pointer; }
+.contact-card:active { transform: scale(.99); }
+.contact-card:focus-visible { outline: 3px solid #8DBDF0; outline-offset: 2px; }
+.cc-top { display: flex; align-items: center; gap: 12px; }
+.cc-avatar { flex: none; width: 46px; height: 46px; display: grid; place-items: center; border-radius: 23px; background: var(--navy); color: #FFF; font-size: 20px; font-weight: 800; }
+html[data-theme="dark"] .cc-avatar { background: var(--accent-fill, #2D68FA); }
+.cc-who { flex: 1; min-width: 0; }
+.cc-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0; }
+.cc-role { padding: 1px 7px; border-radius: 8px; background: var(--chip); color: var(--accent); font-size: 11px; font-weight: 800; }
+.cc-name b { font-size: 20px; font-weight: 800; color: var(--text); }
+.cc-title { font-size: 14px; font-weight: 700; color: var(--muted); }
+.cc-company { margin: 3px 0 0; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.cc-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.cc-act { min-height: 38px; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 0 12px; border-radius: 19px; background: var(--chip); color: var(--accent); font-size: 14px; font-weight: 700; text-decoration: none; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.cc-act.mobile { background: var(--accent); color: #FFF; }
+html[data-theme="dark"] .cc-act.mobile { background: var(--accent-fill, #2D68FA); }
+.cc-act .cc-ic { font-size: 15px; }
+.cc-extra { margin: 8px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+
+.card-shot { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 4px; padding: 12px; border-radius: 16px; background: var(--chip); }
+.card-photo { width: 100%; max-height: 200px; object-fit: contain; border-radius: 10px; background: #FFF; }
+.card-shot-btns { display: flex; gap: 8px; }
+.card-shot-btns .btn { flex: 1; min-height: 46px; font-size: 15px; }
+.card-ocr-note { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.card-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.card-fields .field { margin-top: 10px; min-width: 0; }
+.card-fields .field.wide { grid-column: 1 / -1; }
+.card-fields input { width: 100%; }
+@media (max-width: 340px) { .card-fields { grid-template-columns: 1fr; } }
