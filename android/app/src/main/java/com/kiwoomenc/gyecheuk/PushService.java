@@ -6,9 +6,8 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.widget.RemoteViews;
 
 import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
@@ -16,8 +15,8 @@ import com.google.firebase.messaging.RemoteMessage;
 import java.util.Map;
 
 // 서버가 보낸 푸시(제목·문구·종류·날짜)를 받아 회사 앱다운 알림으로 띄운다. 앱이 꺼져 있어도 이 서비스가 깨어나 처리한다.
-// 모양: 머리줄 "키움이엔씨 · 현장 계측", 회사 로고(큰 아이콘), 종류별 색(메모·이상보고 = 빨강, 그 밖 = 회사 파랑),
-// 긴 문구는 펼쳐 보기, 같은 종류는 한 묶음. 누르면 앱이 열리면서 그 날짜 창으로 간다(MainActivity EXTRA_OPEN).
+// 모양(1.32): 상태줄·머리줄 = 키움 K 로고, 본문 = 키움 카드(왼쪽 색 줄 · 종류 꼬리표 + 날짜 · 굵은 한 줄 · 오른쪽 K 타일,
+// 메모는 빨간 보석, 펼치면 "눌러서 확인 ›"). 메모·이상보고 = 빨강, 그 밖 = 회사 파랑. 같은 종류는 한 묶음. 누르면 앱이 열리면서 그 날짜 창으로 간다(MainActivity EXTRA_OPEN).
 public class PushService extends FirebaseMessagingService {
 
     static final String PREFS = "push";
@@ -85,15 +84,20 @@ public class PushService extends FirebaseMessagingService {
             .putExtra(EXTRA_OPEN, open);
         PendingIntent tap = PendingIntent.getActivity(ctx, id, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
 
-        Bitmap logo = BitmapFactory.decodeResource(ctx.getResources(), R.mipmap.ic_launcher);
+        String[] tp = title.split(" · ", 2);
+        String chip = tp[0].trim();
+        String sub = tp.length > 1 ? tp[1].trim() : "";
+        String line = body.replace(" · 눌러서 확인해 주세요", "").trim();
+        String meta = alert ? "내용은 앱에서 확인 · 확인 기록이 남습니다" : "";
         Notification.Builder b = new Notification.Builder(ctx, channel)
-            .setSmallIcon(R.drawable.ic_stat_alert)
-            .setLargeIcon(logo)
+            .setSmallIcon(R.drawable.ic_stat_k)
             .setColor(color)
             .setSubText(SUB_TEXT)
             .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(new Notification.BigTextStyle().setBigContentTitle(title).bigText(body))
+            .setContentText(line)   // 카드를 못 그리는 화면(시계·차량 등)은 이 글자로 보인다
+            .setCustomContentView(card(ctx, R.layout.notif_card, alert, chip, sub, line, meta))
+            .setCustomBigContentView(card(ctx, R.layout.notif_card_big, alert, chip, sub, line, meta))
+            .setStyle(new Notification.DecoratedCustomViewStyle())
             .setCategory(alert ? Notification.CATEGORY_MESSAGE : "schedule".equals(kind) ? Notification.CATEGORY_EVENT : Notification.CATEGORY_STATUS)
             .setShowWhen(true)
             .setWhen(System.currentTimeMillis())
@@ -104,7 +108,7 @@ public class PushService extends FirebaseMessagingService {
 
         // 같은 종류가 여러 건 쌓이면 한 묶음으로 접힌다(1건일 때는 안드로이드가 묶음을 숨긴다)
         Notification summary = new Notification.Builder(ctx, channel)
-            .setSmallIcon(R.drawable.ic_stat_alert)
+            .setSmallIcon(R.drawable.ic_stat_k)
             .setColor(color)
             .setSubText(alert ? "상황 메모·이상보고" : "schedule".equals(kind) ? "일정" : SUB_TEXT)
             .setStyle(new Notification.InboxStyle().setSummaryText("키움이엔씨"))
@@ -113,5 +117,22 @@ public class PushService extends FirebaseMessagingService {
             .setAutoCancel(true)
             .build();
         nm.notify(group.hashCode(), summary);
+    }
+
+    // 키움 알림 카드 한 장(접힌/펼친 모습 공용). 펼친 모습에만 있는 칸(n_meta·n_cta)은 그 틀에서만 채운다
+    static RemoteViews card(Context ctx, int layout, boolean alert, String chip, String sub, String line, String meta) {
+        RemoteViews v = new RemoteViews(ctx.getPackageName(), layout);
+        v.setInt(R.id.n_bar, "setBackgroundResource", alert ? R.drawable.notif_bar_red : R.drawable.notif_bar_blue);
+        v.setTextViewText(R.id.n_chip, chip);
+        v.setTextColor(R.id.n_chip, alert ? ALERT_RED : BRAND_BLUE);
+        v.setInt(R.id.n_chip, "setBackgroundResource", alert ? R.drawable.notif_chip_red : R.drawable.notif_chip_blue);
+        v.setTextViewText(R.id.n_date, sub);
+        v.setTextViewText(R.id.n_line, line);
+        v.setImageViewResource(R.id.n_badge, alert ? R.drawable.notif_gem : R.drawable.notif_dot);
+        if (layout == R.layout.notif_card_big) {
+            v.setTextViewText(R.id.n_meta, meta);
+            v.setInt(R.id.n_cta, "setBackgroundResource", alert ? R.drawable.notif_cta_red : R.drawable.notif_cta_blue);
+        }
+        return v;
     }
 }

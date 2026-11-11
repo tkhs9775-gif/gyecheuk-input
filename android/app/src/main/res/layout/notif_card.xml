@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 키움 알림 카드(접힌 모습). 글자색은 안드로이드 알림 글자 모양을 따라 밝은/어두운 화면 모두 읽힌다 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:orientation="horizontal" android:gravity="center_vertical">
+    <ImageView android:id="@+id/n_bar" android:layout_width="3dp" android:layout_height="38dp"
+        android:background="@drawable/notif_bar_blue" android:importantForAccessibility="no" />
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+        android:layout_marginStart="10dp" android:layout_marginEnd="8dp" android:orientation="vertical">
+        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical">
+            <TextView android:id="@+id/n_chip" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:background="@drawable/notif_chip_blue" android:paddingStart="8dp" android:paddingEnd="8dp"
+                android:paddingTop="1dp" android:paddingBottom="1dp" android:textSize="11sp" android:textStyle="bold"
+                android:textColor="#357FC9" android:maxLines="1" />
+            <TextView android:id="@+id/n_date" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginStart="6dp" android:textAppearance="@android:style/TextAppearance.Material.Notification.Info"
+                android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <TextView android:id="@+id/n_line" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="3dp" android:textAppearance="@android:style/TextAppearance.Material.Notification.Title"
+            android:textSize="14sp" android:textStyle="bold"
+            android:maxLines="1" android:ellipsize="end" />
+    </LinearLayout>
+    <FrameLayout android:layout_width="40dp" android:layout_height="40dp">
+        <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:layout_margin="3dp"
+            android:background="@drawable/notif_tile" android:padding="5dp" android:src="@drawable/notif_k"
+            android:scaleType="fitCenter" android:contentDescription="키움이엔씨" />
+        <ImageView android:id="@+id/n_badge" android:layout_width="13dp" android:layout_height="13dp"
+            android:layout_gravity="top|end" android:src="@drawable/notif_dot" android:importantForAccessibility="no" />
+    </FrameLayout>
+</LinearLayout>
