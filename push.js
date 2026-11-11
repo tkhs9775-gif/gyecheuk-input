@@ -18,7 +18,7 @@ function buildNotice(action, payload) {
   }
   if (action === 'photo') return { kind: 'input', who, title: `사진 등록 · ${site}`, body: `${who}님이 ${site}에서 사진 ${(payload.photos ?? []).length}장 등록` };
   if (action === 'survey') return { kind: 'input', who, title: `측량파일 · ${site}`, body: `${who}님이 ${site}에서 측량파일 등록` };
-  if (action === 'memo_add') return { kind: 'memo', who, date: payload.date, title: `📌 상황 메모 · ${dayLabel(payload.date)}`, body: clip(`${who}: ${payload.text}`) };
+  if (action === 'memo_add') return { kind: 'memo', who, date: payload.date, title: `📌 상황 메모 · ${dayLabel(payload.date)}`, body: `${who} 님이 새 보고를 남겼습니다 · 눌러서 확인해 주세요` }   // 내용은 알림에 안 보이게(앱에서 열어야 확인 기록이 남는다);
   if (action === 'schedule_add') {
     const items = payload.items ?? [];
     const first = items.map((i) => i.date).sort()[0] || '';

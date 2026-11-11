@@ -470,3 +470,22 @@ html[data-theme="dark"] .tb-chip { border-color: rgba(251, 191, 36, .45); color:
 /* 좁은 폰(360px)에서도 머리줄이 한 줄에: 글씨 조금 작게, 확성기 그림은 빼고, 그래도 넘치면 다음 줄로 */
 .tb-head { flex-wrap: wrap; gap: 6px; }
 @media (max-width: 400px) { .tb-ico { display: none; } .tb-title { font-size: 16px; } .tb-add { padding: 0 10px; } .tb-unread { padding: 1px 7px; } }
+
+/* ---------- 2026-11-11 메모 표시: 원 대신 보석(마름모) + 사선 빛이 오가는 반짝임 ---------- */
+.sched-cell .dot.m {
+  position: relative; overflow: hidden; border-radius: 2px; transform: rotate(45deg);
+  width: 8px; height: 8px;
+  background: linear-gradient(135deg, #FF8A7A 0%, #E5484D 55%, #B4232A 100%);
+  box-shadow: 0 0 0 1.5px rgba(229, 72, 77, .22), 0 1px 4px rgba(229, 72, 77, .55);
+}
+.sched-cell .dot.m::after {   /* 마름모 안에서 가로로 오가는 빛 = 화면에서는 사선 */
+  content: ''; position: absolute; top: -40%; bottom: -40%; width: 45%; left: -60%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .95), transparent);
+  animation: memoGlint 2.4s ease-in-out infinite alternate;
+}
+@keyframes memoGlint { 0%, 15% { left: -60%; } 85%, 100% { left: 115%; } }
+.sched-cell .dot.m.read { background: transparent; box-shadow: inset 0 0 0 1.5px #E5484D; }
+.sched-cell .dot.m.read::after { content: none; }
+.sched-cell.sel .dot.m { background: linear-gradient(135deg, #FFE1DE, #FFB4B6); box-shadow: 0 0 6px rgba(255, 255, 255, .7); }
+.sched-cell.sel .dot.m.read { background: transparent; box-shadow: inset 0 0 0 1.5px #FFD1D2; }
+@media (prefers-reduced-motion: reduce) { .sched-cell .dot.m::after { animation: none; left: 30%; } }

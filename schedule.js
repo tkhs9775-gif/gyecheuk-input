@@ -228,7 +228,7 @@ function schedRenderFilter(all) {
 
 // ---------- 날짜 메모(상황 보고) ----------
 const schedMemoUnread = (m) => { const me = schedUser(); return m.user !== me && !m.reads.some((r) => r.user === me); };
-const schedHm = (at) => String(at || '').slice(11, 16);
+const schedHm = (at) => (String(at || '').match(/\d{4}-\d{2}-\d{2} (\d{2}:\d{2})/) || [])[1] || '';   // 시각 형식이 아니면 비움
 
 // 접힌 메모 한 장: 누르면 펼쳐지고, 처음 펼친 사람은 서버에 '확인'으로 남는다
 function schedMemoEl(m) {
