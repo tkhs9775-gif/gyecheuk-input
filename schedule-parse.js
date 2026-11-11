@@ -232,7 +232,21 @@
     return out.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   }
 
-  const api = { parseWeeklyPlan, entriesOf, findPeriod, noteDate, mondayOf, addDays, dowOf, DAYS };
+  // 일정 제목을 보기 좋게 나눈다: '상수동 336-16외2필지 도시형생활주택 신축공사-태흥(윤)' → { main: '상수동 … 신축공사', company: '태흥', person: '윤' }
+  //  - 끝의 '(한 글자)' = 담당 직원(계획서의 (이)·(홍)·(윤))
+  //  - ' - 회사' 또는 '한글-한글' 로 붙은 끝 부분 = 시공사(숫자가 들어가면 번지라서 나누지 않는다: '461-3')
+  function splitTitle(title) {
+    let main = String(title || '').trim();
+    let person = '';
+    const p = /\s*\(([가-힣])\)\s*$/.exec(main);
+    if (p) { person = p[1]; main = main.slice(0, p.index).trim(); }
+    let company = '';
+    const c = /(?:\s+[-–—]\s+|(?<=[가-힣)])[-–—](?=[가-힣(]))([^-–—\d]{1,20})$/.exec(main);
+    if (c && c.index >= 4) { company = c[1].trim(); main = main.slice(0, c.index).trim(); }
+    return { main, company, person };
+  }
+
+  const api = { parseWeeklyPlan, entriesOf, findPeriod, noteDate, mondayOf, addDays, dowOf, splitTitle, DAYS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SchedParse = api;
 })(typeof window !== 'undefined' ? window : globalThis);

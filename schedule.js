@@ -112,42 +112,75 @@ function schedRender() {
   schedRenderDay();
 }
 
+// 담당 직원 한 글자마다 정해진 색(같은 사람은 늘 같은 색)
+const SCHED_PERSON_COLORS = ['#2B6FB3', '#0E8A5F', '#B4561C', '#7A3FB8', '#C0306B', '#4E6A12'];
+const schedPersonColor = (ch) => SCHED_PERSON_COLORS[ch.charCodeAt(0) % SCHED_PERSON_COLORS.length];
+
+// 그날 일정 한 줄: [담당 직원 동그라미] 현장(굵게, 단어 단위 줄바꿈) / 시공사 · 비고 꼬리표 · 기입한 사람
+function schedItemEl(it) {
+  const { main, company, person } = SchedParse.splitTitle(it.title);
+  const memoLine = it.memo === 'MEMO';   // 계획서 아래 MEMO 칸에서 온 일정(연차 등)
+  const li = document.createElement('li');
+  li.className = 'sd-item';
+  if (schedMine(it)) li.classList.add('mine');
+  if (memoLine) li.classList.add('memo');
+  const who = document.createElement('span');
+  who.className = 'sd-person';
+  who.setAttribute('aria-hidden', 'true');
+  if (person) { who.textContent = person; who.style.background = schedPersonColor(person); who.title = `담당 ${person}`; } else { who.textContent = memoLine ? '📝' : '·'; who.classList.add('none'); }
+  const body = document.createElement('div');
+  body.className = 'sd-body';
+  const title = document.createElement('p');
+  title.className = 'sd-main';
+  title.textContent = main;
+  body.append(title);
+  const tags = document.createElement('p');
+  tags.className = 'sd-tags';
+  const tag = (text, cls) => { const t = document.createElement('span'); t.className = `sd-tag ${cls}`; t.textContent = text; tags.append(t); };
+  if (schedMine(it)) tag('내 현장', 'mine');
+  if (company) tag(company, 'company');
+  if (it.memo && !memoLine) tag(it.memo, 'memo');
+  if (tags.childElementCount) body.append(tags);
+  if (it.user) { const by = document.createElement('p'); by.className = 'sd-by'; by.textContent = `${it.user} 기입`; body.append(by); }
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'sched-del';
+  del.setAttribute('aria-label', `${main} 일정 삭제`);
+  del.textContent = '✕';
+  del.addEventListener('click', () => schedDelete(it));
+  li.append(who, body, del);
+  return li;
+}
+
 function schedRenderDay() {
   const d = sched.selected;
-  const list = [...(sched.byDate.get(d) || [])].sort((a, b) => Number(schedMine(b)) - Number(schedMine(a)));
-  $('schedDayTitle').textContent = `${schedLabel(d)}${d === todayKst() ? ' · 오늘' : ''}${list.length ? ` · ${list.length}건` : ''}`;
+  if (!d) return;
+  // 내 현장 → 담당 직원별 → 이름순(같은 사람 일정이 붙어 보이게). MEMO(연차 등)는 맨 아래
+  const list = [...(sched.byDate.get(d) || [])].sort((a, b) => {
+    const A = SchedParse.splitTitle(a.title); const B = SchedParse.splitTitle(b.title);
+    return Number(schedMine(b)) - Number(schedMine(a)) || Number(a.memo === 'MEMO') - Number(b.memo === 'MEMO') || (A.person || '힣').localeCompare(B.person || '힣') || A.main.localeCompare(B.main);
+  });
+  $('schedDayTitle').textContent = `${schedLabel(d)}${d === todayKst() ? ' · 오늘' : ''}`;
+  const people = [...new Set(list.map((x) => SchedParse.splitTitle(x.title).person).filter(Boolean))];
+  $('schedDaySub').textContent = list.length ? `일정 ${list.length}건${people.length ? ` · 담당 ${people.join('·')}` : ''}` : '';
   const ul = $('schedList');
   if (!list.length) {
     const li = document.createElement('li');
-    li.className = 'empty';
-    li.textContent = '이 날 일정이 없습니다. 「＋ 일정 기입」으로 추가하세요.';
+    li.className = 'sd-empty';
+    li.textContent = '이 날 일정이 없습니다. 아래 「＋ 이 날 일정 기입」으로 추가하세요.';
     ul.replaceChildren(li);
     return;
   }
-  ul.replaceChildren(...list.map((it) => {
-    const li = document.createElement('li');
-    li.className = 'sched-item';
-    if (schedMine(it)) li.classList.add('mine');
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    const title = document.createElement('b');
-    title.textContent = it.title;
-    meta.append(title);
-    const subText = [it.memo, schedMine(it) ? '내 현장' : '', it.user ? `${it.user} 기입` : ''].filter(Boolean).join(' · ');
-    if (subText) {
-      const sub = document.createElement('small');
-      sub.textContent = subText;
-      meta.append(sub);
-    }
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.className = 'sched-del';
-    del.setAttribute('aria-label', `${it.title} 일정 삭제`);
-    del.textContent = '✕';
-    del.addEventListener('click', () => schedDelete(it));
-    li.append(meta, del);
-    return li;
-  }));
+  ul.replaceChildren(...list.map(schedItemEl));
+}
+
+// 날짜를 누르면 그날 일정 창. 창 안 ‹ › 로 앞뒤 날(달이 바뀌면 달력도 따라간다)
+function schedOpenDay(d) {
+  sched.selected = d;
+  if (d.slice(0, 7) !== sched.month) schedGo(d.slice(0, 7), d);
+  else schedRender();
+  if (!$('schedDayDialog').open) $('schedDayDialog').showModal();
+  $('schedList').scrollTop = 0;
 }
 
 function schedGo(month, selected) {
@@ -166,9 +199,9 @@ function schedShift(delta) {
 }
 
 async function schedDelete(it) {
-  if (!confirm(`'${it.title}' 일정을 지울까요?\n(${schedLabel(it.date)})`)) return;
+  if (!confirm(`'${SchedParse.splitTitle(it.title).main}' 일정을 지울까요?\n(${schedLabel(it.date)})`)) return;
   try {
-    await withBusy($('sched').parentElement, () => api('schedule_delete', { ids: [it.id] }));
+    await withBusy($('schedDayDialog'), () => api('schedule_delete', { ids: [it.id] }));
     flash('일정을 지웠습니다');
     await schedLoad();
   } catch (err) {
@@ -211,6 +244,7 @@ async function schedSubmitAdd(e) {
     $('schedAddDialog').close();
     flash(r.added ? '일정을 기입했습니다' : '같은 일정이 이미 있습니다');
     schedGo(date.slice(0, 7), date);
+    schedOpenDay(date);
   } catch (err) {
     if (err.isAuth) { signOut(); return; }
     $('schedAddError').textContent = `기입하지 못했습니다. ${errorText(err)}`;
@@ -387,6 +421,7 @@ async function schedSaveImport() {
     flash(`일정 ${r.added}건 추가${r.skipped ? ` · 이미 있던 ${r.skipped}건은 건너뜀` : ''}`);
     const first = items[0].date;
     schedGo(first.slice(0, 7), first);
+    schedOpenDay(first);
   } catch (err) {
     if (err.isAuth) { signOut(); return; }
     $('schedImportWarn').textContent = `저장하지 못했습니다. ${errorText(err)}`;
@@ -412,10 +447,12 @@ $('schedGrid').addEventListener('click', (e) => {
   const cell = e.target.closest('.sched-cell');
   if (!cell) return;
   const d = cell.dataset.date;
-  if (d.slice(0, 7) !== sched.month) { schedGo(d.slice(0, 7), d); return; }   // 앞뒤 달 날짜를 누르면 그 달로
-  sched.selected = d;
-  schedRender();
+  schedOpenDay(d);
 });
+$('schedDayPrev').addEventListener('click', () => schedOpenDay(SchedParse.addDays(sched.selected, -1)));
+$('schedDayNext').addEventListener('click', () => schedOpenDay(SchedParse.addDays(sched.selected, 1)));
+$('schedDayClose').addEventListener('click', () => $('schedDayDialog').close());
+$('schedDayAdd').addEventListener('click', () => { $('schedDayDialog').close(); schedOpenAdd(); });
 $('schedPrev').addEventListener('click', () => schedShift(-1));
 $('schedNext').addEventListener('click', () => schedShift(1));
 $('schedToday').addEventListener('click', () => { const t = todayKst(); schedGo(t.slice(0, 7), t); });

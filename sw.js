@@ -15,7 +15,7 @@ const CORE = [
 const LATER = [
   'logo.png', 'mark.png', 'manifest.json',
   `search.js?v=${V}`, `errlog.js?v=${V}`, `cad-engine.js?v=${V}`, `cad.js?v=${V}`, `cadfiles.js?v=${V}`, `cad-worker.js?v=${V}`,
-  `ocr-kit.js?v=${V}`, `schedule-parse.js?v=${V}`, `schedule.js?v=${V}`, `card-parse.js?v=${V}`, `contacts.js?v=${V}`,
+  `ocr-kit.js?v=${V}`, `schedule-parse.js?v=${V}`, `schedule.js?v=${V}`, `card-enhance.js?v=${V}`, `card-crop.js?v=${V}`, `contacts.js?v=${V}`,
 ];
 const SHELL = [...CORE, ...LATER];
 

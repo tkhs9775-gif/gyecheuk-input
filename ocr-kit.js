@@ -1,4 +1,4 @@
-// 사진·스캔 글자 읽기(OCR) 공용 도구: 일정 계획서(schedule.js)·명함(contacts.js)이 쓴다. PC(pc-app/ui/ocr-kit.js)는 이 파일 복사본 — 바꾸면 둘 다.
+// 사진·스캔 글자 읽기(OCR) 공용 도구: 일정 계획서(schedule.js)가 쓴다(명함은 2026-11-11 오후부터 OCR 없이 사진 보정만). PC(pc-app/ui/ocr-kit.js)는 이 파일 복사본 — 바꾸면 둘 다.
 // Tesseract.js 는 CDN 에서 처음 쓸 때 받는다(한글+영어 학습 자료 포함 약 15MB, 그 뒤로는 브라우저가 저장해 둔다)
 const OCR_LIB = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const OCR_WIDTH = 2200;   // 사진을 이 폭(px)으로 맞춰 읽는다(작으면 글자를 못 읽고, 크면 폰이 느리다)
@@ -58,43 +58,8 @@ async function ocrCanvas(canvas, label) {
     }
     return all ? dark / all : 0;
   };
-  const lines = (data.lines || []).filter((l) => l.text && l.text.trim()).map((l) => ({ text: l.text.trim(), x0: l.bbox.x0, y0: l.bbox.y0, x1: l.bbox.x1, y1: l.bbox.y1 }));   // 명함: 글씨 크기로 이름을 고른다
+  const lines = (data.lines || []).filter((l) => l.text && l.text.trim()).map((l) => ({ text: l.text.trim(), x0: l.bbox.x0, y0: l.bbox.y0, x1: l.bbox.x1, y1: l.bbox.y1 }));
   return { items, inkAt, vlines: ocrVerticalLines(px, W, H), lines, text: data.text || '' };
-}
-
-// 명함 등 글씨 크기가 섞인 그림: 한 번 읽은 뒤 믿음도가 낮은 줄만 잘라 글자 높이 40px 로 맞춰 '한 줄' 모드로 다시 읽는다.
-// 아주 큰 굵은 이름(홍길동 → 'EUS wv')·'co kr' 같은 오독이 이렇게 바로잡힌다(2026-11-11 시험). 다시 읽은 쪽 믿음도가 높을 때만 바꾼다
-const OCR_REDO_BELOW = 75;
-const OCR_REDO_PX = 40;
-async function ocrLinesRefined(canvas, label) {
-  const Tesseract = await ocrLoad();
-  const worker = await Tesseract.createWorker('kor+eng', 1, {
-    logger: (m) => { if (m.status === 'recognizing text') window.busyText?.(`${label} 글자 읽는 중 ${Math.round((m.progress || 0) * 100)}%`); },
-  });
-  try {
-    const { data } = await worker.recognize(canvas);
-    const lines = (data.lines || []).filter((l) => l.text && l.text.trim()).map((l) => ({ text: l.text.trim(), conf: l.confidence, x0: l.bbox.x0, y0: l.bbox.y0, x1: l.bbox.x1, y1: l.bbox.y1 }));
-    await worker.setParameters({ tessedit_pageseg_mode: '7' });
-    for (const l of lines) {
-      const h = l.y1 - l.y0;
-      if (l.conf >= OCR_REDO_BELOW || h < 8) continue;
-      // 가로는 그림 전체 폭: 큰 이름 옆 작은 직함('홍길동 현장소장')은 첫 읽기에서 줄 상자 밖으로 빠지곤 한다
-      const pad = Math.round(h * 0.25);
-      const k = OCR_REDO_PX / h;
-      const c = document.createElement('canvas');
-      c.width = Math.max(1, Math.round(canvas.width * k));
-      c.height = Math.max(1, Math.round((h + pad * 2) * k));
-      const g = c.getContext('2d');
-      g.fillStyle = '#FFF';
-      g.fillRect(0, 0, c.width, c.height);
-      g.drawImage(canvas, 0, l.y0 - pad, canvas.width, h + pad * 2, 0, 0, c.width, c.height);
-      const { data: again } = await worker.recognize(c);
-      if (again.text.trim() && again.confidence > l.conf) Object.assign(l, { text: again.text.trim(), conf: again.confidence });
-    }
-    return lines;
-  } finally {
-    worker.terminate();
-  }
 }
 
 // 표의 세로 칸선 찾기: x 마다(좌우 1px 포함) 위아래로 이어진 어두운 줄의 가장 긴 길이. 그림 높이의 20% 넘게 이어지면 칸선.
