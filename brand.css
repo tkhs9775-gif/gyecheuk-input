@@ -414,3 +414,12 @@ html[data-theme="dark"] .mb-text strong { color: #FF8A8E; }
 .push-card .pc-status[data-tone="bad"] { background: #FDE7E8; color: #B4232A; }
 .push-card .pc-hint { margin: 8px 0 10px; font-size: 13px; color: var(--muted); line-height: 1.5; word-break: keep-all; }
 .push-card .row { gap: 8px; }
+
+/* 기입 창 위 [일정 | 메모] 전환(2026-11-11 7차): 두 칸짜리 분절 버튼, 고른 쪽만 흰 판으로 떠오른다 */
+.kind-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 0 0 4px; padding: 4px; border-radius: 12px; background: var(--chip); }
+.kind-tabs[hidden] { display: none; }
+.kind-tab { min-height: 40px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font: inherit; font-size: 15px; font-weight: 800; cursor: pointer; transition: background .15s, color .15s, box-shadow .15s; }
+.kind-tab[aria-pressed="true"] { background: var(--card); color: var(--accent); box-shadow: 0 1px 3px rgba(25, 43, 84, .14); cursor: default; }
+.kind-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+html[data-theme="dark"] .kind-tabs { background: rgba(255, 255, 255, .06); }
+html[data-theme="dark"] .kind-tab[aria-pressed="true"] { background: rgba(110, 162, 255, .18); color: #9DC1FF; box-shadow: none; }

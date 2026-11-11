@@ -9,9 +9,9 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=77">
-<link rel="stylesheet" href="theme.css?v=77">
-<link rel="stylesheet" href="brand.css?v=77">
+<link rel="stylesheet" href="style.css?v=78">
+<link rel="stylesheet" href="theme.css?v=78">
+<link rel="stylesheet" href="brand.css?v=78">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -304,7 +304,12 @@
 <!-- 날짜 메모(상황 보고): 그날 창 맨 위에 접힌 채로 보이고, 눌러서 펼친 사람이 '확인'으로 남는다 -->
 <dialog id="schedMemoDialog" aria-labelledby="schedMemoTitle">
   <form id="schedMemoForm" class="dlg" novalidate>
+    <div class="kind-tabs" role="group" aria-label="기입 종류">
+      <button id="schedMemoToSched" type="button" class="kind-tab" aria-pressed="false">일정</button>
+      <button type="button" class="kind-tab" aria-pressed="true" tabindex="-1">메모</button>
+    </div>
     <h2 id="schedMemoTitle" class="dlg-title">메모 기입</h2>
+    <label class="field"><span class="label">날짜</span><input id="schedMemoDay" type="date" required></label>
     <p id="schedMemoDate" class="sched-memo-date"></p>
     <label class="field"><span class="label">내용</span><textarea id="schedMemoText" rows="5" maxlength="1000" placeholder="예: B동 흙막이 균열 발견, 내일 오전 재측정 필요"></textarea></label>
     <small class="sched-hint">저장하면 이 날짜에 빨간 점이 찍히고, 다른 사람이 눌러 읽으면 누가 확인했는지 남습니다.</small>
@@ -319,6 +324,10 @@
 <!-- 일정 기입: 한 건 직접 입력, 또는 옆 버튼으로 주간 계획서(PDF·JPG·PNG)를 읽어 한꺼번에 -->
 <dialog id="schedAddDialog" aria-labelledby="schedAddTitle">
   <form id="schedAddForm" class="dlg" novalidate>
+    <div id="schedAddKinds" class="kind-tabs" role="group" aria-label="기입 종류">
+      <button type="button" class="kind-tab" aria-pressed="true" tabindex="-1">일정</button>
+      <button id="schedAddToMemo" type="button" class="kind-tab" aria-pressed="false">메모</button>
+    </div>
     <h2 id="schedAddTitle" class="dlg-title">일정 기입</h2>
     <label class="field"><span class="label">날짜</span><input id="schedDate" type="date" required></label>
     <div class="field">
@@ -821,30 +830,30 @@
   </a>
 </nav>
 
-<script src="config.js?v=77"></script>
-<script src="errlog.js?v=77"></script>
-<script src="weather.js?v=77"></script>
-<script src="entries.js?v=77"></script>
-<script src="push.js?v=77"></script>
-<script src="outbox.js?v=77"></script>
-<script src="phonecopy.js?v=77"></script>
-<script src="pinhistory.js?v=77"></script>
-<script src="perf.js?v=77"></script>
-<script src="search.js?v=77"></script>
-<script src="busy.js?v=77"></script>
-<script src="drawing.js?v=77"></script>
-<script src="cad-engine.js?v=77"></script>
-<script src="cad.js?v=77"></script>
-<script src="cadfiles.js?v=77"></script>
-<script src="gps.js?v=77"></script>
-<script src="gallery.js?v=77"></script>
-<script src="camera.js?v=77"></script>
-<script src="app.js?v=77"></script>
-<script src="ocr-kit.js?v=77"></script>
-<script src="schedule-parse.js?v=77"></script>
-<script src="schedule.js?v=77"></script>
-<script src="card-enhance.js?v=77"></script>
-<script src="card-crop.js?v=77"></script>
-<script src="contacts.js?v=77"></script>
+<script src="config.js?v=78"></script>
+<script src="errlog.js?v=78"></script>
+<script src="weather.js?v=78"></script>
+<script src="entries.js?v=78"></script>
+<script src="push.js?v=78"></script>
+<script src="outbox.js?v=78"></script>
+<script src="phonecopy.js?v=78"></script>
+<script src="pinhistory.js?v=78"></script>
+<script src="perf.js?v=78"></script>
+<script src="search.js?v=78"></script>
+<script src="busy.js?v=78"></script>
+<script src="drawing.js?v=78"></script>
+<script src="cad-engine.js?v=78"></script>
+<script src="cad.js?v=78"></script>
+<script src="cadfiles.js?v=78"></script>
+<script src="gps.js?v=78"></script>
+<script src="gallery.js?v=78"></script>
+<script src="camera.js?v=78"></script>
+<script src="app.js?v=78"></script>
+<script src="ocr-kit.js?v=78"></script>
+<script src="schedule-parse.js?v=78"></script>
+<script src="schedule.js?v=78"></script>
+<script src="card-enhance.js?v=78"></script>
+<script src="card-crop.js?v=78"></script>
+<script src="contacts.js?v=78"></script>
 </body>
 </html>

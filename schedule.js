@@ -343,11 +343,13 @@ async function schedDeleteMemo(m) {
   }
 }
 
-function schedOpenMemo() {
-  $('schedMemoDate').textContent = `${schedLabel(sched.selected)} · ${schedUser()}`;
-  $('schedMemoText').value = '';
+// date·text: 일정 기입 창의 [메모] 전환에서 넘어올 때 그 창에 적던 날짜·글을 이어받는다
+function schedOpenMemo(date, text) {
+  $('schedMemoDay').value = (typeof date === 'string' && date) || sched.selected || todayKst();
+  $('schedMemoDate').textContent = `작성자 ${schedUser()}`;
+  $('schedMemoText').value = typeof text === 'string' ? text : '';
   $('schedMemoError').textContent = '';
-  $('schedDayDialog').close();
+  if ($('schedDayDialog').open) $('schedDayDialog').close();
   $('schedMemoDialog').showModal();
   $('schedMemoText').focus();
 }
@@ -356,7 +358,8 @@ async function schedSubmitMemo(e) {
   e.preventDefault();
   const text = $('schedMemoText').value.trim();
   if (!text) { $('schedMemoError').textContent = '내용을 적어 주세요.'; $('schedMemoText').focus(); return; }
-  const date = sched.selected;
+  const date = $('schedMemoDay').value;
+  if (!date) { $('schedMemoError').textContent = '날짜를 골라 주세요.'; return; }
   try {
     await withBusy($('schedMemoForm'), () => api('memo_add', { user: schedUser(), date, text }));
     $('schedMemoDialog').close();
@@ -455,13 +458,14 @@ function schedFormMode(item) {
   $('schedFileBtn').hidden = Boolean(item);
   $('schedFileHint').hidden = Boolean(item);
   $('schedEditDelete').hidden = !item;
+  $('schedAddKinds').hidden = Boolean(item);   // 수정할 때는 일정/메모 전환을 숨긴다
   $('schedAddError').textContent = '';
 }
 
-function schedOpenAdd() {
+function schedOpenAdd(date, text) {
   schedFormMode(null);
-  $('schedDate').value = sched.selected || todayKst();
-  $('schedText').value = '';
+  $('schedDate').value = (typeof date === 'string' && date) || sched.selected || todayKst();
+  $('schedText').value = typeof text === 'string' ? text : '';
   $('schedMemo').value = '';
   $('schedAddDialog').showModal();
 }
@@ -731,11 +735,14 @@ $('schedDayAdd').addEventListener('click', () => { $('schedDayDialog').close(); 
 $('schedDayMemo').addEventListener('click', schedOpenMemo);
 $('memoBanner').addEventListener('click', () => { const m = (sched.unread || [])[0]; if (m) { sched.openMemos.add(m.id); schedOpenDay(m.date); schedToggleMemoRead(m); } });
 $('schedMemoForm').addEventListener('submit', schedSubmitMemo);
+// 기입 창 위 [일정 | 메모] 전환: 적던 날짜·글을 가지고 다른 창으로 넘어간다
+$('schedAddToMemo').addEventListener('click', () => { const d = $('schedDate').value; const t = $('schedText').value; $('schedAddDialog').close(); schedOpenMemo(d, t); });
+$('schedMemoToSched').addEventListener('click', () => { const d = $('schedMemoDay').value; const t = $('schedMemoText').value.split(/\r?\n/)[0].slice(0, 200); $('schedMemoDialog').close(); schedOpenAdd(d, t); });
 $('schedMemoCancel').addEventListener('click', () => { $('schedMemoDialog').close(); schedOpenDay(sched.selected); });
 $('schedPrev').addEventListener('click', () => schedShift(-1));
 $('schedNext').addEventListener('click', () => schedShift(1));
 $('schedToday').addEventListener('click', () => { const t = todayKst(); schedGo(t.slice(0, 7), t); });
-$('schedAdd').addEventListener('click', schedOpenAdd);
+$('schedAdd').addEventListener('click', () => schedOpenAdd());
 $('schedAddForm').addEventListener('submit', schedSubmitAdd);
 $('schedAddCancel').addEventListener('click', () => $('schedAddDialog').close());
 $('schedEditDelete').addEventListener('click', async () => {
