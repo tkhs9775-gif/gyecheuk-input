@@ -341,7 +341,8 @@ function loadDrawingTab() {
 function renderDrawingSites() {
   const ul = $('drawingSiteList');
   if (!$('drawingSiteSort')) ul.before(Object.assign(SiteSort.control('drawing', renderDrawingSites), { id: 'drawingSiteSort' }));
-  const sites = SiteSort.sorted('drawing', state.config.sites || []);
+  // 연 기록이 없는 현장은 폰에 보관된 도면 목록의 최근 파일 날짜로(v81 이전에 열어 본 현장도 바로 최근 순에 반영)
+  const sites = SiteSort.sorted('drawing', state.config.sites || [], (s) => SiteSort.newest(readCached(`drawings_${s}`), readCached(`drawing_folders_${s}`)));
   if (sites.length === 0) {
     const li = document.createElement('li');
     li.className = 'empty';

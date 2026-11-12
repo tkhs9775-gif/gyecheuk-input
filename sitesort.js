@@ -8,14 +8,19 @@ const SiteSort = (() => {
   const mode = (key) => (MODES.includes(read(`sitesort_mode_${key}`, '')) ? read(`sitesort_mode_${key}`, '') : 'name');
   const setMode = (key, m) => write(`sitesort_mode_${key}`, MODES.includes(m) ? m : 'name');
   const touch = (key, site, now = Date.now()) => { if (site) write(`sitesort_recent_${key}`, { ...read(`sitesort_recent_${key}`, {}), [site]: now }); };
-  // 순수 함수(시험용): recent = { 현장: 연 시각(ms) }
-  const order = (sites, m, recent = {}) => {
+  // 순수 함수(시험용): recent = { 현장: 연 시각(ms) }. hint(현장) = 연 기록이 없는 현장의 보조 시각(ms, 예: 폰에 보관된 목록의 최근 파일 날짜)
+  // 순서: 이 기기에서 연 현장(연 순) → 연 적 없지만 hint 있는 현장(hint 순) → 나머지 가나다
+  const order = (sites, m, recent = {}, hint = () => 0) => {
     const byName = (a, b) => String(a).localeCompare(String(b), 'ko', { numeric: true });
     const list = [...(sites || [])];
     if (m !== 'recent') return list.sort(byName);
-    return list.sort((a, b) => (recent[b] || 0) - (recent[a] || 0) || byName(a, b));
+    const h = new Map(list.map((s) => [s, recent[s] ? 0 : (Number(hint(s)) || 0)]));
+    return list.sort((a, b) => (recent[b] || 0) - (recent[a] || 0) || h.get(b) - h.get(a) || byName(a, b));
   };
-  const sorted = (key, sites) => order(sites, mode(key), read(`sitesort_recent_${key}`, {}));
+  // 보관된 목록 { files, folders:[{files}] } 의 가장 최근 파일 시각(ms). updated 는 'YYYY-MM-DD HH:mm'. 없으면 0
+  const newest = (files = [], folders = []) => Math.max(0, ...[...(files || []), ...(folders || []).flatMap((fo) => fo?.files || [])]
+    .map((f) => Date.parse(String(f?.updated || '').replace(' ', 'T')) || 0));
+  const sorted = (key, sites, hint) => order(sites, mode(key), read(`sitesort_recent_${key}`, {}), hint);
   // [가나다 | 최근 연 순] 버튼 묶음. onChange 는 다시 그리는 함수. cls 는 web '.seg', PC 'seg-group'
   const control = (key, onChange, cls = 'seg', btnCls = '') => {
     const nav = document.createElement('div');
@@ -39,7 +44,7 @@ const SiteSort = (() => {
     paint();
     return nav;
   };
-  return { mode, setMode, touch, order, sorted, control };
+  return { mode, setMode, touch, order, sorted, newest, control };
 })();
 
 if (typeof module !== 'undefined') module.exports = { SiteSort };

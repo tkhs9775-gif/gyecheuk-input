@@ -43,7 +43,8 @@ async function cadRetry(fn) {
 function renderCadSites() {
   const ul = $('cadSites');
   if (!$('cadSiteSort')) ul.before(Object.assign(SiteSort.control('cad', renderCadSites), { id: 'cadSiteSort' }));
-  const sites = SiteSort.sorted('cad', state.config.sites || []);
+  // 연 기록이 없는 현장은 폰에 보관된 CAD 목록의 최근 파일 날짜로
+  const sites = SiteSort.sorted('cad', state.config.sites || [], (s) => { const c = readCached(`cadlist_${s}`); return SiteSort.newest(c?.files, c?.folders); });
   if (!sites.length) {
     ul.replaceChildren(el('li', 'empty', '등록된 현장이 없습니다. 홈의 ⚙ 버튼에서 현장을 먼저 추가해 주세요.'));
     return;
