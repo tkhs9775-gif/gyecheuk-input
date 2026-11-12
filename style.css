@@ -798,41 +798,55 @@ body.cad-open { overflow: hidden; }
 .list li.cad-folder-head { padding: 10px 6px 4px; font-size: 13px; font-weight: 700; color: var(--muted, #64748B); background: none; border: 0; box-shadow: none; }
 #cadSites { margin-bottom: 12px; }
 
-/* 하중계·변형률계 묶음: 동그라미 하나 + 단마다 한 줄 상자(PDF 그림과 같은 모양). 변형률계는 값 칸 3개를 이어 붙인다 */
-.pdf-pin-tag.grp {
+/* 하중계·변형률계 묶음(v87 새 디자인): 흰 카드 + 파란 테두리, 단 머리는 파랑, 신규설치 띠는 주황. PDF 그림(drawing.js drawGroupTag)과 같은 모양.
+   어두운 테마의 .pdf-pin-tag 배경 규칙(theme.css)을 이기도록 .pin-layer 를 앞에 붙인다 */
+.pin-layer .pdf-pin-tag.grp {
   display: flex; flex-direction: column; padding: 0; overflow: hidden; max-width: none; pointer-events: auto;
-  background: rgba(27, 42, 87, 0.94); border-radius: 5px; font-size: 11px;
+  background: #FFFFFF; color: #10264F; border: 1.5px solid #1F62A8; border-radius: 8px; font-size: 11px;
+  box-shadow: 0 4px 14px rgba(31, 98, 168, .3);
 }
-.pdf-pin-tag.grp .grp-note { background: rgba(214, 105, 12, 0.96); color: #FFF; text-align: center; padding: 2px 7px; font-weight: 700; }
-.pdf-pin-tag.grp .grp-row { display: flex; height: 19px; align-items: stretch; border-top: 1px solid rgba(255,255,255,.38); }
-.pdf-pin-tag.grp .grp-row:first-child, .pdf-pin-tag.grp .grp-note + .grp-row { border-top: 0; }
-.pdf-pin-tag.grp .grp-row.active { background: rgba(31, 98, 168, 0.55); }
-.pdf-pin-tag.grp i { font-style: normal; width: 26px; font-size: 10px; color: rgba(255,255,255,.78); display: grid; place-items: center; }
-.pdf-pin-tag.grp b { width: 62px; font-weight: 700; display: grid; place-items: center; border-left: 1px solid rgba(255,255,255,.38); }
-.pdf-pin-tag.grp.strain b { width: 46px; }
-.pdf-pin-tag.grp i + b { border-left: 1px solid rgba(255,255,255,.38); }
-.pdf-pin-tag.grp > :first-child.grp-row b:first-child { border-left: 0; }
+.pin-layer .pdf-pin-tag.grp .grp-note { background: linear-gradient(90deg, #FF8A1F, #F2600C); color: #FFF; text-align: center; padding: 3px 8px; font-weight: 800; letter-spacing: .2px; }
+.pin-layer .pdf-pin-tag.grp .grp-row { display: flex; height: 20px; align-items: stretch; border-top: 1px solid #D3E0F2; }
+.pin-layer .pdf-pin-tag.grp .grp-row:first-child, .pin-layer .pdf-pin-tag.grp .grp-note + .grp-row { border-top: 0; }
+.pin-layer .pdf-pin-tag.grp .grp-row:nth-child(even) { background: #F3F7FD; }
+.pin-layer .pdf-pin-tag.grp .grp-row.active { background: #FFF1DE; }
+.pin-layer .pdf-pin-tag.grp i { font-style: normal; width: 28px; background: #1F62A8; color: #FFF; font-size: 10px; font-weight: 800; display: grid; place-items: center; }
+.pin-layer .pdf-pin-tag.grp .grp-row.active i { background: #F2600C; }
+.pin-layer .pdf-pin-tag.grp b { width: 66px; font-weight: 800; color: #10264F; display: grid; place-items: center; border-left: 1px solid #D3E0F2; }
+.pin-layer .pdf-pin-tag.grp.strain b { width: 50px; }
+.pin-layer .pdf-pin-tag.grp i + b, .pin-layer .pdf-pin-tag.grp .grp-row > b:first-child { border-left: 0; }
 
-/* 메모 상자: 단 선택줄 · 변형률계 칸 3개 · 신규설치 표시·키패드 */
-.pin-levels { display: flex; gap: 6px; overflow-x: auto; margin: 6px 0; padding-bottom: 2px; }
-.pin-level-btn { flex: 0 0 auto; min-height: 36px; padding: 4px 12px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--text); font-weight: 700; font-size: 13px; white-space: nowrap; }
-.pin-level-btn[aria-pressed="true"] { background: var(--accent); color: #FFF; }
-.pin-level-btn.add { border-style: dashed; font-weight: 600; }
-.pin-cells { display: flex; margin-top: 8px; }
-.pin-cells input { flex: 1 1 0; min-width: 0; min-height: 44px; text-align: center; font-size: 17px; font-weight: 700; border: 2px solid #5b7db1; border-radius: 0; margin: 0 0 0 -2px; padding: 0 2px; background: #FFFFFF; color: #111; }
-.pin-cells input:first-child { margin-left: 0; border-radius: 10px 0 0 10px; }
-.pin-cells input:last-child { border-radius: 0 10px 10px 0; }
-.pin-cells input:focus { position: relative; z-index: 1; outline: 2px solid var(--accent); }
+/* 메모 상자: 단 선택(알약 버튼) · 변형률계 값 칸 3개 · 신규설치 표시 한 줄. 어두운 테마에서도 읽히게 글자색은 var(--text), 바탕은 반투명 파랑 */
+.pin-levels { display: flex; gap: 6px; overflow-x: auto; margin: 6px 0 8px; padding-bottom: 2px; scrollbar-width: none; }
+.pin-levels::-webkit-scrollbar { display: none; }
+.pin-level-btn { flex: 0 0 auto; min-height: 38px; padding: 4px 14px; border-radius: 999px; border: 1.5px solid rgba(31, 98, 168, .4); background: rgba(31, 98, 168, .1); color: var(--text); font-weight: 800; font-size: 14px; white-space: nowrap; }
+.pin-level-btn[aria-pressed="true"] { background: linear-gradient(180deg, #2B7BD0, #1F62A8); border-color: #1F62A8; color: #FFF; box-shadow: 0 3px 10px rgba(31, 98, 168, .38); }
+.pin-level-btn.add { border-style: dashed; background: transparent; font-weight: 700; }
+.pin-cells { display: flex; margin-top: 4px; filter: drop-shadow(0 2px 6px rgba(31, 98, 168, .16)); }
+.pin-cells input { flex: 1 1 0; min-width: 0; min-height: 50px; text-align: center; font-size: 19px; font-weight: 800; border: 2px solid #8FB0DC; border-radius: 0; margin: 0 0 0 -2px; padding: 0 2px; background: #FFFFFF; color: #10264F; }
+.pin-cells input::placeholder { font-size: 12px; font-weight: 600; color: #9DB2D1; }
+.pin-cells input:first-child { margin-left: 0; border-radius: 12px 0 0 12px; }
+.pin-cells input:last-child { border-radius: 0 12px 12px 0; }
+.pin-cells input:focus { position: relative; z-index: 1; border-color: #1F62A8; outline: 0; box-shadow: 0 0 0 3px rgba(31, 98, 168, .28); }
+.pin-memo-box.strain-mode .pin-memo-hint, .pin-memo-box.strain-mode .pin-memo-display { display: none; }
+.pin-memo-box.strain-mode #pinMemoOpenPad { flex: 1 1 100%; width: 100%; }
+
 .pin-note-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.pin-note-view { flex: 1 1 auto; min-height: 32px; display: flex; align-items: center; padding: 0 10px; border-radius: 8px; background: rgba(214, 105, 12, 0.96); color: #FFF; font-weight: 700; font-size: 14px; }
-.pin-note-view.empty { background: transparent; color: var(--text); opacity: .55; font-weight: 500; border: 1px dashed var(--accent); }
-.pin-keypad { display: grid; grid-template-columns: repeat(3, 1fr) 1.5fr; gap: 6px; margin-top: 8px; }
-.pin-keypad-cap { grid-row: 1; font-size: 11px; font-weight: 700; opacity: .7; }
+.pin-note-view { flex: 1 1 auto; min-height: 34px; display: flex; align-items: center; padding: 0 12px; border-radius: 10px; background: linear-gradient(90deg, #FF8A1F, #F2600C); color: #FFF; font-weight: 800; font-size: 14px; box-shadow: 0 3px 10px rgba(242, 96, 12, .32); }
+.pin-note-view.empty { background: transparent; color: var(--text); opacity: .6; font-weight: 600; border: 1.5px dashed rgba(31, 98, 168, .5); box-shadow: none; }
+.pin-note-btn { flex: 0 0 auto; min-height: 34px; padding: 0 14px; border-radius: 10px; border: 1.5px solid #F2600C; background: transparent; color: #F2600C; font-weight: 800; font-size: 14px; }
+
+/* 신규설치 키패드 창(아래에서 올라오는 시트): 숫자 3열 + '자주 쓰는 것' 1열 */
+.pin-keypad-dlg .dlg { padding-top: 14px; }
+.pin-keypad-dlg .pin-note-view { margin: 10px 0 12px; min-height: 44px; font-size: 18px; justify-content: center; }
+.pin-keypad { display: grid; grid-template-columns: repeat(3, 1fr) 1.5fr; gap: 8px; }
+.pin-keypad-cap { grid-row: 1; font-size: 12px; font-weight: 800; color: var(--muted, #5B6B86); }
 .pin-keypad-cap.num { grid-column: 1 / 4; }
-.pin-keypad-cap.freq { grid-column: 4; padding-left: 8px; }
-.pin-key { min-height: 40px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--text); font-size: 17px; font-weight: 700; }
-.pin-key:active { background: var(--accent); color: #FFF; }
-.pin-key.util { font-size: 13px; font-weight: 600; }
-.pin-key.freq { border-style: dashed; border-width: 2px; margin-left: 8px; font-size: 15px; }
-.pin-key.freq.chip { background: rgba(214, 105, 12, 0.96); border-color: rgba(214, 105, 12, 0.96); color: #FFF; }
-.pin-memo-box.strain-mode .pin-memo-hint, .pin-memo-box.strain-mode .pin-memo-display, .pin-memo-box.keypad-open .pin-memo-hint, .pin-memo-box.keypad-open .pin-memo-prev, .pin-memo-box.keypad-open .pin-memo-display { display: none; }
+.pin-keypad-cap.freq { grid-column: 4; padding-left: 10px; color: #F2600C; }
+.pin-key { min-height: 50px; border-radius: 14px; border: 1.5px solid rgba(31, 98, 168, .35); background: rgba(31, 98, 168, .08); color: var(--text); font-size: 20px; font-weight: 800; }
+.pin-key:active { background: #1F62A8; color: #FFF; transform: scale(.97); }
+.pin-key.util { font-size: 15px; font-weight: 700; }
+.pin-key.util.done { background: linear-gradient(180deg, #2B7BD0, #1F62A8); border-color: #1F62A8; color: #FFF; }
+.pin-key.freq { margin-left: 10px; border: 2px dashed #F2600C; background: rgba(242, 96, 12, .08); color: #F2600C; font-size: 17px; }
+.pin-key.freq:active { background: #F2600C; color: #FFF; }
+.pin-key.freq.chip { border-style: solid; background: linear-gradient(180deg, #FF8A1F, #F2600C); color: #FFF; font-size: 16px; box-shadow: 0 3px 10px rgba(242, 96, 12, .35); }

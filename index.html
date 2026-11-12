@@ -9,9 +9,9 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=86">
-<link rel="stylesheet" href="theme.css?v=86">
-<link rel="stylesheet" href="brand.css?v=86">
+<link rel="stylesheet" href="style.css?v=87">
+<link rel="stylesheet" href="theme.css?v=87">
+<link rel="stylesheet" href="brand.css?v=87">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -425,6 +425,18 @@
   </form>
 </dialog>
 
+<!-- 신규설치 표시 키패드(하중계·변형률계): 메모 상자와 따로 떠서 손글씨(OCR)·키보드 입력 자리를 가리지 않는다 -->
+<dialog id="pinKeypadDialog" class="pin-keypad-dlg" aria-labelledby="pinKeypadTitle">
+  <div class="dlg">
+    <div class="row between">
+      <h2 id="pinKeypadTitle" class="dlg-title">🆕 신규설치 표시</h2>
+      <button id="pinKeypadClear" type="button" class="btn outline small">전체 지우기</button>
+    </div>
+    <div id="pinKeypadPreview" class="pin-note-view empty">신규설치 표시 없음</div>
+    <div id="pinKeypad" class="pin-keypad" role="group" aria-label="신규설치 키패드"></div>
+  </div>
+</dialog>
+
 <dialog id="pinNumDialog" aria-labelledby="pinNumTitle">
   <form method="dialog" class="dlg">
     <h2 id="pinNumTitle" class="dlg-title">계측기 번호</h2>
@@ -639,22 +651,21 @@
     <div id="pinLevels" class="pin-levels hidden" role="group" aria-label="단 선택"></div>
     <div id="pinMemoPrev" class="pin-memo-prev hidden" role="status" aria-live="polite"></div>
     <div id="pinMemoDisplay" class="pin-memo-display" tabindex="0" role="button" aria-label="메모 칸 (터치하면 손글씨 펜 입력 열기)"></div>
+    <!-- 변형률계: 값 칸 3개(숫자 4~6자리). 이 줄이 보이면 아래 키보드 칸은 숨고, 손글씨(OCR) 버튼은 그대로 쓴다 -->
+    <div id="pinCells" class="pin-cells hidden" role="group" aria-label="변형률계 값 3칸">
+      <input type="text" inputmode="decimal" maxlength="8" autocomplete="off" aria-label="값 1" placeholder="값 1">
+      <input type="text" inputmode="decimal" maxlength="8" autocomplete="off" aria-label="값 2" placeholder="값 2">
+      <input type="text" inputmode="decimal" maxlength="8" autocomplete="off" aria-label="값 3" placeholder="값 3">
+    </div>
     <div class="row" style="margin-top: 8px;">
       <input id="pinMemoKeyboard" type="text" maxlength="200" placeholder="키보드로 직접 수정할 수도 있습니다" aria-label="메모 (키보드 입력)">
       <button id="pinMemoOpenPad" type="button" class="btn primary small">✍️ 펜 필기(OCR)</button>
     </div>
-    <!-- 변형률계: 값 칸 3개(숫자 4~6자리). 이 줄이 보이면 위의 키보드 칸은 숨는다 -->
-    <div id="pinCells" class="pin-cells hidden" role="group" aria-label="변형률계 값 3칸">
-      <input type="text" inputmode="decimal" maxlength="8" autocomplete="off" aria-label="값 1">
-      <input type="text" inputmode="decimal" maxlength="8" autocomplete="off" aria-label="값 2">
-      <input type="text" inputmode="decimal" maxlength="8" autocomplete="off" aria-label="값 3">
-    </div>
     <!-- 신규설치 표시(하중계·변형률계): 고정 글자 '신규설치' + 키패드로 쓰는 '1-3단' -->
     <div id="pinNoteBar" class="pin-note-bar hidden">
       <span id="pinNoteView" class="pin-note-view"></span>
-      <button id="pinNoteToggle" type="button" class="btn outline small" aria-expanded="false">⌨ 신규설치 표시</button>
+      <button id="pinNoteToggle" type="button" class="pin-note-btn" aria-haspopup="dialog">⌨ 쓰기</button>
     </div>
-    <div id="pinKeypad" class="pin-keypad hidden" role="group" aria-label="신규설치 키패드"></div>
   </div>
 </div>
 
@@ -844,31 +855,31 @@
   </a>
 </nav>
 
-<script src="config.js?v=86"></script>
-<script src="errlog.js?v=86"></script>
-<script src="weather.js?v=86"></script>
-<script src="entries.js?v=86"></script>
-<script src="push.js?v=86"></script>
-<script src="outbox.js?v=86"></script>
-<script src="phonecopy.js?v=86"></script>
-<script src="pinhistory.js?v=86"></script>
-<script src="perf.js?v=86"></script>
-<script src="search.js?v=86"></script>
-<script src="busy.js?v=86"></script>
-<script src="sitesort.js?v=86"></script>
-<script src="drawing.js?v=86"></script>
-<script src="cad-engine.js?v=86"></script>
-<script src="cad.js?v=86"></script>
-<script src="cadfiles.js?v=86"></script>
-<script src="gps.js?v=86"></script>
-<script src="gallery.js?v=86"></script>
-<script src="camera.js?v=86"></script>
-<script src="app.js?v=86"></script>
-<script src="ocr-kit.js?v=86"></script>
-<script src="schedule-parse.js?v=86"></script>
-<script src="schedule.js?v=86"></script>
-<script src="card-enhance.js?v=86"></script>
-<script src="card-crop.js?v=86"></script>
-<script src="contacts.js?v=86"></script>
+<script src="config.js?v=87"></script>
+<script src="errlog.js?v=87"></script>
+<script src="weather.js?v=87"></script>
+<script src="entries.js?v=87"></script>
+<script src="push.js?v=87"></script>
+<script src="outbox.js?v=87"></script>
+<script src="phonecopy.js?v=87"></script>
+<script src="pinhistory.js?v=87"></script>
+<script src="perf.js?v=87"></script>
+<script src="search.js?v=87"></script>
+<script src="busy.js?v=87"></script>
+<script src="sitesort.js?v=87"></script>
+<script src="drawing.js?v=87"></script>
+<script src="cad-engine.js?v=87"></script>
+<script src="cad.js?v=87"></script>
+<script src="cadfiles.js?v=87"></script>
+<script src="gps.js?v=87"></script>
+<script src="gallery.js?v=87"></script>
+<script src="camera.js?v=87"></script>
+<script src="app.js?v=87"></script>
+<script src="ocr-kit.js?v=87"></script>
+<script src="schedule-parse.js?v=87"></script>
+<script src="schedule.js?v=87"></script>
+<script src="card-enhance.js?v=87"></script>
+<script src="card-crop.js?v=87"></script>
+<script src="contacts.js?v=87"></script>
 </body>
 </html>

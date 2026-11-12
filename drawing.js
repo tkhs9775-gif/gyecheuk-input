@@ -198,6 +198,17 @@ function strainCells(text) {
 const joinStrainCells = (cells) => cells.map((c) => String(c).trim()).join('/').replace(/\/+$/, '');
 const rowCells = (pin) => (pin.type === 'S' ? strainCells(pin.text) : [String(pin.text ?? '').trim()]);
 
+// 손글씨(OCR)로 읽은 글을 변형률계 칸에 넣는다: 공백으로 나뉜 값마다 한 칸씩, 첫 빈 칸부터(값이 남은 칸보다 많으면 앞으로 당겨 넣고, 칸이 다 찼으면 뒤쪽 칸을 바꾼다)
+function placeOcrInCells(cells, text) {
+  const tokens = String(text ?? '').trim().split(/\s+/).filter(Boolean).slice(0, STRAIN_CELLS);
+  const out = cells.slice();
+  if (!tokens.length) return out;
+  const free = out.findIndex((c) => !c);
+  const at = Math.min(free < 0 ? STRAIN_CELLS : free, STRAIN_CELLS - tokens.length);
+  tokens.forEach((t, i) => { out[at + i] = t; });
+  return out;
+}
+
 // 신규설치 표시: 그날 적은 것만 보인다(다음 날 계측용 도면에는 남지 않는다)
 const liveNote = (pin) => (pin && pin.note && pin.noteDate === todayKst() ? String(pin.note) : '');
 function parseNote(note) {
@@ -211,6 +222,7 @@ function pressNoteKey(note, key) {
   const cur = parseNote(note);
   if (key === 'chip') return joinNote({ ...cur, chip: !cur.chip });
   if (key === 'back') return joinNote({ ...cur, tail: cur.tail.slice(0, -1) });
+  if (key === 'clear') return '';
   if (!/^(\d|단|-)$/.test(key) || cur.tail.length >= NOTE_TAIL_MAX) return joinNote(cur);
   return joinNote({ ...cur, tail: cur.tail + key });
 }
@@ -1623,6 +1635,7 @@ function renderPinGroupUi(pin) {
   show($('pinCells'), strain);
   $('pinMemoBox').classList.toggle('strain-mode', strain);   // 변형률계는 칸으로 적으므로 안내 글·손글씨 칸을 접어 상자를 작게
   show($('pinMemoKeyboard'), !strain);
+  $('pinMemoOpenPad').textContent = strain ? '✍️ 손글씨로 입력 — 빈 칸에 차례로 들어갑니다' : '✍️ 펜 필기(OCR)';
   if (strain) strainCells(pin.text).forEach((c, i) => { $('pinCells').children[i].value = c; });
   // 신규설치 표시
   show($('pinNoteBar'), grouped);
@@ -1655,16 +1668,20 @@ function onStrainCellInput(e) {
 
 function renderNoteBar(pin) {
   const note = liveNote(noteOwner(pin));
-  const view = $('pinNoteView');
-  view.textContent = note || '신규설치 표시 없음';
-  view.classList.toggle('empty', !note);
+  for (const id of ['pinNoteView', 'pinKeypadPreview']) {
+    const view = $(id);
+    view.textContent = note || '신규설치 표시 없음';
+    view.classList.toggle('empty', !note);
+  }
 }
 
+// 키패드는 메모 상자 위에 따로 뜨는 창이다(손글씨·키보드 입력 자리를 가리거나 숨기지 않는다)
 function setKeypadOpen(on) {
-  show($('pinKeypad'), on);
-  $('pinMemoBox').classList.toggle('keypad-open', on);
-  $('pinNoteToggle').setAttribute('aria-expanded', String(on));
-  if (on && !$('pinKeypad').childElementCount) buildKeypad();
+  const dlg = $('pinKeypadDialog');
+  if (on && !dlg.open) {
+    if (!$('pinKeypad').childElementCount) buildKeypad();
+    dlg.showModal();
+  } else if (!on && dlg.open) dlg.close();
 }
 
 // 숫자 키패드(왼쪽) + '자주 쓰는 것'(오른쪽: 신규설치·단·-). 신규설치는 글자를 고칠 수 없고 넣고 빼기만 된다
@@ -1684,7 +1701,7 @@ function buildKeypad() {
   for (let row = 0; row < 4; row += 1) {
     for (let col = 0; col < 3; col += 1) {
       const k = nums[row * 3 + col];
-      out.push(k === 'back' ? mk('util', '⌫', 'back') : k === 'done' ? mk('util', '닫기', 'done') : mk('', k, k));
+      out.push(k === 'back' ? mk('util', '⌫', 'back') : k === 'done' ? mk('util done', '완료', 'done') : mk('', k, k));
     }
     if (freq[row]) out.push(mk(`freq${freq[row][0] === 'chip' ? ' chip' : ''}`, freq[row][1], freq[row][0]));
     else out.push(document.createElement('span'));
@@ -1999,10 +2016,7 @@ function applyOcrTextAndClose(text) {
   const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
   if (pin?.type === 'S') {
     // 변형률계: 판독한 값은 오늘 적던 칸 다음의 첫 빈 칸에 넣는다(다 찼으면 마지막 칸을 바꾼다)
-    const cells = strainCells(pin.date === todayKst() ? pin.text : '');
-    const free = cells.findIndex((c) => !c);
-    cells[free < 0 ? STRAIN_CELLS - 1 : free] = clean.replace(/\s+/g, '');
-    updateActivePinText(joinStrainCells(cells));
+    updateActivePinText(joinStrainCells(placeOcrInCells(strainCells(pin.date === todayKst() ? pin.text : ''), clean)));
     $('ocrPadDialog').close();
     return;
   }
@@ -2207,8 +2221,11 @@ const ANN_ROW_H = 20;
 const ANN_HEAD_W = 28;
 const ANN_CELL_W_S = 50;
 const ANN_CELL_W_L = 66;
-const ANN_GROUP_NAVY = 'rgba(27, 42, 87, 0.94)';
-const ANN_NOTE_ORANGE = 'rgba(214, 105, 12, 0.96)';
+const ANN_BLUE = '#1F62A8';
+const ANN_INK_NAVY = '#10264F';
+const ANN_LINE = '#D3E0F2';
+const ANN_ROW_TINT = '#F3F7FD';
+const ANN_ACTIVE_TINT = '#FFF1DE';
 
 // 동그라미 아래 글자 상자 자리(쪽 가장자리 안으로 당긴다). textW: 글자 폭
 function annTagBox(pin, textW, widthPx, heightPx) {
@@ -2266,47 +2283,61 @@ const pdfPlacement = (b, pageHeight) => ({ x: b.x, y: pageHeight - b.y - b.h, wi
 
 const roundRectPath = (ctx, x, y, w, h, r) => { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); };
 
-// 묶음 상자 그리기: (신규설치 줄) + 단마다 한 줄. 칸 사이는 가는 흰 선으로 이어 붙인다. 칸보다 긴 값은 글자를 줄여 넣는다
+// 묶음 상자 그리기: 흰 카드 + 파란 테두리, (주황 신규설치 띠) + 단마다 한 줄(파란 단 머리 + 값 칸). 칸 사이는 연한 선으로 이어 붙이고, 칸보다 긴 값은 글자를 줄여 넣는다
 function drawGroupTag(ctx, item, b) {
-  let y = b.y;
   ctx.textBaseline = 'middle';
+  const totalH = b.h;
+  // 카드 바탕 + 테두리
+  ctx.fillStyle = '#FFFFFF';
+  roundRectPath(ctx, b.x, b.y, b.w, totalH, 6);
+  ctx.fill();
+  ctx.save();
+  roundRectPath(ctx, b.x, b.y, b.w, totalH, 6);
+  ctx.clip();
+  let y = b.y;
   if (b.note) {
-    ctx.fillStyle = ANN_NOTE_ORANGE;
-    roundRectPath(ctx, b.x, y, b.w, ANN_ROW_H, 5);
-    ctx.fill();
+    const g = ctx.createLinearGradient(b.x, 0, b.x + b.w, 0);
+    g.addColorStop(0, '#FF8A1F');
+    g.addColorStop(1, '#F2600C');
+    ctx.fillStyle = g;
+    ctx.fillRect(b.x, y, b.w, ANN_ROW_H);
     ctx.fillStyle = '#FFFFFF';
     ctx.font = ANN_TAG_FONT;
     ctx.textAlign = 'center';
     ctx.fillText(b.note, b.x + b.w / 2, y + ANN_ROW_H / 2);
     y += ANN_ROW_H;
   }
-  const rowsH = item.rows.length * ANN_ROW_H;
-  ctx.fillStyle = ANN_GROUP_NAVY;
-  roundRectPath(ctx, b.x, y, b.rowsW, rowsH, 5);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)';
   ctx.lineWidth = 0.8;
+  ctx.strokeStyle = ANN_LINE;
   item.rows.forEach((row, r) => {
     const ry = y + r * ANN_ROW_H;
+    if (r % 2) { ctx.fillStyle = ANN_ROW_TINT; ctx.fillRect(b.x, ry, b.rowsW, ANN_ROW_H); }
     if (r) { ctx.beginPath(); ctx.moveTo(b.x, ry); ctx.lineTo(b.x + b.rowsW, ry); ctx.stroke(); }
     if (b.head) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.78)';
+      ctx.fillStyle = ANN_BLUE;
+      ctx.fillRect(b.x, ry, b.head, ANN_ROW_H);
+      ctx.fillStyle = '#FFFFFF';
       ctx.font = 'bold 10px "Noto Sans KR", "Malgun Gothic", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(`${row.level}단`, b.x + b.head / 2, ry + ANN_ROW_H / 2);
     }
     rowCells(row.pin).forEach((text, i) => {
       const cx0 = b.x + b.head + i * b.cellW;
-      if (b.head || i) { ctx.beginPath(); ctx.moveTo(cx0, ry); ctx.lineTo(cx0, ry + ANN_ROW_H); ctx.stroke(); }
+      if (i) { ctx.beginPath(); ctx.moveTo(cx0, ry); ctx.lineTo(cx0, ry + ANN_ROW_H); ctx.stroke(); }
       if (!text) return;
       let size = 12;
       ctx.font = `bold ${size}px "Noto Sans KR", "Malgun Gothic", sans-serif`;
       while (size > 7 && ctx.measureText(text).width > b.cellW - 6) { size -= 1; ctx.font = `bold ${size}px "Noto Sans KR", "Malgun Gothic", sans-serif`; }
-      ctx.fillStyle = '#FFFFFF';
+      ctx.fillStyle = ANN_INK_NAVY;
       ctx.textAlign = 'center';
       ctx.fillText(text, cx0 + b.cellW / 2, ry + ANN_ROW_H / 2);
     });
   });
+  ctx.restore();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = ANN_BLUE;
+  roundRectPath(ctx, b.x, b.y, b.w, totalH, 6);
+  ctx.stroke();
 }
 
 // 특정 페이지의 동그라미 마커 + OCR 텍스트 태그 + 자유 펜 필기를 투명 PNG 로 그린다. 메모가 있는 범위만 잘라 { url, box } 로 돌려준다(없으면 null).
@@ -2897,8 +2928,9 @@ function initDrawingModule() {
     const i = inputs.indexOf(e.target);
     if (i >= 0 && i < inputs.length - 1) { e.preventDefault(); inputs[i + 1].focus(); }
   });
-  $('pinNoteToggle').addEventListener('click', () => setKeypadOpen($('pinKeypad').classList.contains('hidden')));
+  $('pinNoteToggle').addEventListener('click', () => setKeypadOpen(true));
   $('pinKeypad').addEventListener('click', onKeypadPress);
+  $('pinKeypadClear').addEventListener('click', () => onKeypadPress({ target: { closest: () => ({ dataset: { key: 'clear' } }) } }));
 
   $('ocrPadClose').addEventListener('click', () => $('ocrPadDialog').close());
   $('ocrPadUndo').addEventListener('click', undoOcrStroke);
@@ -2909,4 +2941,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES, annotationBounds, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState };
+if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES, annotationBounds, placeOcrInCells, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState };
