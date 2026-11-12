@@ -7,7 +7,7 @@ const NET_WAIT_MS = 3000;   // 화면 파일(index.html)을 이만큼 기다려�
 const CORE = [
   './', 'index.html',
   `style.css?v=${V}`, `theme.css?v=${V}`, `brand.css?v=${V}`, `config.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
-  `outbox.js?v=${V}`, `drawing.js?v=${V}`, `phonecopy.js?v=${V}`, `pinhistory.js?v=${V}`, `perf.js?v=${V}`, `busy.js?v=${V}`,
+  `outbox.js?v=${V}`, `sitesort.js?v=${V}`, `drawing.js?v=${V}`, `phonecopy.js?v=${V}`, `pinhistory.js?v=${V}`, `perf.js?v=${V}`, `busy.js?v=${V}`,
   `gps.js?v=${V}`, `gallery.js?v=${V}`, `camera.js?v=${V}`, `app.js?v=${V}`,
 ];
 // 나머지: 못 받아도 설치는 진행한다(파일 하나 때문에 전원이 옛 화면에 묶이지 않게). 안 받아진 것은 처음 쓸 때 받아 저장한다(아래 fetch).

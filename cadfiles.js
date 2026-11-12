@@ -42,7 +42,8 @@ async function cadRetry(fn) {
 
 function renderCadSites() {
   const ul = $('cadSites');
-  const sites = state.config.sites || [];
+  if (!$('cadSiteSort')) ul.before(Object.assign(SiteSort.control('cad', renderCadSites), { id: 'cadSiteSort' }));
+  const sites = SiteSort.sorted('cad', state.config.sites || []);
   if (!sites.length) {
     ul.replaceChildren(el('li', 'empty', '등록된 현장이 없습니다. 홈의 ⚙ 버튼에서 현장을 먼저 추가해 주세요.'));
     return;
@@ -72,6 +73,7 @@ function showCadSites(on) {
 async function openCadSite(site) {
   showCadSites(false);
   const seq = cadFiles.seq;
+  SiteSort.touch('cad', site);
   cadFiles.site = site;
   $('cadSiteName').textContent = `${site} CAD`;
   $('cadFileSearch').value = '';
@@ -212,7 +214,7 @@ function initCadFiles() {
   if (!$('cadSitesView')) return;
   attachListSearch($('cadSitesSearch'), $('cadSites'), (li) => li.querySelector('b')?.textContent || '');
   attachListSearch($('cadFileSearch'), $('cadFileList'), (li) => li.dataset.name || '');
-  $('cadBackSites').addEventListener('click', () => { showCadSites(true); renderCadRecent(); });
+  $('cadBackSites').addEventListener('click', () => { showCadSites(true); renderCadSites(); renderCadRecent(); });
   $('cadUploadBtn').addEventListener('click', () => $('cadUploadFile').click());
   $('cadUploadFile').addEventListener('change', (e) => { const f = e.target.files?.[0]; e.target.value = ''; cadUploadPick(f); });
 }

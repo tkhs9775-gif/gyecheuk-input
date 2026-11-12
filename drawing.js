@@ -340,7 +340,8 @@ function loadDrawingTab() {
 
 function renderDrawingSites() {
   const ul = $('drawingSiteList');
-  const sites = state.config.sites || [];
+  if (!$('drawingSiteSort')) ul.before(Object.assign(SiteSort.control('drawing', renderDrawingSites), { id: 'drawingSiteSort' }));
+  const sites = SiteSort.sorted('drawing', state.config.sites || []);
   if (sites.length === 0) {
     const li = document.createElement('li');
     li.className = 'empty';
@@ -454,6 +455,7 @@ let folderSeq = 0;   // 현장을 연달아 바꿀 때 늦게 온 옛 목록이 
 // 지난번 목록(폰 보관분)이 있으면 서버를 기다리지 않고 바로 보여 주고, 최신 목록은 뒤에서 받아 달라진 것만 바꿔 넣는다(서버 응답 1.5~3초를 매번 기다리지 않게)
 async function openSiteDrawingFolder(site) {
   const seq = ++folderSeq;
+  SiteSort.touch('drawing', site);
   drawingState.site = site;
   drawingState.view = 'original';
   drawingState.groupOpen = new Map();
