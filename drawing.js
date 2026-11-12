@@ -331,18 +331,22 @@ async function openRecentDrawing(r) {
   if (file) openPdfFieldbook(file);
 }
 
+// 연 기록이 없는 현장은 폰에 보관된 도면 목록의 최근 파일 날짜로(v81 이전에 열어 본 현장도 바로 최근 순에 반영). 탭 들어올 때만 다시 읽는다
+let drawingSiteHint;
+
 function loadDrawingTab() {
+  drawingSiteHint = SiteSort.cached((s) => SiteSort.newest(readCached(`drawings_${s}`), readCached(`drawing_folders_${s}`)));
   ensurePdfJs().catch(() => {}); // 도면 탭 진입 즉시 PDF 엔진 예열!
   show($('drawingSitesView'), true);
   show($('drawingFilesView'), false);
   renderDrawingSites();
+  SiteSort.warm(drawingSiteHint, state.config.sites);
 }
 
 function renderDrawingSites() {
   const ul = $('drawingSiteList');
   if (!$('drawingSiteSort')) ul.before(Object.assign(SiteSort.control('drawing', renderDrawingSites), { id: 'drawingSiteSort' }));
-  // 연 기록이 없는 현장은 폰에 보관된 도면 목록의 최근 파일 날짜로(v81 이전에 열어 본 현장도 바로 최근 순에 반영)
-  const sites = SiteSort.sorted('drawing', state.config.sites || [], (s) => SiteSort.newest(readCached(`drawings_${s}`), readCached(`drawing_folders_${s}`)));
+  const sites = SiteSort.sorted('drawing', state.config.sites || [], drawingSiteHint);
   if (sites.length === 0) {
     const li = document.createElement('li');
     li.className = 'empty';

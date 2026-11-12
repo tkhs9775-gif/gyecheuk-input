@@ -40,11 +40,17 @@ async function cadRetry(fn) {
 
 // ---------- 1단계: 현장 목록 ----------
 
+// 연 기록이 없는 현장은 폰에 보관된 CAD 목록의 최근 파일 날짜로. 탭 들어올 때(loadCadTab)만 다시 읽는다
+let cadSiteHint;
+function resetCadSiteHint() {
+  cadSiteHint = SiteSort.cached((s) => { const c = readCached(`cadlist_${s}`); return SiteSort.newest(c?.files, c?.folders); });
+  SiteSort.warm(cadSiteHint, state.config.sites);
+}
+
 function renderCadSites() {
   const ul = $('cadSites');
   if (!$('cadSiteSort')) ul.before(Object.assign(SiteSort.control('cad', renderCadSites), { id: 'cadSiteSort' }));
-  // 연 기록이 없는 현장은 폰에 보관된 CAD 목록의 최근 파일 날짜로
-  const sites = SiteSort.sorted('cad', state.config.sites || [], (s) => { const c = readCached(`cadlist_${s}`); return SiteSort.newest(c?.files, c?.folders); });
+  const sites = SiteSort.sorted('cad', state.config.sites || [], cadSiteHint);
   if (!sites.length) {
     ul.replaceChildren(el('li', 'empty', '등록된 현장이 없습니다. 홈의 ⚙ 버튼에서 현장을 먼저 추가해 주세요.'));
     return;

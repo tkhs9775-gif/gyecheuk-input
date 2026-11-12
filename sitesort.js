@@ -20,6 +20,10 @@ const SiteSort = (() => {
   // 보관된 목록 { files, folders:[{files}] } 의 가장 최근 파일 시각(ms). updated 는 'YYYY-MM-DD HH:mm'. 없으면 0
   const newest = (files = [], folders = []) => Math.max(0, ...[...(files || []), ...(folders || []).flatMap((fo) => fo?.files || [])]
     .map((f) => Date.parse(String(f?.updated || '').replace(' ', 'T')) || 0));
+  // 현장별 hint 를 한 번만 계산해 기억(보관 목록 JSON 을 버튼 누를 때마다 다시 읽으면 느린 태블릿에서 0.1초 넘게 걸린다). 탭에 들어올 때 clear()
+  const cached = (fn) => { const m = new Map(); const f = (s) => { if (!m.has(s)) m.set(s, fn(s)); return m.get(s); }; f.clear = () => m.clear(); return f; };
+  // 탭이 뜬 뒤 쉬는 틈에 hint 를 미리 계산(첫 [최근 연 순] 터치도 바로 바뀌게)
+  const warm = (fn, sites) => (globalThis.requestIdleCallback || setTimeout)(() => (sites || []).forEach((s) => fn(s)));
   const sorted = (key, sites, hint) => order(sites, mode(key), read(`sitesort_recent_${key}`, {}), hint);
   // [가나다 | 최근 연 순] 버튼 묶음. onChange 는 다시 그리는 함수. cls 는 web '.seg', PC 'seg-group'
   const control = (key, onChange, cls = 'seg', btnCls = '') => {
@@ -44,7 +48,7 @@ const SiteSort = (() => {
     paint();
     return nav;
   };
-  return { mode, setMode, touch, order, sorted, newest, control };
+  return { mode, setMode, touch, order, sorted, newest, cached, warm, control };
 })();
 
 if (typeof module !== 'undefined') module.exports = { SiteSort };

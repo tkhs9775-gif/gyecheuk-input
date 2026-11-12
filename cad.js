@@ -66,7 +66,7 @@ async function cadRemember(name, buf, extra = {}) {
 // ---------- 1단계: 열기 화면 ----------
 
 function loadCadTab() {
-  if (typeof renderCadSites === 'function') { showCadSites(true); renderCadSites(); }
+  if (typeof renderCadSites === 'function') { resetCadSiteHint(); showCadSites(true); renderCadSites(); }
   renderCadRecent();
 }
 
