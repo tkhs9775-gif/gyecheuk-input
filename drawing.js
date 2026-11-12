@@ -161,6 +161,61 @@ function negateIfPlainNumber(type, text) {
   return NEGATIVE_PIN_TYPES.includes(type) && /^\d+(\.\d+)?$/.test(text) && Number(text) !== 0 ? `-${text}` : text;
 }
 
+// ---------- 하중계(L)·변형률계(S): 같은 지점의 1단·2단·3단을 동그라미 하나로 묶어 보인다 ----------
+// 저장은 단마다 동그라미(pin) 하나씩 그대로다(번호 'L1-1단' 처럼 num 이 '<지점>-<N>단'). 그리는 순간에만 같은 쪽·종류·지점끼리 묶으므로 옛 도면도 그대로 묶인다.
+// 변형률계 값은 text 에 'a/b/c'(칸 3개, 빈 칸은 그대로 비움)로 둔다. '신규설치 1-3단' 같은 표시는 묶음의 첫 동그라미에 note(+noteDate=적은 날)로 두고, 그날만 보인다.
+const GROUP_TYPES = ['L', 'S'];
+const LEVEL_NUM_RE = /^(.+)-(\d+)단$/;
+const STRAIN_CELLS = 3;
+const NOTE_CHIP = '신규설치';   // 글자를 고칠 수 없는 고정 표시(눌러서 넣고 빼기만 한다)
+const NOTE_TAIL_MAX = 12;
+
+function pinItems(pins) {
+  const items = [];
+  const byKey = new Map();
+  for (const pin of pins || []) {
+    if (!GROUP_TYPES.includes(pin.type)) { items.push({ anchor: pin, rows: null }); continue; }
+    const m = LEVEL_NUM_RE.exec(String(pin.num || ''));
+    const key = m ? `${pin.page}|${pin.type}|${m[1]}` : `id|${pin.id}`;
+    let item = byKey.get(key);
+    if (!item) { item = { anchor: pin, base: m ? m[1] : null, rows: [] }; byKey.set(key, item); items.push(item); }
+    item.rows.push({ pin, level: m ? Number(m[2]) : null });
+  }
+  for (const item of items) {
+    if (!item.rows) continue;
+    item.rows.sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
+    item.anchor = item.rows[0].pin;
+  }
+  return items;
+}
+
+// 변형률계 text → 칸 3개. 'a/b/c'이면 칸대로, 구분이 없으면 공백으로 나눈다(손글씨 판독처럼 공백으로 들어온 값)
+function strainCells(text) {
+  const s = String(text ?? '');
+  const parts = s.includes('/') ? s.split('/') : s.split(/\s+/);
+  return Array.from({ length: STRAIN_CELLS }, (_, i) => (parts[i] || '').trim());
+}
+const joinStrainCells = (cells) => cells.map((c) => String(c).trim()).join('/').replace(/\/+$/, '');
+const rowCells = (pin) => (pin.type === 'S' ? strainCells(pin.text) : [String(pin.text ?? '').trim()]);
+
+// 신규설치 표시: 그날 적은 것만 보인다(다음 날 계측용 도면에는 남지 않는다)
+const liveNote = (pin) => (pin && pin.note && pin.noteDate === todayKst() ? String(pin.note) : '');
+function parseNote(note) {
+  const s = String(note || '');
+  const chip = s.startsWith(NOTE_CHIP);
+  return { chip, tail: (chip ? s.slice(NOTE_CHIP.length) : s).trim() };
+}
+const joinNote = ({ chip, tail }) => [chip ? NOTE_CHIP : '', tail].filter(Boolean).join(' ');
+// 키패드 한 번 누름: 'chip' 은 신규설치 넣고 빼기, 'back' 은 끝 글자 지움, 그 밖은 숫자·'단'·'-' 덧붙이기
+function pressNoteKey(note, key) {
+  const cur = parseNote(note);
+  if (key === 'chip') return joinNote({ ...cur, chip: !cur.chip });
+  if (key === 'back') return joinNote({ ...cur, tail: cur.tail.slice(0, -1) });
+  if (!/^(\d|단|-)$/.test(key) || cur.tail.length >= NOTE_TAIL_MAX) return joinNote(cur);
+  return joinNote({ ...cur, tail: cur.tail + key });
+}
+const itemHasTag = (item) => !!liveNote(item.anchor) || item.rows.some((r) => String(r.pin.text || '').trim());
+
 const drawingState = {
   site: '',
   files: [],
@@ -1371,17 +1426,25 @@ function pinLabel(pin) {
 }
 
 // 동그라미를 찍기 전에 계측기 번호를 묻는다. 종류 글자(W·H…)는 고정이고 번호만 넣는다. 취소하면 null
+// 하중계·변형률계의 다음 지점 번호: 이 쪽·종류에 있는 지점(묶음) 번호 중 가장 큰 숫자 + 1
+function nextGroupBase(type, page) {
+  const bases = pinItems((drawingState.notes.pins || []).filter((p) => p.page === page && p.type === type)).map((it) => Number(it.base ?? it.anchor.num));
+  return String(Math.max(0, ...bases.filter(Number.isFinite)) + 1);
+}
+
 async function askPinNumber(type, page) {
   const dlg = $('pinNumDialog');
+  const grouped = GROUP_TYPES.includes(type);
   const same = (drawingState.notes.pins || []).filter((p) => p.page === page && (p.type || '') === (type || ''));
   $('pinNumLabel').textContent = type ? `${type} ${pinTypeName(type)} 번호 (원 안에 ${type}+번호로 표시)` : '번호 (원 안에 표시)';
-  $('pinNumInput').value = String(same.length + 1);
+  show($('pinLevelField'), grouped);
+  $('pinNumInput').value = grouped ? nextGroupBase(type, page) : String(same.length + 1);
   dlg.returnValue = '';   // 바탕을 눌러 닫으면 취소
   dlg.showModal();
   $('pinNumInput').select();
   await new Promise((resolve) => dlg.addEventListener('close', resolve, { once: true }));
   if (dlg.returnValue !== 'ok') return null;
-  return $('pinNumInput').value.trim().replace(/\s+/g, '') || String(same.length + 1);
+  return $('pinNumInput').value.trim().replace(/\s+/g, '') || (grouped ? nextGroupBase(type, page) : String(same.length + 1));
 }
 
 function visiblePagePins() {
@@ -1420,17 +1483,20 @@ function setPenMode(on) {
 
 function renderPagePins() {
   const layer = $('pinLayer');
-  const pins = visiblePagePins();
-  layer.replaceChildren(...pins.map((pin) => {
-    const label = pinLabel(pin);
+  layer.replaceChildren(...pinItems(visiblePagePins()).map((item) => {
+    const pin = item.anchor;
+    const label = item.base ? `${pin.type}${item.base}` : pinLabel(pin);
+    const selected = (item.rows || [{ pin }]).some((r) => r.pin.id === drawingState.activePinId);
     const el = document.createElement('button');
     el.type = 'button';
-    el.className = `pdf-pin${pin.id === drawingState.activePinId ? ' selected' : ''}${label.length > 3 ? ' tiny' : label.length > 2 ? ' small' : ''}`;
+    el.className = `pdf-pin${selected ? ' selected' : ''}${label.length > 3 ? ' tiny' : label.length > 2 ? ' small' : ''}`;
     const at = toView(pin, drawingState.rotation);
     el.style.left = `${(at.x * 100).toFixed(2)}%`;
     el.style.top = `${(at.y * 100).toFixed(2)}%`;
     el.textContent = label;
-    if (pin.text) {
+    if (item.rows) {
+      if (itemHasTag(item)) el.appendChild(buildGroupTag(item));
+    } else if (pin.text) {
       const tag = document.createElement('span');
       tag.className = 'pdf-pin-tag';
       tag.textContent = pin.text;
@@ -1438,10 +1504,41 @@ function renderPagePins() {
     }
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      openPinMemoBox(pin.id);
+      // 묶음의 줄(단)을 눌렀으면 그 단, 아니면 첫 단
+      openPinMemoBox(e.target.closest?.('[data-pid]')?.dataset.pid || pin.id);
     });
     return el;
   }));
+}
+
+// 화면용 묶음 상자(PDF 그림과 같은 모양): (신규설치 줄) + 단마다 한 줄, 변형률계는 칸 3개
+function buildGroupTag(item) {
+  const box = document.createElement('span');
+  box.className = `pdf-pin-tag grp${item.anchor.type === 'S' ? ' strain' : ''}`;
+  const note = liveNote(item.anchor);
+  if (note) {
+    const n = document.createElement('span');
+    n.className = 'grp-note';
+    n.textContent = note;
+    box.appendChild(n);
+  }
+  for (const row of item.rows) {
+    const r = document.createElement('span');
+    r.className = `grp-row${row.pin.id === drawingState.activePinId ? ' active' : ''}`;
+    r.dataset.pid = row.pin.id;
+    if (row.level !== null) {
+      const head = document.createElement('i');
+      head.textContent = `${row.level}단`;
+      r.appendChild(head);
+    }
+    for (const text of rowCells(row.pin)) {
+      const c = document.createElement('b');
+      c.textContent = text;
+      r.appendChild(c);
+    }
+    box.appendChild(r);
+  }
+  return box;
 }
 
 async function handleStageTapForPin(e) {
@@ -1458,22 +1555,19 @@ async function handleStageTapForPin(e) {
   const type = drawingState.pinType;
   const num = await askPinNumber(type, page);
   if (num === null || page !== drawingState.pageNum) return;
-  const newPin = {
-    id: crypto.randomUUID(),
-    page,
-    x,
-    y,
-    type,
-    num,
-    text: '',
-    author: $('user')?.value || '',
-    time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
-  };
-  drawingState.notes.pins.push(newPin);
+  const grouped = GROUP_TYPES.includes(type);
+  const levels = grouped ? Math.max(1, Math.min(9, parseInt($('pinLevelInput').value, 10) || 1)) : 0;
+  const time = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+  const make = (n) => ({ id: crypto.randomUUID(), page, x, y, type, num: n, text: '', author: $('user')?.value || '', time });
+  // 하중계·변형률계: 같은 지점의 단을 한 번에 만든다(번호 'L1-1단'…). 이미 있는 지점 번호면 새로 만들지 않고 그 지점을 연다
+  const existing = grouped ? pinItems(drawingState.notes.pins.filter((p) => p.page === page && p.type === type)).find((it) => it.base === num) : null;
+  if (existing) { openPinMemoBox(existing.anchor.id); return; }
+  const added = grouped ? Array.from({ length: levels }, (_, i) => make(`${num}-${i + 1}단`)) : [make(num)];
+  drawingState.notes.pins.push(...added);
   markDirty();
   renderPagePins();
   updatePageInfo();
-  openPinMemoBox(newPin.id);
+  openPinMemoBox(added[0].id);
   saveDrawingNotesQuiet();
 }
 
@@ -1488,8 +1582,132 @@ function openPinMemoBox(pinId) {
   // 지난 측정일의 값이 들어 있으면 칸을 누를 때 전체 선택: 지우지 않고 바로 새 값을 친다(옛 값은 전회로 남는다)
   $('pinMemoKeyboard').dataset.stale = pin.text && pin.date !== todayKst() ? '1' : '';
   renderPinReadings(pin);
+  renderPinGroupUi(pin);
   show($('pinMemoBox'), true);
   renderPagePins();
+}
+
+// ---------- 하중계·변형률계 메모 상자: 단 선택줄 · 변형률계 칸 3개 · 신규설치 키패드 ----------
+const itemOfPin = (pin) => pinItems(currentPagePins().filter((p) => p.type === pin.type)).find((it) => it.rows?.some((r) => r.pin.id === pin.id)) || null;
+const noteOwner = (pin) => itemOfPin(pin)?.anchor || pin;
+const levelButtonText = (row) => `${row.level ?? ''}단${rowCells(row.pin).some(Boolean) ? ' ✓' : ''}`;   // 값은 칸·도면에 보이므로 단 버튼에는 적었는지만
+
+function renderPinGroupUi(pin) {
+  const grouped = GROUP_TYPES.includes(pin.type);
+  const strain = pin.type === 'S';
+  const item = grouped ? itemOfPin(pin) : null;
+  // 단 선택줄: 단마다 '1단 값' 버튼, 마지막에 ＋단(다음 단 추가)
+  const levels = $('pinLevels');
+  show(levels, !!item && item.rows.some((r) => r.level !== null));
+  levels.replaceChildren();
+  if (item) {
+    for (const row of item.rows) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pin-level-btn';
+      b.setAttribute('aria-pressed', String(row.pin.id === pin.id));
+      b.textContent = levelButtonText(row);
+      b.addEventListener('click', () => openPinMemoBox(row.pin.id));
+      levels.appendChild(b);
+    }
+    if (item.base) {
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'pin-level-btn add';
+      add.textContent = '＋ 단 추가';
+      add.addEventListener('click', () => addLevel(item));
+      levels.appendChild(add);
+    }
+  }
+  // 변형률계: 키보드 칸 대신 칸 3개
+  show($('pinCells'), strain);
+  $('pinMemoBox').classList.toggle('strain-mode', strain);   // 변형률계는 칸으로 적으므로 안내 글·손글씨 칸을 접어 상자를 작게
+  show($('pinMemoKeyboard'), !strain);
+  if (strain) strainCells(pin.text).forEach((c, i) => { $('pinCells').children[i].value = c; });
+  // 신규설치 표시
+  show($('pinNoteBar'), grouped);
+  if (!grouped) setKeypadOpen(false);
+  renderNoteBar(pin);
+}
+
+function addLevel(item) {
+  const top = item.rows[item.rows.length - 1];
+  if ((top.level || 0) >= 9) return;
+  const a = item.anchor;
+  const newPin = {
+    id: crypto.randomUUID(), page: a.page, x: a.x, y: a.y, type: a.type, num: `${item.base}-${(top.level || 0) + 1}단`, text: '',
+    author: $('user')?.value || '', time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+  };
+  drawingState.notes.pins.push(newPin);
+  markDirty();
+  updatePageInfo();
+  openPinMemoBox(newPin.id);
+  saveDrawingNotesQuiet();
+}
+
+// 변형률계 칸 입력: 칸을 'a/b/c' 로 합쳐 값으로 저장한다. 한 칸이 6자리(숫자)가 되면 다음 칸으로
+function onStrainCellInput(e) {
+  const inputs = [...$('pinCells').querySelectorAll('input')];
+  const i = inputs.indexOf(e.target);
+  updateActivePinText(joinStrainCells(inputs.map((x) => x.value)), { keepCells: true });
+  if (i < inputs.length - 1 && e.target.value.replace(/\D/g, '').length >= 6) inputs[i + 1].focus();
+}
+
+function renderNoteBar(pin) {
+  const note = liveNote(noteOwner(pin));
+  const view = $('pinNoteView');
+  view.textContent = note || '신규설치 표시 없음';
+  view.classList.toggle('empty', !note);
+}
+
+function setKeypadOpen(on) {
+  show($('pinKeypad'), on);
+  $('pinMemoBox').classList.toggle('keypad-open', on);
+  $('pinNoteToggle').setAttribute('aria-expanded', String(on));
+  if (on && !$('pinKeypad').childElementCount) buildKeypad();
+}
+
+// 숫자 키패드(왼쪽) + '자주 쓰는 것'(오른쪽: 신규설치·단·-). 신규설치는 글자를 고칠 수 없고 넣고 빼기만 된다
+function buildKeypad() {
+  const mk = (cls, text, key) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `pin-key ${cls}`.trim();
+    b.textContent = text;
+    b.dataset.key = key;
+    return b;
+  };
+  const cap = (cls, text) => { const d = document.createElement('div'); d.className = `pin-keypad-cap ${cls}`; d.textContent = text; return d; };
+  const nums = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'back', '0', 'done'];
+  const freq = [['chip', '신규설치'], ['단', '단'], ['-', '-']];
+  const out = [cap('num', '숫자'), cap('freq', '자주 쓰는 것')];
+  for (let row = 0; row < 4; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      const k = nums[row * 3 + col];
+      out.push(k === 'back' ? mk('util', '⌫', 'back') : k === 'done' ? mk('util', '닫기', 'done') : mk('', k, k));
+    }
+    if (freq[row]) out.push(mk(`freq${freq[row][0] === 'chip' ? ' chip' : ''}`, freq[row][1], freq[row][0]));
+    else out.push(document.createElement('span'));
+  }
+  $('pinKeypad').replaceChildren(...out);
+}
+
+function onKeypadPress(e) {
+  const key = e.target.closest('button[data-key]')?.dataset.key;
+  const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
+  if (!key || !pin) return;
+  if (key === 'done') { setKeypadOpen(false); return; }
+  const owner = noteOwner(pin);
+  const next = pressNoteKey(liveNote(owner), key);
+  drawingState.notes.pins = drawingState.notes.pins.map((p) => {
+    if (p.id !== owner.id) return p;
+    const { note, noteDate, ...rest } = p;
+    return next ? { ...rest, note: next, noteDate: todayKst() } : rest;
+  });
+  markDirty();
+  renderNoteBar(pin);
+  renderPagePins();
+  saveDrawingNotesQuiet();
 }
 
 // 지난 값 카드(pinhistory.js readingTiles): 초기치·전회·오늘 타일(오늘 값이 있으면 전회 대비 변화·초기치 대비 누적) + 지난 값 이력 칩.
@@ -1500,6 +1718,7 @@ function renderPinReadings(pin) {
   const box = $('pinMemoPrev');
   if (typeof readingTiles !== 'function') { show(box, false); return; }
   const t = readingTiles(pin, todayKst());
+  if (pin.type === 'S') { t.delta = null; t.cumulative = null; }   // 값이 3칸이라 첫 숫자만 비교하면 틀린 변화가 나온다
   $('pinMemoKeyboard').placeholder = t.prev && !t.current ? '오늘 값을 입력하세요' : KEYBOARD_PLACEHOLDER;
   show(box, !!t.prev);
   if (!t.prev) { box.replaceChildren(); return; }
@@ -1550,6 +1769,7 @@ function replaceActivePinText(newText) {
 function closePinMemoBox() {
   const wasEditing = !!drawingState.activePinId;
   drawingState.activePinId = null;
+  setKeypadOpen(false);
   show($('pinMemoBox'), false);
   renderPagePins();
   if (!wasEditing) return;
@@ -1557,7 +1777,7 @@ function closePinMemoBox() {
   flushLivePins();     // 서버에도 바로 보낸다(기다리지 않음)
 }
 
-function updateActivePinText(newText) {
+function updateActivePinText(newText, { keepCells = false } = {}) {
   const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
   if (!pin) return;
   newText = negateIfPlainNumber(pin.type, newText);
@@ -1567,9 +1787,19 @@ function updateActivePinText(newText) {
   $('pinMemoDisplay').textContent = newText;
   $('pinMemoKeyboard').value = newText;
   $('pinMemoKeyboard').dataset.stale = '';
+  if (pin.type === 'S' && !keepCells) strainCells(newText).forEach((c, i) => { $('pinCells').children[i].value = c; });   // 손글씨 판독 등 칸 밖에서 들어온 값
   renderPinReadings(next);
+  refreshLevelButtons(next);
   renderPagePins();
   saveDrawingNotesQuiet();
+}
+
+// 값이 바뀌면 단 선택줄의 글자도 따라 바꾼다(줄을 다시 만들면 입력 칸의 커서가 끊기므로 글자만)
+function refreshLevelButtons(pin) {
+  const item = GROUP_TYPES.includes(pin.type) ? itemOfPin(pin) : null;
+  if (!item) return;
+  const buttons = $('pinLevels').querySelectorAll('.pin-level-btn:not(.add)');
+  item.rows.forEach((row, i) => { if (buttons[i]) buttons[i].textContent = levelButtonText(row); });
 }
 
 function deleteActivePin() {
@@ -1767,6 +1997,15 @@ function applyOcrTextAndClose(text) {
   const clean = String(text || '').trim();
   if (!clean) return;
   const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
+  if (pin?.type === 'S') {
+    // 변형률계: 판독한 값은 오늘 적던 칸 다음의 첫 빈 칸에 넣는다(다 찼으면 마지막 칸을 바꾼다)
+    const cells = strainCells(pin.date === todayKst() ? pin.text : '');
+    const free = cells.findIndex((c) => !c);
+    cells[free < 0 ? STRAIN_CELLS - 1 : free] = clean.replace(/\s+/g, '');
+    updateActivePinText(joinStrainCells(cells));
+    $('ocrPadDialog').close();
+    return;
+  }
   const merged = pin && pin.text && pin.date === todayKst() ? `${pin.text} ${clean}` : clean;
   updateActivePinText(merged);
   $('ocrPadDialog').close();
@@ -1963,6 +2202,13 @@ const ANN_TAG_H = 22;
 const ANN_TAG_GAP = 4;
 const ANN_TAG_FONT = 'bold 12px "Noto Sans KR", "Malgun Gothic", sans-serif';
 const ANN_PNG_SCALE = 2;   // 쪽 1단위를 PNG 2px 로(확대해도 글자가 깨지지 않게)
+// 하중계·변형률계 묶음 상자: 단마다 한 줄(머리 '1단' + 값 칸). 변형률계는 칸 3개를 끊김 없이 이어 붙이고 칸 폭은 6자리 기준 고정
+const ANN_ROW_H = 20;
+const ANN_HEAD_W = 28;
+const ANN_CELL_W_S = 50;
+const ANN_CELL_W_L = 66;
+const ANN_GROUP_NAVY = 'rgba(27, 42, 87, 0.94)';
+const ANN_NOTE_ORANGE = 'rgba(214, 105, 12, 0.96)';
 
 // 동그라미 아래 글자 상자 자리(쪽 가장자리 안으로 당긴다). textW: 글자 폭
 function annTagBox(pin, textW, widthPx, heightPx) {
@@ -1970,6 +2216,21 @@ function annTagBox(pin, textW, widthPx, heightPx) {
   const cx = pin.x * widthPx;
   const cy = pin.y * heightPx;
   return { x: Math.max(4, Math.min(widthPx - boxW - 4, cx - boxW / 2)), y: Math.min(heightPx - ANN_TAG_H - 4, cy + ANN_PIN_R + ANN_TAG_GAP), w: boxW, h: ANN_TAG_H };
+}
+
+// 묶음 상자 자리(원 아래, 쪽 안으로 당긴다). 줄이 몇 개든 높이는 줄 수 × ANN_ROW_H (+ 신규설치 줄)
+function annGroupBox(item, measure, widthPx, heightPx) {
+  const isS = item.anchor.type === 'S';
+  const head = item.rows.some((r) => r.level !== null) ? ANN_HEAD_W : 0;
+  const cells = isS ? STRAIN_CELLS : 1;
+  const cellW = isS ? ANN_CELL_W_S : ANN_CELL_W_L;
+  const note = liveNote(item.anchor);
+  const rowsW = head + cells * cellW;
+  const w = Math.max(rowsW, note ? measure(note) + ANN_TAG_PAD_X * 2 : 0);
+  const h = (note ? ANN_ROW_H : 0) + item.rows.length * ANN_ROW_H;
+  const cx = item.anchor.x * widthPx;
+  const cy = item.anchor.y * heightPx;
+  return { x: Math.max(4, Math.min(widthPx - w - 4, cx - w / 2)), y: Math.min(heightPx - h - 4, cy + ANN_PIN_R + ANN_TAG_GAP), w, h, head, cells, cellW, rowsW, note };
 }
 
 // 순수 함수: 그릴 메모 전체를 감싸는 범위 { x, y, w, h }(쪽 단위, 위가 0, 정수로 넓혀 쪽 안으로 자름). 그릴 것이 없으면 null.
@@ -1983,14 +2244,13 @@ function annotationBounds(pins, strokes, widthPx, heightPx, measure) {
   const inkPad = ANN_INK_W / 2 + 1;
   for (const s of strokes || []) for (const p of s || []) add(p.x * widthPx - inkPad, p.y * heightPx - inkPad, p.x * widthPx + inkPad, p.y * heightPx + inkPad);
   const pinPad = ANN_PIN_R + ANN_PIN_EDGE / 2 + 1;
-  for (const pin of pins || []) {
+  for (const item of pinItems(pins)) {
+    const pin = item.anchor;
     const cx = pin.x * widthPx;
     const cy = pin.y * heightPx;
     add(cx - pinPad, cy - pinPad, cx + pinPad, cy + pinPad);
-    if (pin.text) {
-      const b = annTagBox(pin, measure(pin.text), widthPx, heightPx);
-      add(b.x - 1, b.y - 1, b.x + b.w + 1, b.y + b.h + 1);
-    }
+    const b = item.rows ? (itemHasTag(item) ? annGroupBox(item, measure, widthPx, heightPx) : null) : (pin.text ? annTagBox(pin, measure(pin.text), widthPx, heightPx) : null);
+    if (b) add(b.x - 1, b.y - 1, b.x + b.w + 1, b.y + b.h + 1);
   }
   if (x0 === Infinity) return null;
   const left = Math.max(0, Math.floor(x0));
@@ -2003,6 +2263,51 @@ function annotationBounds(pins, strokes, widthPx, heightPx, measure) {
 
 // 순수 함수: 범위(위가 0)를 pdf-lib drawImage 자리(아래가 0)로. 예전처럼 쪽 전체(0,0,width,height)에 그리던 것과 같은 자리에 같은 크기로 놓인다
 const pdfPlacement = (b, pageHeight) => ({ x: b.x, y: pageHeight - b.y - b.h, width: b.w, height: b.h });
+
+const roundRectPath = (ctx, x, y, w, h, r) => { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); };
+
+// 묶음 상자 그리기: (신규설치 줄) + 단마다 한 줄. 칸 사이는 가는 흰 선으로 이어 붙인다. 칸보다 긴 값은 글자를 줄여 넣는다
+function drawGroupTag(ctx, item, b) {
+  let y = b.y;
+  ctx.textBaseline = 'middle';
+  if (b.note) {
+    ctx.fillStyle = ANN_NOTE_ORANGE;
+    roundRectPath(ctx, b.x, y, b.w, ANN_ROW_H, 5);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = ANN_TAG_FONT;
+    ctx.textAlign = 'center';
+    ctx.fillText(b.note, b.x + b.w / 2, y + ANN_ROW_H / 2);
+    y += ANN_ROW_H;
+  }
+  const rowsH = item.rows.length * ANN_ROW_H;
+  ctx.fillStyle = ANN_GROUP_NAVY;
+  roundRectPath(ctx, b.x, y, b.rowsW, rowsH, 5);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)';
+  ctx.lineWidth = 0.8;
+  item.rows.forEach((row, r) => {
+    const ry = y + r * ANN_ROW_H;
+    if (r) { ctx.beginPath(); ctx.moveTo(b.x, ry); ctx.lineTo(b.x + b.rowsW, ry); ctx.stroke(); }
+    if (b.head) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.78)';
+      ctx.font = 'bold 10px "Noto Sans KR", "Malgun Gothic", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${row.level}단`, b.x + b.head / 2, ry + ANN_ROW_H / 2);
+    }
+    rowCells(row.pin).forEach((text, i) => {
+      const cx0 = b.x + b.head + i * b.cellW;
+      if (b.head || i) { ctx.beginPath(); ctx.moveTo(cx0, ry); ctx.lineTo(cx0, ry + ANN_ROW_H); ctx.stroke(); }
+      if (!text) return;
+      let size = 12;
+      ctx.font = `bold ${size}px "Noto Sans KR", "Malgun Gothic", sans-serif`;
+      while (size > 7 && ctx.measureText(text).width > b.cellW - 6) { size -= 1; ctx.font = `bold ${size}px "Noto Sans KR", "Malgun Gothic", sans-serif`; }
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'center';
+      ctx.fillText(text, cx0 + b.cellW / 2, ry + ANN_ROW_H / 2);
+    });
+  });
+}
 
 // 특정 페이지의 동그라미 마커 + OCR 텍스트 태그 + 자유 펜 필기를 투명 PNG 로 그린다. 메모가 있는 범위만 잘라 { url, box } 로 돌려준다(없으면 null).
 // onlyType을 주면 그 계측기 메모만 그린다(자유 펜 필기는 계측기와 무관하므로 뺀다). 없으면 전부.
@@ -2037,8 +2342,9 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType =
     ctx.stroke();
   }
 
-  // 2) 동그란 원 마커 및 OCR 텍스트 라벨 그리기
-  pagePins.forEach((pin) => {
+  // 2) 동그란 원 마커 및 OCR 텍스트 라벨 그리기(하중계·변형률계는 같은 지점 단들을 원 하나 + 줄 상자로)
+  pinItems(pagePins).forEach((item) => {
+    const pin = item.anchor;
     const cx = pin.x * widthPx;
     const cy = pin.y * heightPx;
 
@@ -2051,14 +2357,15 @@ function renderPageAnnotationsPng(pageIndex1Based, widthPx, heightPx, onlyType =
     ctx.stroke();
 
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 12px "Noto Sans KR", "Malgun Gothic", sans-serif';
-    const label = pinLabel(pin);
+    const label = item.base ? `${pin.type}${item.base}` : pinLabel(pin);
     ctx.font = `bold ${label.length > 3 ? 8 : label.length > 2 ? 10 : 12}px "Noto Sans KR", "Malgun Gothic", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, cx, cy);
 
-    if (pin.text) {
+    if (item.rows) {
+      if (itemHasTag(item)) drawGroupTag(ctx, item, annGroupBox(item, (t) => { ctx.font = ANN_TAG_FONT; return ctx.measureText(t).width; }, widthPx, heightPx));
+    } else if (pin.text) {
       ctx.font = ANN_TAG_FONT;
       const b = annTagBox(pin, ctx.measureText(pin.text).width, widthPx, heightPx);
 
@@ -2583,6 +2890,15 @@ function initDrawingModule() {
   $('pinMemoDisplay').addEventListener('click', openHandwritingOcrPad);
   $('pinMemoOpenPad').addEventListener('click', openHandwritingOcrPad);
   $('pinMemoKeyboard').addEventListener('input', (e) => updateActivePinText(e.target.value));
+  $('pinCells').addEventListener('input', onStrainCellInput);
+  $('pinCells').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const inputs = [...$('pinCells').querySelectorAll('input')];
+    const i = inputs.indexOf(e.target);
+    if (i >= 0 && i < inputs.length - 1) { e.preventDefault(); inputs[i + 1].focus(); }
+  });
+  $('pinNoteToggle').addEventListener('click', () => setKeypadOpen($('pinKeypad').classList.contains('hidden')));
+  $('pinKeypad').addEventListener('click', onKeypadPress);
 
   $('ocrPadClose').addEventListener('click', () => $('ocrPadDialog').close());
   $('ocrPadUndo').addEventListener('click', undoOcrStroke);
@@ -2593,4 +2909,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES, annotationBounds, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState };
+if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES, annotationBounds, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState };
