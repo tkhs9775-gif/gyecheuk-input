@@ -1001,6 +1001,55 @@ function renderApkNotice() {
   box.replaceChildren(text, link);
 }
 
+// ---------- 기기별 버전(2026-11-12) ----------
+// 모든 폰이 앱을 열 때 "측정자·웹판·앱·기기"를 시트 '기기버전'에 한 줄로 남긴다(같은 기기는 덮어씀). 목록은 Pro 앱 정보 탭에서만 보인다
+const DEVICE_PING_MS = 6 * 60 * 60 * 1000;   // 판·측정자가 그대로면 6시간에 한 번만 보낸다(서버 요청 절약)
+
+function deviceId() {
+  let id = store.get('deviceId');
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(id || '')) {
+    id = globalThis.crypto?.randomUUID?.() || `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    store.set('deviceId', id);
+  }
+  return id;
+}
+
+// 안드로이드 UA 의 기종(SM-S918N 등). 크롬이 기종을 'K' 로 가리면 userAgentData 로 다시 묻는다
+async function deviceModel() {
+  const ua = navigator.userAgent;
+  let m = (ua.match(/Android [\d.]+; (?:[a-z]{2}-[a-z]{2}; )?([^;)]+?)(?: Build|\))/i) || [])[1] || '';
+  if ((!m || m === 'K') && navigator.userAgentData?.getHighEntropyValues) {
+    m = (await navigator.userAgentData.getHighEntropyValues(['model']).catch(() => ({}))).model || m;
+  }
+  return m || (/iPad/.test(ua) ? 'iPad' : /iPhone/.test(ua) ? 'iPhone' : /Windows/.test(ua) ? 'Windows PC' : '알 수 없음');
+}
+
+const deviceAppName = () => (window.AndroidGallery ? `안드로이드 앱${apkVersion() ? ` 1.${apkVersion()}` : ''}${isProApp() ? ' Pro' : ''}` : '브라우저');
+
+async function reportDevice() {
+  try {
+    const user = store.get('user') || '';
+    const key = `${BUILD}|${deviceAppName()}|${user}`;
+    const last = readCached('devicePing') || {};
+    if (last.key === key && Date.now() - (last.at || 0) < DEVICE_PING_MS) return;
+    await api('device_ping', { device: { id: deviceId(), user, web: `v${BUILD}`, app: deviceAppName(), model: await deviceModel() } });
+    store.set('devicePing', JSON.stringify({ key, at: Date.now() }));
+  } catch { /* 옛 서버(bad_action)·신호 없음: 다음에 앱을 열 때 다시 보낸다 */ }
+}
+
+async function renderDevices() {
+  const box = $('deviceList');
+  box.textContent = '불러오는 중…';
+  try {
+    const { devices = [] } = await api('device_list');
+    box.textContent = devices.length
+      ? devices.map((d) => `${d.web === `v${BUILD}` ? '✅' : '⚠️'} ${d.user || '(측정자 없음)'} · ${d.web} · ${d.app} · ${d.model} · ${d.at.slice(5)}`).join('\n')
+      : '아직 기록이 없습니다. 직원들이 앱을 한 번씩 열면 쌓입니다.';
+  } catch (err) {
+    box.textContent = err.code === 'bad_action' ? '서버(Code.gs)를 새 버전으로 배포하면 보입니다.' : '불러오지 못했습니다. 신호를 확인하세요.';
+  }
+}
+
 // ---------- start ----------
 
 // 설정·전회값·내 최근 입력을 서버에서 받는다. 새 서버는 boot 한 번(요청마다 1.5초 안팎), boot를 모르는 옛 서버는 config만 받고 나머지는 따로.
@@ -1096,6 +1145,7 @@ async function start(fresh = false) {
   store.set('cfg', JSON.stringify(boot.config));
   state.offline = false;
   registerPush();
+  reportDevice();
   openApp();
   await applyLists(boot);
   await hideSplash();
@@ -1109,6 +1159,7 @@ async function refreshInBackground() {
     state.offline = false;
     refreshConfig(boot.config);
     registerPush();
+    reportDevice();
     await applyLists(boot);
   } catch (err) {
     if (err.isAuth) { signOut(); alert(err.message); return; }
@@ -1176,6 +1227,9 @@ async function renderErrlog() {
 show($('errlogBox'), typeof window.errlogFetchReport === 'function');
 $('errlogBox').addEventListener('toggle', () => { if ($('errlogBox').open) renderErrlog(); });
 $('errlogReload').addEventListener('click', renderErrlog);
+show($('deviceBox'), isProApp());   // 직원용 앱에는 안 보인다
+$('deviceBox').addEventListener('toggle', () => { if ($('deviceBox').open) renderDevices(); });
+$('deviceReload').addEventListener('click', renderDevices);
 // 목록 검색(search.js). 옛 앱 사본에 search.js 가 없으면 검색 칸만 숨기고 나머지는 그대로
 if (typeof attachListSearch === 'function') {
   $('instrumentSearch').addEventListener('input', debounce(filterInstruments));
