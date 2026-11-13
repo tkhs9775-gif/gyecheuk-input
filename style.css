@@ -225,6 +225,17 @@ a.apk-link { display: grid; place-items: center; }
   background: #FFF;
 }
 #pdfCanvas { display: block; }
+.pdf-tile-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.pdf-tile {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+}
 .ink-canvas {
   position: absolute;
   inset: 0;

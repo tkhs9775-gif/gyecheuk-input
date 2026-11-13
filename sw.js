@@ -14,7 +14,7 @@ const CORE = [
 // 앱이 이 파일들 없이도 열리게 만들어져 있다(app.js가 typeof 로 확인). 목록은 tests/sw-shell.test.js 가 index.html 과 맞는지 검사한다
 const LATER = [
   'logo.png', 'mark.png', 'manifest.json',
-  `search.js?v=${V}`, `errlog.js?v=${V}`, `cad-engine.js?v=${V}`, `cad.js?v=${V}`, `cadfiles.js?v=${V}`, `cad-worker.js?v=${V}`,
+  `search.js?v=${V}`, `errlog.js?v=${V}`, `pdf-worker.js?v=${V}`, `cad-engine.js?v=${V}`, `cad.js?v=${V}`, `cadfiles.js?v=${V}`, `cad-worker.js?v=${V}`,
   `ocr-kit.js?v=${V}`, `schedule-parse.js?v=${V}`, `schedule.js?v=${V}`, `card-enhance.js?v=${V}`, `card-crop.js?v=${V}`, `contacts.js?v=${V}`,
 ];
 const SHELL = [...CORE, ...LATER];

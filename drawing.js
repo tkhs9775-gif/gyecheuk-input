@@ -77,6 +77,7 @@ function warmDrawing() {
   if (navigator.onLine === false) return;
   ensurePdfJs().catch(() => {});
   fetch(PDFJS_WORKER).catch(() => {});
+  fetch(`pdf-worker.js?v=${DRAWING_BUILD}`).catch(() => {});
 }
 const ensureTesseract = () => ensureLib(TESSERACT_CDN, 'Tesseract');
 const ensurePdfLib = () => ensureLib(PDFLIB_CDN, 'PDFLib');
@@ -269,14 +270,15 @@ const SAVED_DIR = '저장본';   // '다른이름 저장'본이 들어가는 폴
 const PDF_CACHE_DB = 'gyecheuk_pdf_cache';
 const PDF_CACHE_STORE = 'pdfs';
 const PAGE_CACHE_STORE = 'pages';   // 그려 둔 쪽 그림(JPEG): 다시 열 때 pdf.js 가 그리기 전에 먼저 보여 준다
+const NOTES_CACHE_STORE = 'notes';  // 서버 야장 사본 + 버전(ETag): 다음 조회 때 '바뀌지 않음'이면 내용 없이 답을 받는다
 let pdfCacheDbPromise = null;
 
 function openPdfCacheDb() {
   pdfCacheDbPromise ??= new Promise((resolve, reject) => {
-    const req = indexedDB.open(PDF_CACHE_DB, 2);
+    const req = indexedDB.open(PDF_CACHE_DB, 3);
     req.onupgradeneeded = () => {
       const db = req.result;
-      for (const name of [PDF_CACHE_STORE, PAGE_CACHE_STORE]) if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
+      for (const name of [PDF_CACHE_STORE, PAGE_CACHE_STORE, NOTES_CACHE_STORE]) if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -303,25 +305,191 @@ async function idbGet(storeName, id) {
   }
 }
 
+// 넣기에 성공하면 true. 저장 공간이 모자라면(QuotaExceeded) false — 부르는 쪽이 정리 후 한 번 더 해 볼 수 있다
 async function idbPut(storeName, value) {
+  try {
+    const db = await openPdfCacheDb();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).put({ ...value, savedAt: Date.now() });
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => resolve(false);
+      tx.onabort = () => resolve(false);   // 저장 공간이 모자라면(QuotaExceeded) abort 만 온다. 기다리는 쪽(업로드 버튼·미리 받기)이 멈추지 않게
+    });
+  } catch {
+    return false;   // 캐시는 덤
+  }
+}
+
+async function idbDelete(storeName, id) {
   try {
     const db = await openPdfCacheDb();
     await new Promise((resolve) => {
       const tx = db.transaction(storeName, 'readwrite');
-      tx.objectStore(storeName).put({ ...value, savedAt: Date.now() });
+      tx.objectStore(storeName).delete(id);
       tx.oncomplete = resolve;
       tx.onerror = resolve;
-      tx.onabort = resolve;   // 저장 공간이 모자라면(QuotaExceeded) abort 만 온다. 기다리는 쪽(업로드 버튼·미리 받기)이 멈추지 않게
+      tx.onabort = resolve;
     });
   } catch { /* 캐시는 덤 */ }
 }
 
-const getCachedPdfBytes = async (fileId) => (await idbGet(PDF_CACHE_STORE, fileId))?.bytes || null;
-const putCachedPdfBytes = (fileId, bytes) => idbPut(PDF_CACHE_STORE, { id: fileId, bytes });
+// 저장소 항목의 id·크기·저장 시각만 훑는다(커서라 큰 PDF 를 한꺼번에 메모리에 올리지 않는다)
+async function idbListMeta(storeName) {
+  try {
+    const db = await openPdfCacheDb();
+    return await new Promise((resolve) => {
+      const out = [];
+      const req = db.transaction(storeName, 'readonly').objectStore(storeName).openCursor();
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (!cur) { resolve(out); return; }
+        const v = cur.value || {};
+        out.push({ id: v.id, size: v.size || v.bytes?.byteLength || v.blob?.size || 0, savedAt: v.savedAt || 0 });
+        cur.continue();
+      };
+      req.onerror = () => resolve(out);
+    });
+  } catch {
+    return [];
+  }
+}
+
+// ---------- 저장 공간 지키기: 영구 보관 요청 + 오래 안 본 도면부터 정리(LRU) ----------
+// 폰 저장 공간이 모자라면 브라우저가 이 앱의 저장소를 통째로 지울 수 있다(보내지 못한 보관함 포함). persist() 는 그것을 막아 달라는 요청이다.
+// 미리 받은 도면 PDF·쪽 그림은 다시 받을 수 있으므로, 공간이 빠듯하면 그것부터 오래 안 본 순으로 지운다(보관함·야장 사본은 건드리지 않는다)
+const CACHE_BUDGET_BYTES = 300 * 1024 * 1024;   // 도면 PDF + 쪽 그림 합계 상한
+const CACHE_MIN_BUDGET_BYTES = 40 * 1024 * 1024;
+const QUOTA_SHARE = 0.5;                         // 브라우저가 허락한 공간(quota)의 절반까지만 도면 캐시로
+const QUOTA_HIGH_RATIO = 0.8;                    // 전체 사용량이 이만큼을 넘으면 캐시를 절반으로 줄인다
+const PRUNE_EVERY_MS = 6 * 60 * 60 * 1000;
+const CACHE_USED_KEY = 'pdf_cache_used';         // 마지막으로 연 시각(id → ms). 큰 PDF 를 다시 쓰지 않으려고 따로 둔다
+const CACHE_PRUNED_KEY = 'pdf_cache_pruned';
+const CACHE_USED_MAX = 400;
+
+let cacheUsed = null;
+let cacheUsedTimer = 0;
+function cacheUsedMap() {
+  if (!cacheUsed) {
+    try { cacheUsed = JSON.parse(store.get(CACHE_USED_KEY) || '{}') || {}; } catch { cacheUsed = {}; }
+  }
+  return cacheUsed;
+}
+function touchCache(id) {
+  if (!id || typeof store === 'undefined') return;
+  const m = cacheUsedMap();
+  m[id] = Date.now();
+  clearTimeout(cacheUsedTimer);
+  cacheUsedTimer = setTimeout(() => {
+    const keep = Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, CACHE_USED_MAX);
+    cacheUsed = Object.fromEntries(keep);
+    store.set(CACHE_USED_KEY, JSON.stringify(cacheUsed));
+  }, 1000);
+}
+
+// 순수 함수: 합계가 budget 아래가 될 때까지 지울 id 목록. 마지막 사용(usedAt, 없으면 savedAt)이 오래된 것부터, keep(id) 가 true 인 것은 남긴다
+function pickEvictions(entries, budget, keep = () => false) {
+  let total = entries.reduce((n, e) => n + (e.size || 0), 0);
+  if (total <= budget) return [];
+  const order = entries
+    .filter((e) => !keep(e.id))
+    .sort((a, b) => (a.usedAt || a.savedAt || 0) - (b.usedAt || b.savedAt || 0));
+  const out = [];
+  for (const e of order) {
+    if (total <= budget) break;
+    out.push(e.id);
+    total -= e.size || 0;
+  }
+  return out;
+}
+
+// 순수 함수: 이번 정리의 상한. quota 를 모르면 기본값, 전체 사용량이 높으면 지금 캐시의 절반
+function cacheBudgetOf(estimate, cacheTotal) {
+  let budget = CACHE_BUDGET_BYTES;
+  if (estimate?.quota > 0) {
+    budget = Math.min(budget, Math.max(CACHE_MIN_BUDGET_BYTES, estimate.quota * QUOTA_SHARE));
+    if ((estimate.usage || 0) / estimate.quota > QUOTA_HIGH_RATIO) budget = Math.min(budget, Math.floor(cacheTotal / 2));
+  }
+  return budget;
+}
+
+async function requestPersistentStorage() {
+  try {
+    if (!navigator.storage?.persist) return null;
+    if (await navigator.storage.persisted?.()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return null;
+  }
+}
+
+let pruning = null;
+function pruneDrawingCache(force = false) {
+  if (pruning) return pruning;
+  const last = Number(store.get(CACHE_PRUNED_KEY) || 0);
+  if (!force && Date.now() - last < PRUNE_EVERY_MS) return Promise.resolve(0);
+  pruning = (async () => {
+    store.set(CACHE_PRUNED_KEY, String(Date.now()));
+    const used = cacheUsedMap();
+    const withUse = (storeName) => async () => (await idbListMeta(storeName)).map((e) => ({ ...e, storeName, usedAt: used[String(e.id).split('|')[0]] || 0 }));
+    const entries = [...await withUse(PDF_CACHE_STORE)(), ...await withUse(PAGE_CACHE_STORE)()];
+    const total = entries.reduce((n, e) => n + e.size, 0);
+    let estimate = null;
+    try { estimate = await navigator.storage?.estimate?.(); } catch { estimate = null; }
+    const budget = force ? Math.min(cacheBudgetOf(estimate, total), Math.floor(total * 0.7)) : cacheBudgetOf(estimate, total);
+    // 지금 연 도면과 그 원본, 보관함에서 기다리는 도면은 남긴다
+    const openIds = new Set([drawingState.currentFile?.id, drawingState.sourceFile?.id, ...pendingOutboxIds].filter(Boolean).map(String));
+    const keep = (id) => openIds.has(String(id).split('|')[0]);
+    const victims = new Set(pickEvictions(entries, budget, keep));
+    for (const e of entries) if (victims.has(e.id)) await idbDelete(e.storeName, e.id);
+    if (victims.size) console.info(`도면 캐시 정리: ${victims.size}개, 약 ${Math.round(entries.filter((e) => victims.has(e.id)).reduce((n, e) => n + e.size, 0) / 1048576)}MB`);
+    return victims.size;
+  })().catch((err) => { console.warn('도면 캐시 정리 실패', err); return 0; }).finally(() => { pruning = null; });
+  return pruning;
+}
+
+// 넣다가 공간이 모자라면 오래된 캐시를 비우고 한 번만 더 해 본다
+async function idbPutWithRoom(storeName, value) {
+  if (await idbPut(storeName, value)) return true;
+  await pruneDrawingCache(true);
+  return idbPut(storeName, value);
+}
+
+const getCachedPdfBytes = async (fileId) => {
+  const bytes = (await idbGet(PDF_CACHE_STORE, fileId))?.bytes || null;
+  if (bytes) touchCache(fileId);
+  return bytes;
+};
+const putCachedPdfBytes = (fileId, bytes) => { touchCache(fileId); return idbPutWithRoom(PDF_CACHE_STORE, { id: fileId, bytes, size: bytes?.byteLength || 0 }); };
 // 쪽 그림은 '그린 문서ID|쪽|보기회전' 으로 둔다(저장본은 원본 그림 위에 메모를 얹으므로 원본 ID). rot 은 실제로 그린 회전(PDF 자체 회전 포함)
-// ponytail: 지우지 않는다(열 때 상태인 1쪽만 저장하므로 도면당 하나). 용량이 문제되면 savedAt 순으로 정리
+// 오래된 것은 pruneDrawingCache 가 도면 PDF 와 함께 정리한다
 const getPageSnapshot = (id) => idbGet(PAGE_CACHE_STORE, id);
-const putPageSnapshot = (id, blob, rot) => idbPut(PAGE_CACHE_STORE, { id, blob, rot });
+const putPageSnapshot = (id, blob, rot) => idbPutWithRoom(PAGE_CACHE_STORE, { id, blob, rot, size: blob?.size || 0 });
+
+// ---------- 야장 조회: 버전(ETag) 맞추기 ----------
+// 순수 함수: 서버 답(res)과 이 폰의 사본(cached)으로 완전한 답을 만든다. unchanged 인데 사본이 맞지 않으면 null(전체를 다시 받아야 함)
+function resolveNotesResponse(res, cached) {
+  if (!res?.unchanged) return res;
+  if (!cached?.data || !res.version || cached.version !== res.version) return null;
+  return { ok: true, updated: res.updated ?? cached.updated, user: res.user ?? cached.user ?? '', data: cached.data, version: res.version };
+}
+
+// drawing_notes_get 대신 쓴다: 가진 버전을 보내 바뀌지 않았으면 내용 없이 받고, 바뀌었으면 새 내용과 버전을 저장해 둔다.
+// 옛 서버는 ifVersion 을 모르고 늘 전체(version 없음)를 주므로 그대로 동작한다
+async function fetchDrawingNotes(fileId, callApi = api) {
+  const id = String(fileId);
+  const cached = await idbGet(NOTES_CACHE_STORE, id);
+  const ifVersion = cached?.version && cached.data ? cached.version : '';
+  const res = await callApi('drawing_notes_get', ifVersion ? { fileId: id, ifVersion } : { fileId: id });
+  let full = resolveNotesResponse(res, cached);
+  if (!full) full = await callApi('drawing_notes_get', { fileId: id });
+  if (full?.version && full.data && !full.unchanged) {
+    if (!cached || cached.version !== full.version) idbPut(NOTES_CACHE_STORE, { id, version: full.version, updated: full.updated, user: full.user, data: full.data });
+  } else if (full && !full.version && cached) {
+    idbDelete(NOTES_CACHE_STORE, id);   // 줄이 없어졌거나 옛 서버: 맞지 않을 수 있는 사본은 버린다
+  }
+  return full;
+}
 
 function b64ToUint8(base64) {
   const bin = atob(base64);
@@ -330,7 +498,7 @@ function b64ToUint8(base64) {
   return bytes;
 }
 
-// ponytail: 받아 둔 PDF는 지우지 않는다(현장당 도면 수십 개 수준). 용량이 문제되면 savedAt 기준으로 오래된 것부터 지운다
+// 받아 둔 PDF는 공간이 빠듯할 때 pruneDrawingCache 가 오래 안 본 것부터 지운다(다시 열면 서버에서 받는다)
 // 같은 파일을 두 번 받지 않는다: 미리 받는 중이면 그 약속을 돌려주어 열 때 기다릴 수 있다
 const prefetchInFlight = new Map();
 const downloadPdf = (fileId) => api('drive_download', { fileId }, { timeoutMs: DOWNLOAD_TIMEOUT_MS });
@@ -404,6 +572,7 @@ let drawingSiteHint;
 function loadDrawingTab() {
   drawingSiteHint = SiteSort.cached((s) => SiteSort.newest(readCached(`drawings_${s}`), readCached(`drawing_folders_${s}`)));
   ensurePdfJs().catch(() => {}); // 도면 탭 진입 즉시 PDF 엔진 예열!
+  pruneDrawingCache().catch(() => {});
   show($('drawingSitesView'), true);
   show($('drawingFilesView'), false);
   renderDrawingSites();
@@ -978,7 +1147,7 @@ async function openTemplateDrawing(group) {
   const notes = build(fresh);
   // 서버 메모는 줄이 있을 때만(updated) 받아들인다: 메모 없이 올린 저장본이면 서버가 빈 메모를 돌려주는데, 그것으로 폰에 있던 동그라미를 지우지 않게.
   // 이어쓰는 중에도 받는다(그사이 다른 사람이 저장한 지난 값·새 동그라미가 들어오게). 열고 나서 고친 게 있으면 applyServerNotes 가 덮지 않는다
-  const notesPromise = api('drawing_notes_get', { fileId: latest.id })
+  const notesPromise = fetchDrawingNotes(latest.id)
     .then((res) => (res?.updated && res.data ? { updated: res.updated, data: build(templateNotes(normalizeNotes(res.data), today)) } : null))
     .catch((err) => { console.warn('최근 저장본 메모 조회 실패', err); return null; });
   await openPdfFieldbook(file, { source, notes, notesPromise });
@@ -1027,7 +1196,7 @@ async function openPdfFieldbook(file, preset = null) {
   }
 
   // 야장 메모 조회(서버)는 도면 그리기를 막지 않도록 먼저 출발만 시켜 두고, 그리기 끝난 뒤 반영한다
-  const notesPromise = preset ? preset.notesPromise : api('drawing_notes_get', { fileId: file.id }).catch((err) => { console.warn('야장 메모 조회 실패', err); return null; });
+  const notesPromise = preset ? preset.notesPromise : fetchDrawingNotes(file.id).catch((err) => { console.warn('야장 메모 조회 실패', err); return null; });
   // 전에 그려 둔 첫 쪽 그림이 폰에 있으면 pdf.js 가 그리기 전에(0.1초 안에) 먼저 보여 준다. 선명한 그림이 준비되면 그 자리에서 바뀐다
   showPageSnapshot((drawingState.sourceFile || file).id, seq).then((shown) => { if (shown) tr?.step('open:snap'); }).catch(() => {});
   // 다른 폰이 저장한 저장본(원본을 모름): 서버 메모를 기다리는 동안 그 저장본 PDF 도 같이 받기 시작한다.
@@ -1043,10 +1212,7 @@ async function openPdfFieldbook(file, preset = null) {
       if (serverNotes?.data?.sourceId) drawingState.sourceFile = sourceFileOf(file, normalizeNotes(serverNotes.data), allDrawingFiles()) || drawingState.sourceFile;
     }
     const source = drawingState.sourceFile;
-    const [pdfjsLib, sourceBytes] = await Promise.all([
-      ensurePdfJs(),
-      source ? loadPdfBytes(source.id, tr).catch((err) => { console.warn('원본 도면을 받지 못해 저장본 그대로 엽니다', err); return null; }) : null,
-    ]);
+    const sourceBytes = source ? await loadPdfBytes(source.id, tr).catch((err) => { console.warn('원본 도면을 받지 못해 저장본 그대로 엽니다', err); return null; }) : null;
     if (seq !== openSeq) return;   // 그사이 다른 도면을 열었으면 여기서 끝(가상 파일 id 로 서버에 받으러 가지 않게)
     if (source && !sourceBytes) {
       // 계측용 도면은 원본 위에만 그린다(가상 파일이라 대신 받을 PDF 가 없다)
@@ -1057,8 +1223,7 @@ async function openPdfFieldbook(file, preset = null) {
     if (seq !== openSeq) return;
     drawingState.rawPdfBytes = bytes.slice();
 
-    // isEvalSupported:false — pdf.js 3.x 는 PDF 글꼴로 임의 JS를 실행당할 수 있다(CVE-2024-4367). 4.2.67 이상으로 올려도 이 줄은 둔다
-    const pdfDoc = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported: false }).promise;
+    const pdfDoc = await openPdfDocument(bytes);
     if (seq !== openSeq) { pdfDoc.destroy(); return; }
     tr?.step('pdf:doc');
     drawingState.pdfDoc = pdfDoc;
@@ -1088,9 +1253,11 @@ async function hideViewer() {
   closingViewer = false;
   if ($('pdfViewer').classList.contains('hidden')) return;
   openSeq += 1;   // 아직 열리던 도면은 버린다
+  renderSeq += 1;
   drawingState.openTrace?.end('closed');
   // 열자마자 닫아도 다음에 먼저 보여 줄 그림이 남게: 다 그린 1쪽이 캔버스에 있으면 지금 저장한다(이미 저장했으면 건너뛴다). 거친 그림(저해상)만 있으면 저장하지 않는다
   if (drawingState.pdfDoc && shownSharp && shownKey === `${drawingState.currentFile?.id}|1|${shownRot}`) savePageSnapshot($('pdfCanvas'), shownRot);
+  clearPdfTiles();
   if (savingNotes) await savingNotes;
   else if (drawingState.dirty) await saveDrawingNotesToServer(false);
   show($('pdfViewer'), false);
@@ -1163,6 +1330,7 @@ async function showPageSnapshot(docId, seq) {
     pdfCanvas.width = bmp.width;
     pdfCanvas.height = bmp.height;
     pdfCanvas.getContext('2d').drawImage(bmp, 0, 0);
+    $('pdfTileLayer')?.replaceChildren();
     for (const id of ['pdfCanvas', 'inkCanvas', 'pinLayer']) { $(id).style.width = `${cssW}px`; $(id).style.height = `${cssH}px`; }
     $('inkCanvas').width = cssW;
     $('inkCanvas').height = cssH;
@@ -1209,57 +1377,352 @@ let shownKey = '';   // 지금 캔버스에 있는 그림이 어느 문서·쪽�
 let shownRot = 0;    // 지금 캔버스 그림의 실제 회전(PDF 자체 회전 포함). 닫을 때 그림을 저장하는 데 쓴다
 let shownSharp = false;   // 지금 캔버스 그림이 선명한 그림인지(거친 그림·저장해 둔 그림이면 false). 거친 그림은 쪽 그림으로 저장하지 않는다
 
-// 숨은 캔버스에 그린다. 그사이 다른 그리기가 시작됐으면(renderSeq) null — 취소는 다음 그리기가 renderTask.cancel() 로 한다
-async function renderToBuffer(page, viewport, my) {
-  const buf = document.createElement('canvas');
-  buf.width = viewport.width;
-  buf.height = viewport.height;
-  const task = page.render({ canvasContext: buf.getContext('2d'), viewport });
-  renderTask = task;
-  try {
-    await task.promise;
-  } catch (err) {
-    buf.width = 0;
-    throw err;
-  } finally {
-    if (renderTask === task) renderTask = null;
-  }
-  if (my !== renderSeq) { buf.width = 0; return null; }
-  return buf;
+const PDF_TILE_SIZE = 512;      // 확대 시 화면에 보이는 부분만 나눠 그리는 조각 크기(CSS px)
+const PDF_TILE_MARGIN = 128;    // 끌기 직전에 끝이 비어 보이지 않게 화면 바깥을 조금 미리 그린다
+const BASE_MAX_PX = 1600000;    // 전체 바탕 캔버스 상한(약 1.6MP). 이보다 크면 바탕만 두고 보이는 타일만 고해상도 렌더링
+const TILE_MAX_PX = 1048576;    // 타일 한 조각 최대 화소(1024×1024)
+const MAX_TILE_CANVASES = 20;   // 화면에 유지할 최대 타일 수(오래 안 본 타일은 메모리 즉시 반환)
+
+// 순수 함수: 이 크기·해상도에서 타일 분할 그리기를 쓸지(전체 1장을 고해상도로 그리면 폰 메모리가 모자랄 때)
+function shouldUseTiles(cssW, cssH, dpr, maxBasePx = BASE_MAX_PX) {
+  return cssW * cssH * dpr * dpr > maxBasePx;
 }
 
-// 숨은 캔버스 그림을 화면 캔버스로 옮긴다(크기를 바꾸면 비워지지만 같은 순간에 다시 그려 빈 화면은 보이지 않는다)
-function swapIntoCanvas(pdfCanvas, buf) {
-  pdfCanvas.width = buf.width;
-  pdfCanvas.height = buf.height;
-  pdfCanvas.getContext('2d').drawImage(buf, 0, 0);
-  buf.width = 0;   // 숨은 캔버스 메모리를 바로 돌려준다
+// 순수 함수: 현재 뷰포트 안에 들어오는 512px 타일 목록(가운데 가까운 것부터 우선)
+function planVisibleTiles({ pageW, pageH, viewLeft, viewTop, viewW, viewH, tileSize = PDF_TILE_SIZE, margin = PDF_TILE_MARGIN }) {
+  if (!(pageW > 0 && pageH > 0 && viewW > 0 && viewH > 0)) return [];
+  const x0 = Math.max(0, Math.floor((viewLeft - margin) / tileSize) * tileSize);
+  const y0 = Math.max(0, Math.floor((viewTop - margin) / tileSize) * tileSize);
+  const x1 = Math.min(pageW, viewLeft + viewW + margin);
+  const y1 = Math.min(pageH, viewTop + viewH + margin);
+  const cx = viewLeft + viewW / 2;
+  const cy = viewTop + viewH / 2;
+  const tiles = [];
+  for (let y = y0, row = Math.floor(y0 / tileSize); y < y1; y += tileSize, row += 1) {
+    const h = Math.min(tileSize, pageH - y);
+    for (let x = x0, col = Math.floor(x0 / tileSize); x < x1; x += tileSize, col += 1) {
+      const w = Math.min(tileSize, pageW - x);
+      tiles.push({ col, row, x, y, w, h, key: `${col},${row}`, dist: Math.hypot(x + w / 2 - cx, y + h / 2 - cy) });
+    }
+  }
+  tiles.sort((a, b) => a.dist - b.dist);
+  return tiles.map(({ dist, ...t }) => t);
+}
+
+// ---------- 백그라운드 워커(OffscreenCanvas) + 메인 스레드 폴백 ----------
+let pdfWorker = null;
+let pdfWorkerDisabled = false;
+let pdfDocSeq = 0;
+let workerJobSeq = 0;
+const workerPending = new Map();
+
+function resetPdfWorker(err = null) {
+  if (pdfWorker) {
+    try { pdfWorker.terminate(); } catch { /* ignore */ }
+    pdfWorker = null;
+  }
+  for (const [, p] of workerPending) p.reject(err || new Error('pdf worker stopped'));
+  workerPending.clear();
+}
+
+function getPdfWorker() {
+  if (pdfWorkerDisabled || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined') return null;
+  if (!pdfWorker) {
+    try {
+      const url = new URL(`pdf-worker.js?v=${DRAWING_BUILD}`, document.baseURI).href;
+      const w = new Worker(url, { type: 'module' });
+      w.onmessage = ({ data }) => {
+        const job = workerPending.get(data.jobId);
+        if (!job) {
+          if (data.bitmap && typeof data.bitmap.close === 'function') data.bitmap.close();
+          return;
+        }
+        workerPending.delete(data.jobId);
+        if (data.type === 'cancelled') {
+          const e = new Error('cancelled');
+          e.name = 'RenderingCancelledException';
+          job.reject(e);
+        } else if (data.type === 'error') {
+          job.reject(new Error(data.message || 'pdf worker error'));
+        } else {
+          job.resolve(data);
+        }
+      };
+      w.onerror = (ev) => {
+        pdfWorkerDisabled = true;
+        resetPdfWorker(new Error(ev?.message || 'pdf worker crashed'));
+      };
+      pdfWorker = w;
+    } catch {
+      pdfWorkerDisabled = true;
+      return null;
+    }
+  }
+  return pdfWorker;
+}
+
+function workerCall(type, payload, transfer = []) {
+  const w = getPdfWorker();
+  if (!w) return Promise.reject(new Error('pdf worker unavailable'));
+  const jobId = ++workerJobSeq;
+  return new Promise((resolve, reject) => {
+    workerPending.set(jobId, { resolve, reject });
+    try {
+      w.postMessage({ type, jobId, ...payload }, transfer);
+    } catch (err) {
+      workerPending.delete(jobId);
+      reject(err);
+    }
+  });
+}
+
+async function openPdfFallback(bytes) {
+  const pdfjsLib = await ensurePdfJs();
+  // isEvalSupported:false — pdf.js 3.x 는 PDF 글꼴로 임의 JS를 실행당할 수 있다(CVE-2024-4367). 4.2.67 이상으로 올려도 이 줄은 둔다
+  const raw = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported: false }).promise;
+  let minMainSeq = 0;
+  let destroyed = false;
+  return {
+    numPages: raw.numPages,
+    async pageDims(pageNum, userRotation) {
+      const page = await raw.getPage(pageNum);
+      const rotation = (page.rotate + (userRotation || 0)) % 360;
+      const vp = page.getViewport({ scale: 1, rotation });
+      return { rotate: rotation, width: vp.width, height: vp.height };
+    },
+    async renderRegion({ seq, pageNum, renderScale, rotation, offsetX = 0, offsetY = 0, pixelW, pixelH }) {
+      if (renderTask) {
+        renderTask.cancel();
+        await renderTask.promise.catch(() => {});
+        renderTask = null;
+      }
+      if (destroyed || seq < minMainSeq) {
+        const e = new Error('cancelled');
+        e.name = 'RenderingCancelledException';
+        throw e;
+      }
+      const page = await raw.getPage(pageNum);
+      const viewport = page.getViewport({ scale: renderScale, rotation, offsetX, offsetY });
+      const buf = document.createElement('canvas');
+      buf.width = Math.max(1, Math.round(pixelW || viewport.width));
+      buf.height = Math.max(1, Math.round(pixelH || viewport.height));
+      const task = page.render({ canvasContext: buf.getContext('2d'), viewport, background: 'rgb(255,255,255)' });
+      renderTask = task;
+      try {
+        await task.promise;
+      } catch (err) {
+        buf.width = 0;
+        throw err;
+      } finally {
+        if (renderTask === task) renderTask = null;
+      }
+      if (destroyed || seq < minMainSeq) {
+        buf.width = 0;
+        const e = new Error('cancelled');
+        e.name = 'RenderingCancelledException';
+        throw e;
+      }
+      return { bitmap: buf };
+    },
+    cancelBelow(seq) {
+      if (seq > minMainSeq) minMainSeq = seq;
+      if (renderTask) {
+        renderTask.cancel();
+      }
+    },
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      renderTask?.cancel();
+      raw.destroy().catch(() => {});
+    },
+  };
+}
+
+async function openPdfDocument(bytes) {
+  const myDocSeq = ++pdfDocSeq;
+  if (getPdfWorker()) {
+    try {
+      const copy = bytes.slice();
+      const res = await workerCall('open', { docSeq: myDocSeq, bytes: copy, baseURI: document.baseURI }, [copy.buffer]);
+      let destroyed = false;
+      return {
+        numPages: res.numPages,
+        isWorker: true,
+        pageDims: (pageNum, userRotation) => workerCall('pageDims', { docSeq: myDocSeq, pageNum, userRotation }),
+        renderRegion: (params) => workerCall('render', { docSeq: myDocSeq, ...params }),
+        cancelBelow: (minSeq) => { try { getPdfWorker()?.postMessage({ type: 'cancelBelow', docSeq: myDocSeq, minSeq }); } catch { /* ignore */ } },
+        destroy: () => {
+          if (destroyed) return;
+          destroyed = true;
+          try { pdfWorker?.postMessage({ type: 'close', docSeq: myDocSeq }); } catch { /* ignore */ }
+        },
+      };
+    } catch (err) {
+      if (err?.name !== 'RenderingCancelledException') {
+        console.warn('도면 워커 열기 실패, 기본 렌더러로 전환합니다', err);
+        pdfWorkerDisabled = true;
+        resetPdfWorker();
+      } else {
+        throw err;
+      }
+    }
+  }
+  return openPdfFallback(bytes);
+}
+
+// Worker(ImageBitmap)와 폴백(HTMLCanvasElement) 모두 화면 캔버스에 옮기고 즉시 GPU/메모리를 돌려준다
+function swapIntoCanvas(target, img) {
+  target.width = img.width;
+  target.height = img.height;
+  target.getContext('2d').drawImage(img, 0, 0);
+  if (typeof img.close === 'function') img.close();
+  else img.width = 0;
+}
+
+// ---------- 타일 레이어: 확대 시 화면에 보이는 512px 조각만 고해상도로 얹는다 ----------
+let tileSession = null;
+let tileScrollTimer = 0;
+let tilePumping = false;
+
+function clearPdfTiles() {
+  tileSession = null;
+  clearTimeout(tileScrollTimer);
+  tileScrollTimer = 0;
+  const layer = $('pdfTileLayer');
+  if (layer) {
+    for (const c of layer.querySelectorAll('canvas')) c.width = 0;
+    layer.replaceChildren();
+  }
+}
+
+function scheduleVisibleTilesDebounced() {
+  if (!tileSession) return;
+  clearTimeout(tileScrollTimer);
+  tileScrollTimer = setTimeout(() => { scheduleVisibleTiles(); }, 80);
+}
+
+function visibleViewportRectInStage() {
+  const wrap = $('pdfStageWrap');
+  const stage = $('pdfStage');
+  if (!wrap || !stage) return null;
+  const wr = wrap.getBoundingClientRect();
+  const sr = stage.getBoundingClientRect();
+  return {
+    viewLeft: Math.max(0, wr.left - sr.left),
+    viewTop: Math.max(0, wr.top - sr.top),
+    viewW: wr.width,
+    viewH: wr.height,
+  };
+}
+
+function scheduleVisibleTiles() {
+  const s = tileSession;
+  if (!s || s.seq !== renderSeq || s.doc !== drawingState.pdfDoc) return;
+  const vp = visibleViewportRectInStage();
+  if (!vp) return;
+  const list = planVisibleTiles({ pageW: s.cssW, pageH: s.cssH, ...vp });
+  s.wanted = list;
+  const keepKeys = new Set(list.map((t) => t.key));
+  const now = Date.now();
+  for (const t of list) {
+    const hit = s.rendered.get(t.key);
+    if (hit) hit.lastUsed = now;
+  }
+  s.keepKeys = keepKeys;
+  pumpTileQueue(s);
+}
+
+async function pumpTileQueue(s) {
+  if (tilePumping || s !== tileSession) return;
+  tilePumping = true;
+  try {
+    while (s === tileSession && s.seq === renderSeq && s.doc === drawingState.pdfDoc) {
+      const next = (s.wanted || []).find((t) => !s.rendered.has(t.key) && !s.inFlight.has(t.key));
+      if (!next) break;
+      s.inFlight.add(next.key);
+      const { tileDpr, fitScale, rotation, pageNum, doc, seq } = s;
+      const px = Math.round(next.x * tileDpr);
+      const py = Math.round(next.y * tileDpr);
+      const pw = Math.max(1, Math.round((next.x + next.w) * tileDpr) - px);
+      const ph = Math.max(1, Math.round((next.y + next.h) * tileDpr) - py);
+      try {
+        const res = await doc.renderRegion({
+          seq,
+          pageNum,
+          renderScale: fitScale * tileDpr,
+          rotation,
+          offsetX: -px,
+          offsetY: -py,
+          pixelW: pw,
+          pixelH: ph,
+        });
+        if (s !== tileSession || seq !== renderSeq || doc !== drawingState.pdfDoc) {
+          if (typeof res?.bitmap?.close === 'function') res.bitmap.close();
+          else if (res?.bitmap) res.bitmap.width = 0;
+          break;
+        }
+        const layer = $('pdfTileLayer');
+        if (layer && res?.bitmap) {
+          const tileCanvas = document.createElement('canvas');
+          tileCanvas.className = 'pdf-tile';
+          tileCanvas.style.left = `${px / tileDpr}px`;
+          tileCanvas.style.top = `${py / tileDpr}px`;
+          tileCanvas.style.width = `${pw / tileDpr}px`;
+          tileCanvas.style.height = `${ph / tileDpr}px`;
+          swapIntoCanvas(tileCanvas, res.bitmap);
+          layer.appendChild(tileCanvas);
+          s.rendered.set(next.key, { canvas: tileCanvas, lastUsed: Date.now() });
+          if (s.rendered.size > MAX_TILE_CANVASES) {
+            const evict = [...s.rendered.entries()]
+              .filter(([k]) => !s.keepKeys?.has(k))
+              .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+            while (s.rendered.size > MAX_TILE_CANVASES && evict.length) {
+              const [k, item] = evict.shift();
+              item.canvas.width = 0;
+              item.canvas.remove();
+              s.rendered.delete(k);
+            }
+          }
+        }
+      } catch (err) {
+        if (err?.name !== 'RenderingCancelledException') console.warn('타일 그리기 실패', err);
+      } finally {
+        s.inFlight.delete(next.key);
+      }
+    }
+  } finally {
+    tilePumping = false;
+    // 도중에 스크롤해서 새 타일이 추가됐으면 이어서 그린다
+    if (tileSession && tileSession.seq === renderSeq && (tileSession.wanted || []).some((t) => !tileSession.rendered.has(t.key) && !tileSession.inFlight.has(t.key))) {
+      pumpTileQueue(tileSession);
+    }
+  }
 }
 
 async function renderPdfPage(afterLayout) {
   if (!drawingState.pdfDoc) return;
   const my = ++renderSeq;
   const tr = drawingState.openTrace;   // 도면을 열 때의 첫 그리기만 속도 기록에 적는다
-  if (renderTask) {
-    renderTask.cancel();
-    await renderTask.promise.catch(() => {});
-    renderTask = null;
-  }
-  if (my !== renderSeq) return;
   const doc = drawingState.pdfDoc;
+  clearPdfTiles();
+  doc.cancelBelow(my);
+  if (my !== renderSeq) return;
   try {
-    const page = await doc.getPage(drawingState.pageNum);
+    const dims = await doc.pageDims(drawingState.pageNum, drawingState.rotation);
     if (my !== renderSeq || doc !== drawingState.pdfDoc) return;
     tr?.step('pdf:page');
     const wrapW = Math.max(320, $('pdfStageWrap').clientWidth - 24);
-    const rotation = (page.rotate + drawingState.rotation) % 360;
-    const unscaled = page.getViewport({ scale: 1, rotation });
-    const fitScale = (wrapW / unscaled.width) * drawingState.scale;
-    // 많이 확대해도 캔버스가 폰 메모리 한도를 넘지 않게 선명도(dpr)를 낮춘다
-    const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_CANVAS_PX / (unscaled.width * unscaled.height * fitScale * fitScale)));
-    const viewport = page.getViewport({ scale: fitScale * dpr, rotation });
-    const cssW = Math.round(viewport.width / dpr);
-    const cssH = Math.round(viewport.height / dpr);
+    const rotation = dims.rotate;
+    const fitScale = (wrapW / dims.width) * drawingState.scale;
+    const nativeDpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssW = Math.max(1, Math.round(dims.width * fitScale));
+    const cssH = Math.max(1, Math.round(dims.height * fitScale));
+    const tiled = shouldUseTiles(cssW, cssH, nativeDpr);
+    const backdropDpr = Math.min(
+      nativeDpr,
+      Math.sqrt((tiled ? BASE_MAX_PX : MAX_CANVAS_PX) / Math.max(1, cssW * cssH)),
+    );
 
     const pdfCanvas = $('pdfCanvas');
     const key = `${drawingState.currentFile?.id}|${drawingState.pageNum}|${rotation}`;
@@ -1268,37 +1731,54 @@ async function renderPdfPage(afterLayout) {
       pdfCanvas.width = 1;   // 다른 쪽·문서: 옛 그림을 지운다(흰 바탕만 보임)
       pdfCanvas.height = 1;
     }
-    pdfCanvas.style.width = `${cssW}px`;
-    pdfCanvas.style.height = `${cssH}px`;
+    for (const id of ['pdfCanvas', 'pdfTileLayer', 'inkCanvas', 'pinLayer']) {
+      const el = $(id);
+      if (el) { el.style.width = `${cssW}px`; el.style.height = `${cssH}px`; }
+    }
     const inkCanvas = $('inkCanvas');
     inkCanvas.width = cssW;
     inkCanvas.height = cssH;
-    inkCanvas.style.width = `${cssW}px`;
-    inkCanvas.style.height = `${cssH}px`;
-    const pinLayer = $('pinLayer');
-    pinLayer.style.width = `${cssW}px`;
-    pinLayer.style.height = `${cssH}px`;
     redrawPageInk();
     renderPagePins();
     if (afterLayout) afterLayout();
 
     tr?.step('render:start');
-    // 화면에 아무 그림도 없을 때(처음 여는 쪽, 저장해 둔 그림 없음)는 거친 그림을 먼저 그려 보여 주고, 이어서 선명한 그림으로 바꾼다.
-    // 같은 page 객체라 두 번째 그리기는 PDF 해석을 다시 하지 않는다. 그사이 확대·쪽 넘김이 오면(renderSeq) 둘 다 버린다
-    if (fresh && dpr > LOWRES_DPR) {
-      const low = await renderToBuffer(page, page.getViewport({ scale: fitScale * LOWRES_DPR, rotation }), my);
-      if (!low) return;
-      swapIntoCanvas(pdfCanvas, low);
+    // 화면에 아무 그림도 없을 때(처음 여는 쪽, 저장해 둔 그림 없음)는 거친 그림을 먼저 그려 보여 주고, 이어서 선명한 그림으로 바꾼다
+    if (fresh && backdropDpr > LOWRES_DPR) {
+      const low = await doc.renderRegion({
+        seq: my,
+        pageNum: drawingState.pageNum,
+        renderScale: fitScale * LOWRES_DPR,
+        rotation,
+        pixelW: Math.max(1, Math.round(cssW * LOWRES_DPR)),
+        pixelH: Math.max(1, Math.round(cssH * LOWRES_DPR)),
+      });
+      if (my !== renderSeq || !low?.bitmap) {
+        if (typeof low?.bitmap?.close === 'function') low.bitmap.close();
+        return;
+      }
+      swapIntoCanvas(pdfCanvas, low.bitmap);
       shownKey = key;
       shownRot = rotation;
       shownSharp = false;
       tr?.step('render:low');
       $('pdfPageInfo').textContent = '선명하게 그리는 중...';
     }
-    const buf = await renderToBuffer(page, viewport, my);
-    if (!buf) return;
+
+    const base = await doc.renderRegion({
+      seq: my,
+      pageNum: drawingState.pageNum,
+      renderScale: fitScale * backdropDpr,
+      rotation,
+      pixelW: Math.max(1, Math.round(cssW * backdropDpr)),
+      pixelH: Math.max(1, Math.round(cssH * backdropDpr)),
+    });
+    if (my !== renderSeq || !base?.bitmap) {
+      if (typeof base?.bitmap?.close === 'function') base.bitmap.close();
+      return;
+    }
     tr?.step('render:end');
-    swapIntoCanvas(pdfCanvas, buf);
+    swapIntoCanvas(pdfCanvas, base.bitmap);
     shownKey = key;
     shownRot = rotation;
     shownSharp = true;
@@ -1307,6 +1787,26 @@ async function renderPdfPage(afterLayout) {
     // 쪽 그림 저장은 화면이 다 뜬 뒤 한 박자 쉬고(그리는 시간에 끼지 않게), 그사이 다른 쪽으로 바뀌지 않았을 때만
     setTimeout(() => { if (shownKey === key && shownSharp && drawingState.pdfDoc === doc) savePageSnapshot(pdfCanvas, rotation); }, SNAPSHOT_SAVE_DELAY_MS);
     if (typeof refreshGps === 'function') refreshGps();
+
+    // 확대 상태라 바탕만으로는 흐릴 때: 현재 화면에 보이는 512px 타일만 원래 선명도로 얹는다
+    if (tiled) {
+      const tileDpr = Math.min(nativeDpr, Math.sqrt(TILE_MAX_PX / (PDF_TILE_SIZE * PDF_TILE_SIZE)));
+      tileSession = {
+        seq: my,
+        doc,
+        pageNum: drawingState.pageNum,
+        rotation,
+        fitScale,
+        tileDpr,
+        cssW,
+        cssH,
+        rendered: new Map(),
+        inFlight: new Set(),
+        wanted: [],
+        keepKeys: new Set(),
+      };
+      scheduleVisibleTiles();
+    }
   } catch (err) {
     if (err?.name === 'RenderingCancelledException' || my !== renderSeq) return;
     console.warn('도면 그리기 실패', err);
@@ -2674,6 +3174,20 @@ async function doSaveDrawingNotes(showAlert) {
 function onOutboxSent(item, res) {
   if (item?.kind === 'drawing_notes') {
     syncPendingOutboxDrawings();
+    const fid = item.payload?.fileId;
+    if (fid) {
+      if (res?.version && item.payload?.data) {
+        idbPut(NOTES_CACHE_STORE, {
+          id: String(fid),
+          version: res.version,
+          updated: res.updated,
+          user: item.payload.user || '',
+          data: item.payload.data,
+        });
+      } else {
+        idbDelete(NOTES_CACHE_STORE, String(fid));
+      }
+    }
     if (typeof loadRecent === 'function') loadRecent().catch(() => {});
     return;
   }
@@ -2740,7 +3254,7 @@ async function fetchRival(callApi, site, fileName, excludeId, check = () => {}) 
 async function beforeOutboxSend(item) {
   if (item?.kind === 'drawing_notes' && item.payload?.fileId && item.payload?.data) {
     const fileId = item.payload.fileId;
-    const theirs = await api('drawing_notes_get', { fileId });
+    const theirs = await fetchDrawingNotes(fileId);
     if (!theirs?.updated || !Array.isArray(theirs.data?.pins)) return item;
     const their = normalizeNotes(theirs.data);
     const today = todayKst();
@@ -2880,6 +3394,7 @@ async function saveTypedPdfs() {
 }
 
 function initDrawingModule() {
+  requestPersistentStorage();
   renderPinLegend();
   $('pdfSaveTyped')?.addEventListener('click', saveTypedPdfs);
   $('drawingBackSites').addEventListener('click', loadDrawingTab);
@@ -2929,6 +3444,7 @@ function initDrawingModule() {
   $('pdfZoomIn').addEventListener('click', () => zoomStageBy(ZOOM_STEP));
   $('pdfZoomOut').addEventListener('click', () => zoomStageBy(-ZOOM_STEP));
   initStageGestures();
+  $('pdfStageWrap')?.addEventListener('scroll', scheduleVisibleTilesDebounced, { passive: true });
   $('pdfRotate').addEventListener('click', () => {
     drawingState.rotation = (drawingState.rotation + 90) % 360;
     closePinMemoBox();
@@ -2977,4 +3493,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES, annotationBounds, placeOcrInCells, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState };
+if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES, annotationBounds, placeOcrInCells, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState, pickEvictions, cacheBudgetOf, resolveNotesResponse, shouldUseTiles, planVisibleTiles };
