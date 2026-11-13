@@ -3,15 +3,109 @@
 // 서버: photo_albums, photo_page(40장씩, 작은 미리보기 포함), 큰 사진은 drive_download. 이 파일은 app.js보다 먼저 읽히므로 화면 요소는 함수 안에서만 쓴다.
 
 const gallery = { site: '', files: [], total: 0, loading: false, index: -1, seq: 0 };
-const G_FULL_CACHE_MAX = 12;   // 크게 본 사진을 몇 장까지 기억할지(메모리)
+const G_FULL_CACHE_MAX = 16;   // 크게 본 사진을 몇 장까지 기억할지(메모리)
+const G_IDB_NAME = 'gyecheuk_gallery';
+const G_IDB_LISTS = 'lists';
+const G_IDB_PHOTOS = 'photos';
+const G_IDB_PHOTO_MAX = 40;
 const fullCache = new Map();   // fileId → { url, base64 }
+const fullInflight = new Map();
 const G_SWIPE_PX = 60;
 const G_MAX_ZOOM = 5;
 const G_DOUBLE_TAP_MS = 300;
 const G_DOUBLE_TAP_ZOOM = 2.5;
 const G_WEEKDAYS = '일월화수목금토';
 
-const gThumbUrl = (b64) => (b64 ? `url("data:image/png;base64,${b64}")` : '');
+// 구버전 Code.gs는 PNG, 새 Code.gs는 용량이 1/4 이하인 JPEG 썸네일을 내려주므로 첫 바이트(Base64 '/9j/' = JPEG)로 구분한다
+const gThumbMime = (b64) => (String(b64 || '').startsWith('/9j/') ? 'image/jpeg' : 'image/png');
+const gThumbUrl = (b64) => (b64 ? `url("data:${gThumbMime(b64)};base64,${b64}")` : '');
+
+let gDbPromise = null;
+function openGalleryDb() {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  if (!gDbPromise) {
+    gDbPromise = new Promise((resolve) => {
+      try {
+        const req = indexedDB.open(G_IDB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(G_IDB_LISTS)) db.createObjectStore(G_IDB_LISTS, { keyPath: 'key' });
+          if (!db.objectStoreNames.contains(G_IDB_PHOTOS)) db.createObjectStore(G_IDB_PHOTOS, { keyPath: 'id' });
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => { gDbPromise = null; resolve(null); };
+      } catch { gDbPromise = null; resolve(null); }
+    });
+  }
+  return gDbPromise;
+}
+
+async function gIdbGet(storeName, key) {
+  const db = await openGalleryDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const req = db.transaction(storeName, 'readonly').objectStore(storeName).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    } catch { resolve(null); }
+  });
+}
+
+async function gIdbPut(storeName, value) {
+  const db = await openGalleryDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, 'readwrite');
+      tx.objectStore(storeName).put(value);
+      tx.oncomplete = resolve;
+      tx.onerror = resolve;
+      tx.onabort = resolve;
+    } catch { resolve(); }
+  });
+}
+
+async function gIdbDel(storeName, key) {
+  const db = await openGalleryDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(storeName, 'readwrite');
+      if (key === null) tx.objectStore(storeName).clear();
+      else tx.objectStore(storeName).delete(key);
+      tx.oncomplete = resolve;
+      tx.onerror = resolve;
+      tx.onabort = resolve;
+    } catch { resolve(); }
+  });
+}
+
+async function gIdbCachePhoto(id, mime, base64) {
+  const db = await openGalleryDb();
+  if (!db || !base64) return;
+  await gIdbPut(G_IDB_PHOTOS, { id, mime, base64, at: Date.now() });
+  try {
+    const tx = db.transaction(G_IDB_PHOTOS, 'readwrite');
+    const st = tx.objectStore(G_IDB_PHOTOS);
+    const req = st.getAll();
+    req.onsuccess = () => {
+      const list = req.result || [];
+      if (list.length <= G_IDB_PHOTO_MAX) return;
+      list.sort((a, b) => (a.at || 0) - (b.at || 0));
+      for (const old of list.slice(0, list.length - G_IDB_PHOTO_MAX)) st.delete(old.id);
+    };
+  } catch { /* ignore */ }
+}
+
+function invalidateGalleryCache(site = '') {
+  gIdbDel(G_IDB_LISTS, 'albums');
+  if (site) gIdbDel(G_IDB_LISTS, `page:${site}`);
+  else gIdbDel(G_IDB_LISTS, null);
+}
+
+const albumsSig = (list) => (list || []).map((a) => `${a.site}|${a.count}|${a.latest}|${a.coverId}|${(a.cover || '').length}`).join('\n');
+const pageSig = (files, total) => `${total}:${(files || []).map((f) => `${f.id}|${f.updated}|${(f.thumb || '').length}`).join('\n')}`;
 
 // 파일 이름 '2026-10-28_WL-1_ab12cd34_1.jpg'(계측 입력) 또는 '2026-10-28_김_ab12cd34_1.jpg'(사진만 찍기)에서 계측기ID/측정자
 function photoLabel(name) {
@@ -42,12 +136,27 @@ async function loadGallery() {
   showAlbums();
   const my = ++gallery.seq;
   galleryNote('앨범을 불러오는 중...');
+  let freshDone = false;
+  let shownCached = null;
+  // 지난번 앨범 목록을 폰(IndexedDB)에서 먼저 띄우고, 뒤에서 최신 목록을 받아 바뀐 것만 반영한다
+  gIdbGet(G_IDB_LISTS, 'albums').then((cached) => {
+    if (freshDone || my !== gallery.seq || !cached?.albums?.length) return;
+    shownCached = cached.albums;
+    renderAlbums(cached.albums);
+    galleryNote(`현장 앨범 ${cached.albums.length}개 · 새 사진 확인 중...`);
+  });
   try {
-    const res = await api('photo_albums');
+    const res = await api('photo_albums', {}, { timeoutMs: 45000 });
     if (my !== gallery.seq) return;
-    renderAlbums(res.albums || []);
+    freshDone = true;
+    const albums = res.albums || [];
+    gIdbPut(G_IDB_LISTS, { key: 'albums', albums, at: Date.now() });
+    if (!shownCached || albumsSig(albums) !== albumsSig(shownCached)) renderAlbums(albums);
+    else galleryNote(albums.length ? `현장 앨범 ${albums.length}개 · 앨범을 누르면 사진이 열립니다` : '아직 올린 사진이 없습니다. 📷 찍기에서 사진을 올리면 현장별 앨범이 생깁니다.');
   } catch (err) {
-    if (my === gallery.seq) galleryFail(err, '앨범');
+    if (my !== gallery.seq) return;
+    if (shownCached) galleryNote(`신호가 약해 이전에 불러온 앨범(${shownCached.length}개)을 표시합니다.`);
+    else galleryFail(err, '앨범');
   }
 }
 
@@ -94,6 +203,7 @@ function openAlbum(site) {
   $('galleryTitle').textContent = site;
   show($('galleryAlbums'), false);
   show($('galleryPhotos'), true);
+  show($('galleryMore'), false);
   $('galleryPhotos').replaceChildren();
   window.scrollTo(0, 0);
   loadMorePhotos();
@@ -103,18 +213,49 @@ async function loadMorePhotos() {
   if (gallery.loading || !gallery.site || (gallery.total && gallery.files.length >= gallery.total)) return;
   gallery.loading = true;
   const my = gallery.seq;
+  const site = gallery.site;
+  const offset = gallery.files.length;
   galleryNote('사진을 불러오는 중...');
+  let freshDone = false;
+  let shownCached = null;
+  if (offset === 0) {
+    gIdbGet(G_IDB_LISTS, `page:${site}`).then((cached) => {
+      if (freshDone || my !== gallery.seq || !cached?.files?.length || gallery.files.length) return;
+      shownCached = cached;
+      gallery.files = cached.files.slice();
+      gallery.total = cached.total || cached.files.length;
+      appendPhotoTiles(0);
+      galleryNote(`사진 ${gallery.total.toLocaleString('ko-KR')}장 · 새 사진 확인 중...`);
+      show($('galleryMore'), gallery.files.length < gallery.total);
+    });
+  }
   try {
-    const res = await api('photo_page', { site: gallery.site, offset: gallery.files.length });
+    const res = await api('photo_page', { site, offset }, { timeoutMs: 45000 });
     if (my !== gallery.seq) return;
-    const start = gallery.files.length;
-    gallery.files.push(...(res.files || []));
-    gallery.total = res.total || 0;
-    appendPhotoTiles(start);
+    freshDone = true;
+    const freshFiles = res.files || [];
+    const freshTotal = res.total || 0;
+    if (offset === 0) {
+      gIdbPut(G_IDB_LISTS, { key: `page:${site}`, total: freshTotal, files: freshFiles, at: Date.now() });
+      const sameAsCache = shownCached && pageSig(shownCached.files, shownCached.total) === pageSig(freshFiles, freshTotal);
+      if (!sameAsCache) {
+        if (shownCached) $('galleryPhotos').replaceChildren();
+        gallery.files = [...freshFiles];
+        gallery.total = freshTotal;
+        appendPhotoTiles(0);
+      }
+    } else {
+      const start = gallery.files.length;
+      gallery.files.push(...freshFiles);
+      gallery.total = freshTotal;
+      appendPhotoTiles(start);
+    }
     galleryNote(gallery.total ? `사진 ${gallery.total.toLocaleString('ko-KR')}장` : '이 앨범에 사진이 없습니다.');
     show($('galleryMore'), gallery.files.length < gallery.total);
   } catch (err) {
-    if (my === gallery.seq) galleryFail(err, '사진');
+    if (my !== gallery.seq) return;
+    if (shownCached) galleryNote(`신호가 약해 이전에 불러온 사진(${shownCached.files.length}장)을 표시합니다.`);
+    else galleryFail(err, '사진');
   } finally {
     if (my === gallery.seq) gallery.loading = false;
   }
@@ -175,10 +316,9 @@ function hidePhotoViewer() {
   gallery.index = -1;
 }
 
-async function fullPhoto(id) {
+function rememberFull(id, mime, base64) {
   if (fullCache.has(id)) return fullCache.get(id);
-  const res = await api('drive_download', { fileId: id });
-  const entry = { url: URL.createObjectURL(base64ToBlob(res.base64, res.mime || 'image/jpeg')), base64: res.base64 };
+  const entry = { url: URL.createObjectURL(base64ToBlob(base64, mime || 'image/jpeg')), base64 };
   fullCache.set(id, entry);
   if (fullCache.size > G_FULL_CACHE_MAX) {
     const [oldId, old] = fullCache.entries().next().value;
@@ -188,13 +328,28 @@ async function fullPhoto(id) {
   return entry;
 }
 
+async function fullPhoto(id) {
+  if (fullCache.has(id)) return fullCache.get(id);
+  if (fullInflight.has(id)) return fullInflight.get(id);
+  const job = (async () => {
+    const cached = await gIdbGet(G_IDB_PHOTOS, id);
+    if (cached?.base64) return rememberFull(id, cached.mime, cached.base64);
+    const res = await api('drive_download', { fileId: id }, { timeoutMs: 60000 });
+    const mime = res.mime || 'image/jpeg';
+    gIdbCachePhoto(id, mime, res.base64);
+    return rememberFull(id, mime, res.base64);
+  })().finally(() => fullInflight.delete(id));
+  fullInflight.set(id, job);
+  return job;
+}
+
 async function showPhoto(i) {
   const f = gallery.files[i];
   if (!f) return;
   gallery.index = i;
   resetZoom();
   const img = $('pvImg');
-  if (f.thumb) img.src = `data:image/png;base64,${f.thumb}`;   // 큰 사진이 올 때까지 작은 그림을 먼저
+  if (f.thumb) img.src = `data:${gThumbMime(f.thumb)};base64,${f.thumb}`;   // 큰 사진이 올 때까지 작은 그림을 먼저
   else img.removeAttribute('src');
   img.alt = f.name;
   $('pvCount').textContent = `${i + 1} / ${gallery.total}`;
@@ -210,7 +365,9 @@ async function showPhoto(i) {
   }
   if (i + 1 >= gallery.files.length - 4) loadMorePhotos();   // 끝에 가까우면 다음 사진 목록을 미리
   const next = gallery.files[i + 1];
-  if (next) fullPhoto(next.id).catch(() => {});   // 다음 사진을 미리 받아 넘길 때 바로 보이게
+  const prev = gallery.files[i - 1];
+  if (next) fullPhoto(next.id).catch(() => {});   // 앞뒤 사진을 미리 받아 넘길 때 바로 보이게
+  if (prev) fullPhoto(prev.id).catch(() => {});
 }
 
 function stepPhoto(d) {

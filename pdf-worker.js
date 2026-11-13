@@ -135,6 +135,11 @@ function detachDoc() {
 
 self.onmessage = async ({ data }) => {
   try {
+    if (data.type === 'warm') {
+      await ensureLib();
+      self.postMessage({ type: 'warmed', jobId: data.jobId });
+      return;
+    }
     if (data.type === 'open') {
       const targetSeq = data.docSeq;
       if (targetSeq <= docSeq) { self.postMessage({ type: 'cancelled', jobId: data.jobId }); return; }

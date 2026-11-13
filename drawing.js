@@ -18,7 +18,8 @@ const WEEKDAYS_KO = ['일', '월', '화', '수', '목', '금', '토'];
 const MAX_DRAWING_BYTES = 18 * 1024 * 1024;   // 서버 상한(base64 25,000,000자)과 같다
 const PREFETCH_COUNT = 8;      // 현장을 열면 미리 받아 두는 원본 도면 수(데이터 절약 모드이고 Wi-Fi 가 아닐 때)
 const PREFETCH_MAX = 24;       // 그 밖(데이터 절약 모드가 아니거나 Wi-Fi)일 때 미리 받는 수
-const PREFETCH_PARALLEL = 2;   // 동시에 받는 수(한꺼번에 받으면 사용자가 연 도면이 느려진다)
+const PREFETCH_PARALLEL = 1;   // 동시에 1개만 미리 받는다: 2개씩 받으면 사용자가 방금 누른 도면·야장 조회가 뒤로 밀린다
+const PREFETCH_DELAY_MS = 450; // 현장 폴더를 연 직후 사용자가 바로 도면을 누를 여유 시간
 const DOWNLOAD_TIMEOUT_MS = 3 * 60 * 1000;   // 도면 받기: 보내는 양은 작고 받는 양(수 MB)이 커서 기본 30초로는 느린 신호에서 끊긴다
 const LOWRES_DPR = 0.5;        // 처음 그릴 때 먼저 보여 주는 거친 그림의 선명도(화면 1px 에 0.5px). 이어서 선명한 그림으로 바꾼다
 const NOTES_SAVE_DELAY_MS = 300;
@@ -72,12 +73,17 @@ function ensurePdfJs() {
   return pdfJsLoad;
 }
 
-// 앱을 연 뒤 한가할 때 pdf.js 본체와 워커 파일을 미리 받아 둔다(app.js 가 부른다): 도면 탭을 처음 눌러도 기다리지 않고, 서비스 워커가 그 김에 폰에 저장한다
+// 앱을 연 뒤 한가할 때 pdf.js 본체와 백그라운드 워커까지 미리 올려 둔다(app.js·도면 탭 진입 시): 첫 도면을 눌러도 워커 부팅·엔진 해석을 기다리지 않는다
+function warmPdfWorker() {
+  if (navigator.onLine === false || typeof getPdfWorker !== 'function') return;
+  if (getPdfWorker()) workerCall('warm').catch(() => {});
+}
 function warmDrawing() {
   if (navigator.onLine === false) return;
   ensurePdfJs().catch(() => {});
   fetch(PDFJS_WORKER).catch(() => {});
   fetch(`pdf-worker.js?v=${DRAWING_BUILD}`).catch(() => {});
+  warmPdfWorker();
 }
 const ensureTesseract = () => ensureLib(TESSERACT_CDN, 'Tesseract');
 const ensurePdfLib = () => ensureLib(PDFLIB_CDN, 'PDFLib');
@@ -492,6 +498,9 @@ async function fetchDrawingNotes(fileId, callApi = api) {
 }
 
 function b64ToUint8(base64) {
+  if (typeof Uint8Array.fromBase64 === 'function') {
+    try { return Uint8Array.fromBase64(base64); } catch { /* fallback below */ }
+  }
   const bin = atob(base64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
@@ -571,7 +580,8 @@ let drawingSiteHint;
 
 function loadDrawingTab() {
   drawingSiteHint = SiteSort.cached((s) => SiteSort.newest(readCached(`drawings_${s}`), readCached(`drawing_folders_${s}`)));
-  ensurePdfJs().catch(() => {}); // 도면 탭 진입 즉시 PDF 엔진 예열!
+  ensurePdfJs().catch(() => {}); // 도면 탭 진입 즉시 PDF 엔진 + 백그라운드 워커 예열!
+  warmPdfWorker();
   pruneDrawingCache().catch(() => {});
   show($('drawingSitesView'), true);
   show($('drawingFilesView'), false);
@@ -761,6 +771,8 @@ function prefetchOriginals(seq) {
   }
 }
 async function runPrefetchWorker() {
+  if (navigator.onLine === false) { prefetchWorkers -= 1; return; }
+  await new Promise((r) => setTimeout(r, PREFETCH_DELAY_MS));
   // 줄이 비었는지 보는 것과 일꾼 수를 줄이는 것 사이에 await 가 없다: 그사이 새 목록이 들어와도 일꾼 없이 남지 않는다
   while (prefetchQueue.length && prefetchSeq === folderSeq) {
     if (userLoads) { await userIdle; continue; }   // 사용자가 연 도면을 먼저 받는다
@@ -1195,6 +1207,7 @@ async function openPdfFieldbook(file, preset = null) {
     $('pdfClose').focus();
   }
 
+  beginUserLoad();
   // 야장 메모 조회(서버)는 도면 그리기를 막지 않도록 먼저 출발만 시켜 두고, 그리기 끝난 뒤 반영한다
   const notesPromise = preset ? preset.notesPromise : fetchDrawingNotes(file.id).catch((err) => { console.warn('야장 메모 조회 실패', err); return null; });
   // 전에 그려 둔 첫 쪽 그림이 폰에 있으면 pdf.js 가 그리기 전에(0.1초 안에) 먼저 보여 준다. 선명한 그림이 준비되면 그 자리에서 바뀐다
@@ -1221,7 +1234,7 @@ async function openPdfFieldbook(file, preset = null) {
     }
     const bytes = sourceBytes || await (ownBytes || loadPdfBytes(file.id, tr));
     if (seq !== openSeq) return;
-    drawingState.rawPdfBytes = bytes.slice();
+    drawingState.rawPdfBytes = bytes;
 
     const pdfDoc = await openPdfDocument(bytes);
     if (seq !== openSeq) { pdfDoc.destroy(); return; }
@@ -1239,6 +1252,8 @@ async function openPdfFieldbook(file, preset = null) {
     if (err.isAuth) { drawingState.dirty = false; signOut(); closePdfViewer(); return; }
     alert(`PDF 도면을 열지 못했습니다: ${friendlyError(err, '파일이 손상되었거나 PDF가 아닙니다.')}`);
     closePdfViewer();
+  } finally {
+    endUserLoad();
   }
 }
 
@@ -1743,8 +1758,8 @@ async function renderPdfPage(afterLayout) {
     if (afterLayout) afterLayout();
 
     tr?.step('render:start');
-    // 화면에 아무 그림도 없을 때(처음 여는 쪽, 저장해 둔 그림 없음)는 거친 그림을 먼저 그려 보여 주고, 이어서 선명한 그림으로 바꾼다
-    if (fresh && backdropDpr > LOWRES_DPR) {
+    // 화면에 아무 그림도 없고 큰 고해상도 캔버스(>600K 화소)일 때만 거친 그림을 먼저 그린다. 일반 첫 열기는 한 번에 선명하게 그려 2중 렌더링을 없앤다
+    if (fresh && backdropDpr > LOWRES_DPR && (cssW * cssH * backdropDpr * backdropDpr) > 600000) {
       const low = await doc.renderRegion({
         seq: my,
         pageNum: drawingState.pageNum,

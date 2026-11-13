@@ -100,10 +100,12 @@ const networkError = (message) => Object.assign(new Error(message), { network: t
 
 // ---------- 읽기 우회(중계 서버 캐시) ----------
 // 자주 여는 목록은 중계 서버(worker)가 기억했다 바로 준다. 느리거나(WORKER_WAIT_MS) 안 되면 예전처럼 구글 서버에 직접 묻는다. 쓰기는 늘 구글 서버로 직접
-const CACHED_READS = new Set(['config', 'drawing_list', 'cad_list']);   // worker/src/cache.js RULES 와 같다
+const CACHED_READS = new Set(['config', 'drawing_list', 'cad_list', 'photo_albums', 'photo_page']);   // worker/src/cache.js RULES 와 같다
+const SLOW_CACHED_READS = new Set(['photo_albums', 'photo_page']);   // 냉각 상태 Apps Script 는 4~9초 걸릴 수 있어 중복 직접 호출을 피한다
 const FORGET_ALL = new Set(['add_site', 'remove_site', 'add_user', 'remove_user', 'add_instrument']);
 const FORGET_SITE = new Set(['drawing_upload', 'drawing_rename']);
 const WORKER_WAIT_MS = 2500;
+const WORKER_SLOW_WAIT_MS = 7000;
 const WORKER_SKIP_MS = 5 * 60 * 1000;   // 바꿨다는 알림이 실패하면 이 시간(worker 캐시 최장 보관) 동안 구글 서버로만
 let workerSkipUntil = 0;
 let pendingForget = Promise.resolve();
@@ -117,14 +119,14 @@ async function postJson(url, body, signal) {
   return { res, data, got: text.length };
 }
 
-// worker 답을 WORKER_WAIT_MS 까지 기다리고, 그 안에 안 오거나 실패하면 구글 서버에 직접 묻는다(그사이 worker 답이 먼저 오면 그걸 쓴다)
-async function workerFirst(body, signal, direct) {
+// worker 답을 waitMs 까지 기다리고, 그 안에 안 오거나 실패하면 구글 서버에 직접 묻는다(그사이 worker 답이 먼저 오면 그걸 쓴다)
+async function workerFirst(body, signal, direct, waitMs = WORKER_WAIT_MS) {
   await pendingForget;   // 방금 바꾼 것을 알리는 중이면 끝난 뒤에 읽는다(내가 올린 도면이 옛 목록에 빠져 보이지 않게)
   if (Date.now() < workerSkipUntil) return direct();
   return new Promise((resolve, reject) => {
     let gas = null;
     const toGas = () => { if (!gas) { gas = direct(); gas.then(resolve, reject); } };
-    const timer = setTimeout(toGas, WORKER_WAIT_MS);
+    const timer = setTimeout(toGas, waitMs);
     postJson(PUSH_URL + '/read', body, signal)
       .then((r) => {
         if (!r.res.ok || !r.data || typeof r.data !== 'object') throw new Error(`worker ${r.res.status}`);
@@ -137,10 +139,17 @@ async function workerFirst(body, signal, direct) {
 
 // 쓰기에 성공하면 worker 에 그 현장(또는 전부) 목록을 버리라고 알린다
 function forgetReads(action, payload, data) {
+  if (FORGET_ALL.has(action)) window.invalidateGalleryCache?.('');
+  else if ((action === 'photo' || (action === 'save' && payload?.photos?.length)) && payload?.entry?.site) {
+    window.invalidateGalleryCache?.(payload.entry.site);
+  }
   if (!readCacheOn()) return;
   let scope = null;
   if (FORGET_ALL.has(action) || (action === 'cad_upload_chunk' && data.done)) scope = {};   // CAD 조각 요청에는 현장 이름이 없어 전부 버린다(올리기 끝날 때 한 번)
   else if (FORGET_SITE.has(action)) scope = { site: payload.site };
+  else if ((action === 'photo' || (action === 'save' && payload?.photos?.length)) && payload?.entry?.site) {
+    scope = { site: payload.entry.site, albums: true };
+  }
   if (!scope) return;
   pendingForget = fetch(PUSH_URL + '/forget', { method: 'POST', body: JSON.stringify({ code: state.code, ...scope }) })
     .then((res) => { if (!res.ok) throw new Error(`forget ${res.status}`); })
@@ -161,7 +170,8 @@ async function api(action, payload = {}, opts = {}) {
   let got = 0;
   try {
     const direct = () => postJson(API_URL, body, ctl.signal);
-    ({ data, got } = await (readCacheOn() && CACHED_READS.has(action) ? workerFirst(body, ctl.signal, direct) : direct()));
+    const waitMs = SLOW_CACHED_READS.has(action) ? WORKER_SLOW_WAIT_MS : WORKER_WAIT_MS;
+    ({ data, got } = await (readCacheOn() && CACHED_READS.has(action) ? workerFirst(body, ctl.signal, direct, waitMs) : direct()));
     // Apps Script answers JSON even for its own errors; an HTML page (sign-in, quota, broken deployment) is not a verdict on the input.
     if (!data || typeof data !== 'object') throw networkError('서버 응답이 올바르지 않습니다(배포 확인).');
   } catch (err) {
