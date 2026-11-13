@@ -1,6 +1,6 @@
 'use strict';
 // CAD 탭: 폰에서 DWG·DXF 를 직접 열어 보는 뷰어(DWG FastView 의 보기·측정 기능을 우리 방식으로 새로 만든 것).
-// 엔진: libredwg(wasm, cad-worker.js 에서 읽음) + cad-engine.js(그릴 목록·도각 찾기·스냅·측정). 보기 값은 cadcraft mechanics.json.
+// 엔진: CADPocket WASM(Rust+acadrust, cad-worker.js·직접 파싱) + cad-engine.js(그릴 목록·도각 찾기·스냅·측정). 보기 값은 cadcraft mechanics.json.
 // 기능: 이동·두 손가락 확대·두 번 눌러 확대·전체보기 / 돋보기+스냅(끝점·중간점·중심·사분점·삽입점) / 거리·면적·좌표(X·Y 바꾸기)·측정 기록 /
 //       펜 표시 / 도면층 켜고 끄기 / 글자 찾기 / 블록 개수 / 뷰 태그(화면 위치 저장) / 배경 3색 / 최근 파일 /
 //       PDF 만들기: [도각 추적]으로 도면 틀마다 한 쪽 → 현장 고르기(검색) → 클라우드 도면/<현장>/DWG변환/ 에 올림 → 폰에도 저장할지 물음.
@@ -127,7 +127,7 @@ function cadParse(name, buf) {
       reject(Object.assign(new Error(`도면 읽기 도구가 멈췄습니다. ${e.message || '메모리가 부족할 수 있습니다. 다른 앱을 닫고 다시 열어 주세요.'}`), { crash: true }));
     };
     const copy = buf.slice(0);   // 작업자에게 넘기면 원본은 비므로 사본을 넘긴다(작업자가 멈추면 한 번 더 시도할 수 있게)
-    w.postMessage({ name, buf: copy, wantDxf: pocketWanted() }, [copy]);
+    w.postMessage({ name, buf: copy }, [copy]);
   });
 }
 
@@ -135,12 +135,12 @@ async function cadOpen(name, buf) {
   busyShow('도면을 여는 중...');
   try {
     // 작업자가 읽기 전에 멈추면(파일 받기 실패 등, 메시지 없음) 새 작업자로 한 번 더
-    // 엔진 파일(wasm 약 6MB 전송)이 폰에 없으면 먼저 받으며 받은 양을 보여 준다(미리 받는 중이면 거기에 합류). 못 받아도 아래에서 자기 오류를 낸다
+    // 엔진 파일(wasm 약 14.9MB)이 폰에 없으면 먼저 받으며 받은 양을 보여 준다(미리 받는 중이면 거기에 합류). 못 받아도 아래에서 자기 오류를 낸다
     await cadWasmReady((a, b) => busyText(cadWasmProgressText(a, b))).catch(() => {});
     const res = await cadParse(name, buf).catch(async (err) => {
       if (err.crash) { busyText('다시 시도하는 중...'); return cadParse(name, buf); }
       if (!cadWasmBroken(err)) throw err;
-      await cadWasmPurge('libredwg');   // 깨진 엔진 파일이면 폰 저장분을 지우고 새로 받아 한 번 더
+      await cadWasmPurge();   // 깨진 엔진 파일이면 폰 저장분을 지우고 새로 받아 한 번 더
       await cadWasmReady((a, b) => busyText(cadWasmProgressText(a, b)));
       return cadParse(name, buf);
     });
@@ -160,7 +160,10 @@ async function cadOpen(name, buf) {
     cadFit(cad.model.extents, CAD_MECH.openMargin);
     cadSetTool('pan');
     cadSheet(null);
-    if (res.dxf) await pocketShow(name, res.dxf);
+    if (pocketWanted()) {
+      if (res.dxf) await pocketShow(name, res.dxf);
+      else await pocketShowBytes(name, buf);
+    }
     const note = [];
     if (cad.model.truncated) note.push('도면이 너무 커서 일부 블록은 그리지 않았습니다.');
     cadInfo(note.join(' ') || `${cad.model.polys.length.toLocaleString()}개 선 · 도면층 ${cad.model.layers.length}개 · 도각 ${cad.frames.length}장`);
@@ -818,11 +821,12 @@ const pocketWanted = () => store.get('cad_pocket') !== '0' && !!document.createE
 async function pocketStart() {
   pocketP ??= (async () => {
     const m = await import(`./${POCKET_JS}`);
-    try { await m.default(); } catch (err) {
+    const wasmArg = { module_or_path: new URL('vendor/cadpocket/cadpocket_bg.wasm', document.baseURI) };
+    try { await m.default(wasmArg); } catch (err) {
       if (!cadWasmBroken(err)) throw err;
       await cadWasmPurge('cadpocket');   // 깨진 엔진 파일이면 폰 저장분을 지우고 새로 받아 한 번 더
       await cadWasmReady((a, b) => busyText(cadWasmProgressText(a, b)));
-      await m.default();
+      await m.default(wasmArg);
     }
     const h = new m.CadPocket();
     await h.start($('cadPocketCanvas'),
@@ -837,6 +841,44 @@ async function pocketStart() {
 // DXF 바이트 → 글자. 새 DXF(2007+)는 UTF-8, 옛 한글 DXF 는 CP949(euc-kr)
 function dxfText(bytes) {
   try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { return new TextDecoder('euc-kr').decode(bytes); }
+}
+
+function pocketFallbackDxf(name, rawBuf) {
+  const copy = rawBuf.slice(0);
+  return new Promise((resolve, reject) => {
+    const w = cadWorker();
+    w.onmessage = ({ data }) => {
+      if (data.progress) { busyText(data.progress); return; }
+      if (data.ok && data.dxf) resolve(data.dxf);
+      else reject(new Error(data.error || 'DXF 보조 변환 실패'));
+    };
+    w.onerror = (e) => {
+      cad.worker?.terminate(); cad.worker = null;
+      reject(new Error(e.message || '도면 변환 도구가 멈췄습니다.'));
+    };
+    w.postMessage({ name, buf: copy, wantDxf: true, onlyDxf: true }, [copy]);
+  });
+}
+
+async function pocketShowBytes(name, rawBuf) {
+  try {
+    busyText('CADPocket 화면을 여는 중...');
+    show($('cadPocket'), true);
+    pocket = await pocketStart();
+    try {
+      pocket.open_bytes(name, new Uint8Array(rawBuf));
+    } catch (parseErr) {
+      if (/\.dxf$/i.test(name)) throw parseErr;
+      busyText('구형 DWG 보조 변환 중...');
+      const dxfBytes = await pocketFallbackDxf(name, rawBuf);
+      pocket.open(name, dxfText(dxfBytes));
+    }
+    show($('cadPocketBtn'), true);
+  } catch (err) {
+    console.warn('CADPocket 시작 실패', err);
+    pocketHide();
+    show($('cadPocketBtn'), false);
+  }
 }
 
 async function pocketShow(name, dxfBytes) {

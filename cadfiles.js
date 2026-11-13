@@ -227,11 +227,13 @@ function initCadFiles() {
 }
 
 // ---------- CAD 엔진(wasm 2개) 미리 받기 ----------
-// wasm 은 풀린 크기가 합쳐 약 21MB 지만 GitHub Pages 가 gzip 으로 보내 실제 전송은 약 6.4MB(2026-11-10 측정: 3.76MB + 2.66MB, Content-Type application/wasm).
+// cadpocket_bg.wasm 은 DWG·DXF 직접 파싱(acadrust) + egui 뷰어를 함께 제공하며 풀린 크기가 약 14.9MB다(libredwg 는 구형 DWG 폴백용으로만 필요할 때 지연 로드).
 // 서비스 워커가 vendor/ 를 처음 쓸 때 폰에 저장하므로, 와이파이일 때 한가한 틈에 미리 받아 두면 현장(LTE)에서는 기다리지 않는다.
-// 주소에 ?v= 가 없다: wasm 은 cadpocket.js·libredwg-web.js 가 자기 옆 파일로 찾는다(서비스 워커 저장은 버전별 통이라 번호가 바뀌면 새로 받는다)
+// 주소에 ?v= 가 없다: wasm 은 cadpocket.js 가 자기 옆 파일로 찾는다(서비스 워커 저장은 버전별 통이라 번호가 바뀌면 새로 받는다)
 const CAD_WASM = [
-  { name: 'cadpocket', url: 'vendor/cadpocket/cadpocket_bg.wasm', mb: 10.5 },       // mb = 풀린 크기(받는 중 표시용 약값)
+  { name: 'cadpocket', url: 'vendor/cadpocket/cadpocket_bg.wasm', mb: 14.9 },       // mb = 풀린 크기(받는 중 표시용 약값)
+];
+const CAD_FALLBACK_WASM = [
   { name: 'libredwg', url: 'vendor/libredwg/wasm/libredwg-web.wasm', mb: 10.8 },
 ];
 const CAD_WARM_MS = 8000;   // 홈이 뜬 뒤 이만큼 기다렸다 받는다(pdf.js 미리 받기(4초)·시작 요청들과 겹치지 않게)
@@ -251,11 +253,11 @@ async function cadWasmHit(url) {
   return typeof caches !== 'undefined' && !!(await caches.match(url).catch(() => null));
 }
 
-// 폰에 저장된 wasm 을 지운다(다음에 새로 받게). which 가 없으면 둘 다
+// 폰에 저장된 wasm 을 지운다(다음에 새로 받게). which 가 없으면 모두
 async function cadWasmPurge(which) {
   cadWasmP = null;
   if (typeof caches === 'undefined') return;
-  for (const w of CAD_WASM.filter((x) => !which || x.name === which)) {
+  for (const w of [...CAD_WASM, ...CAD_FALLBACK_WASM].filter((x) => !which || x.name === which)) {
     const abs = new URL(w.url, location.href).href;
     for (const k of await caches.keys()) { try { await (await caches.open(k)).delete(abs); } catch { /* 지우지 못해도 다음 시도에서 다시 받는다 */ } }
   }
