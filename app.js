@@ -13,6 +13,7 @@ const PHOTO_MIN_PX = 320;  // 이보다 작게는 줄이지 않는다(알아볼 
 const MAX_PHOTOS = 50;   // 서버(Code.gs) MAX_PHOTOS와 같다
 const DRAFT_DELAY_MS = 500;
 const WARM_DRAWING_MS = 4000;   // 홈이 뜨고 이만큼 뒤에 pdf.js 를 미리 받는다(시작 요청들과 겹치지 않게)
+const WARM_GALLERY_MS = 5500;   // 홈이 뜨고 도면 예열 뒤 갤러리 앨범 목록·표지를 조용히 미리 받아 둔다
 const MIN_TIMEOUT_MS = 30 * 1000;
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const BYTES_PER_MS = 15;   // 느린 신호를 초당 약 15KB로 보고 시간 제한을 잡는다
@@ -101,11 +102,11 @@ const networkError = (message) => Object.assign(new Error(message), { network: t
 // ---------- 읽기 우회(중계 서버 캐시) ----------
 // 자주 여는 목록은 중계 서버(worker)가 기억했다 바로 준다. 느리거나(WORKER_WAIT_MS) 안 되면 예전처럼 구글 서버에 직접 묻는다. 쓰기는 늘 구글 서버로 직접
 const CACHED_READS = new Set(['config', 'drawing_list', 'cad_list', 'photo_albums', 'photo_page']);   // worker/src/cache.js RULES 와 같다
-const SLOW_CACHED_READS = new Set(['photo_albums', 'photo_page']);   // 냉각 상태 Apps Script 는 4~9초 걸릴 수 있어 중복 직접 호출을 피한다
+const SLOW_CACHED_READS = new Set(['photo_albums', 'photo_page']);   // 냉각 상태 Apps Script 첫 응답이 완료될 때까지 충분히 기다려 중복 직접 호출을 피한다
 const FORGET_ALL = new Set(['add_site', 'remove_site', 'add_user', 'remove_user', 'add_instrument']);
 const FORGET_SITE = new Set(['drawing_upload', 'drawing_rename']);
 const WORKER_WAIT_MS = 2500;
-const WORKER_SLOW_WAIT_MS = 7000;
+const WORKER_SLOW_WAIT_MS = 22000;
 const WORKER_SKIP_MS = 5 * 60 * 1000;   // 바꿨다는 알림이 실패하면 이 시간(worker 캐시 최장 보관) 동안 구글 서버로만
 let workerSkipUntil = 0;
 let pendingForget = Promise.resolve();
@@ -117,6 +118,24 @@ async function postJson(url, body, signal) {
   let data = null;
   try { text = await res.text(); data = JSON.parse(text); } catch (e) { if (e.name === 'AbortError') throw e; data = null; }
   return { res, data, got: text.length };
+}
+
+// 중계 서버 전용 엔드포인트(/thumbs, /photo_view). 미배포(404)이거나 캐시 꺼짐이면 null 을 돌려줘 앱이 GAS 로 자연스럽게 폴백한다
+async function postWorker(path, payload = {}, signal) {
+  await pendingForget;
+  if (!readCacheOn() || Date.now() < workerSkipUntil) return null;
+  const res = await fetch(PUSH_URL + path, {
+    method: 'POST',
+    body: JSON.stringify({ code: state.code, ...payload }),
+    signal,
+  });
+  if (res.status === 404 || res.status === 400 || res.status === 503) return null;
+  if (!res.ok) throw new Error(`worker ${res.status}`);
+  let text = '';
+  let data = null;
+  try { text = await res.text(); data = JSON.parse(text); } catch (e) { if (e.name === 'AbortError') throw e; data = null; }
+  if (!data || typeof data !== 'object' || !data.ok) return null;
+  return data;
 }
 
 // worker 답을 waitMs 까지 기다리고, 그 안에 안 오거나 실패하면 구글 서버에 직접 묻는다(그사이 worker 답이 먼저 오면 그걸 쓴다)
@@ -139,16 +158,12 @@ async function workerFirst(body, signal, direct, waitMs = WORKER_WAIT_MS) {
 
 // 쓰기에 성공하면 worker 에 그 현장(또는 전부) 목록을 버리라고 알린다
 function forgetReads(action, payload, data) {
-  if (FORGET_ALL.has(action)) window.invalidateGalleryCache?.('');
-  else if ((action === 'photo' || (action === 'save' && payload?.photos?.length)) && payload?.entry?.site) {
-    window.invalidateGalleryCache?.(payload.entry.site);
-  }
   if (!readCacheOn()) return;
   let scope = null;
   if (FORGET_ALL.has(action) || (action === 'cad_upload_chunk' && data.done)) scope = {};   // CAD 조각 요청에는 현장 이름이 없어 전부 버린다(올리기 끝날 때 한 번)
   else if (FORGET_SITE.has(action)) scope = { site: payload.site };
-  else if ((action === 'photo' || (action === 'save' && payload?.photos?.length)) && payload?.entry?.site) {
-    scope = { site: payload.entry.site, albums: true };
+  else if (action === 'photo' || (action === 'save' && payload?.photos?.length)) {
+    scope = { site: payload?.entry?.site || '현장무관', albums: true, warm: true };
   }
   if (!scope) return;
   pendingForget = fetch(PUSH_URL + '/forget', { method: 'POST', body: JSON.stringify({ code: state.code, ...scope }) })
@@ -949,6 +964,7 @@ async function saveShot(e) {
       const photos = await readPhotos(files, (i, n) => status(`사진 줄이는 중... (${i}/${n})`, 'ok'));   // 150KB 이하로 줄인 사진: 클라우드와 폰 사본이 같은 파일
       status('저장 중...', 'ok');
       const result = await submitOrQueue({ id: entry.clientId, action: 'photo', label, payload: { entry, photos } }, true);
+      window.optimisticGalleryPhoto?.(entry.site || '현장무관', photos, entry);
       store.set('shotKeep', $('shotKeep').checked ? '1' : '0');
       if ($('shotKeep').checked) keepCopies(photos, entry.site);
       status(SAVED_TEXT[result], 'ok');
@@ -1101,8 +1117,9 @@ function openApp() {
   route();
   window.schedOnOpen?.();   // 홈 캘린더(schedule.js, app.js 다음에 읽힌다 — 아직이면 그쪽이 읽힐 때 스스로 그린다)
   if (apkOutdated()) flash(`📱 새 앱(1.${LATEST_APK})이 나왔습니다 · 정보 탭에서 확인`);
-  // 홈이 뜬 뒤 한가할 때 도면 엔진(pdf.js)을 미리 받아 둔다: 도면 탭을 처음 눌러도 기다리지 않는다
+  // 홈이 뜬 뒤 한가할 때 도면 엔진(pdf.js)·갤러리 목록을 미리 받아 둔다: 탭을 처음 눌러도 기다리지 않는다
   setTimeout(() => { if (typeof warmDrawing === 'function') warmDrawing(); }, WARM_DRAWING_MS);
+  setTimeout(() => { window.warmGallery?.(); }, WARM_GALLERY_MS);
 }
 
 // 뒤에서 받은 목록이 지난번과 다를 때만 다시 그린다. 고르던 종류·계측기와 적던 값은 그대로 둔다
@@ -1282,6 +1299,7 @@ $('input').addEventListener('submit', async (e) => {
         const label = entry.issue ? `⚠ ${entry.issue} · ${entry.id}` : `${entry.date} ${entry.id}`;
         // 사진이 있으면 뒤에서 보낸다. 값만 있으면 2초 안팎이라 기다려서, 서버가 거부하면 입력을 그대로 두고 고치게 한다
         result = await submitOrQueue({ id: entry.clientId, action: 'save', label, payload: { entry, photos } }, photos.length > 0);
+        if (photos.length > 0) window.optimisticGalleryPhoto?.(entry.site || '현장무관', photos, entry);
         store.set('entryKeep', $('entryKeep').checked ? '1' : '0');
         if (photos.length > 0 && $('entryKeep').checked) keepCopies(photos, entry.site);
         // Not on the server yet: show this reading as the previous one so the next change is measured against it.
