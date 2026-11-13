@@ -542,7 +542,10 @@ async function openSiteDrawingFolder(site) {
   drawingState.files = fileListOf(cachedFiles);
   drawingState.folders = cachedFiles ? folderListOf(readCached(`drawing_folders_${site}`)) : [];
   drawingState.listing = true;
+  syncPendingOutboxDrawings();
   renderDrawingFiles();
+  const showBusy = !cachedFiles || drawingState.files.length === 0;
+  if (showBusy && typeof busyShow === 'function') busyShow('도면 목록을 불러오는 중...');
   if (!cachedFiles) $('drawingFolderNote').textContent = '도면 폴더를 불러오는 중...';
   else prefetchOriginals(seq);   // 서버 목록(1.5~3초)을 기다리지 않고 폰 보관 목록으로 미리 받기 시작
 
@@ -567,6 +570,8 @@ async function openSiteDrawingFolder(site) {
     $('drawingFolderNote').textContent = cachedFiles
       ? '신호가 약해 이전에 불러온 도면 목록을 표시합니다.'
       : `도면 목록을 불러오지 못했습니다: ${errorText(err)} 신호가 잡히면 현장을 다시 눌러 주세요.`;
+  } finally {
+    if (showBusy && typeof busyHide === 'function') busyHide();
   }
 }
 
@@ -652,16 +657,37 @@ function bindTapHold(li, onOpen, onHold) {
 
 const dateTitle = (it) => `${Number(it.date.slice(5, 7))}월 ${Number(it.date.slice(8, 10))}일 (${it.day})`;
 
+let pendingOutboxIds = new Set();
+async function syncPendingOutboxDrawings() {
+  if (typeof outboxAll !== 'function') return;
+  try {
+    const items = await outboxAll();
+    const next = new Set(items.filter((x) => x.kind === 'drawing_notes' && x.payload?.fileId).map((x) => String(x.payload.fileId)));
+    const changed = next.size !== pendingOutboxIds.size || [...next].some((id) => !pendingOutboxIds.has(id));
+    pendingOutboxIds = next;
+    if (changed && !$('drawingFilesView').classList.contains('hidden')) renderDrawingFiles();
+  } catch { /* ignore */ }
+}
+
 // 원본 줄: 파일 이름 + 딸린 저장본·계측기별 개수. 저장본·계측기별 줄: 긴 파일 이름 대신 날짜(계측기별은 종류 배지)
 function drawingFileRow(it, group, inFolder = false) {
   const f = it.file;
   const open = () => openPdfFieldbook(f);
   const data = { fileId: f.id, name: f.name };
-  const cls = inFolder ? 'in-folder' : '';
+  const cls = [inFolder ? 'in-folder' : '', it.kind === 'original' ? 'is-original' : ''].filter(Boolean).join(' ');
   if (it.kind === 'original') {
     const extra = [group.saved.length ? `저장본 ${group.saved.length}` : '', group.typed.length ? `계측기별 ${group.typed.length}` : ''].filter(Boolean).join(' · ');
     const sub = [f.updated || '', fmtSize(f.size || 0), it.dir ? `📁 ${it.dir}` : '', extra].filter(Boolean).join(' · ');
-    return drawingRow({ title: `📄 ${f.name}`, sub, onOpen: open, onHold: renameHoldOf(f), cls, data });
+    let title = `📄 ${f.name}`;
+    if (pendingOutboxIds.has(String(f.id))) {
+      const frag = document.createDocumentFragment();
+      const wait = document.createElement('span');
+      wait.className = 'kind outbox-wait';
+      wait.textContent = '전송대기';
+      frag.append(wait, title);
+      title = frag;
+    }
+    return drawingRow({ title, sub, onOpen: open, onHold: renameHoldOf(f), cls, data });
   }
   let title = dateTitle(it);
   if (it.kind === 'typed') {
@@ -2580,84 +2606,66 @@ async function pdfToJpegs(base64) {
 async function doSaveDrawingNotes(showAlert) {
   const file = drawingState.currentFile;
   if (!file) return;
-  const ver = notesVersion;   // 저장하는 동안 또 고치면(합치기·PDF 만들기·업로드에 몇 초) dirty 를 내리지 않는다 → 닫을 때 한 번 더 저장된다
+  const targetFile = drawingState.sourceFile || file;
+  const ver = notesVersion;
   const btn = $('pdfSaveNotes');
-  btn.disabled = true;
-  btn.textContent = '저장중..';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '저장중..';
+  }
   const tr = window.perfTrace?.('save') || null;
   tr?.step('save:start');
   persistNotesNow();
 
-  const newFileName = buildSavedDrawingFileName(file.name, new Date());
-  // 저장본은 도면/<현장>/<원본이름>/저장본/ 에 모은다(현장 폴더 바로 아래에는 원본만 남게). 폰 갤러리에도 같은 폴더 구조
-  const familyName = familyNameOf(file.name, allDrawingFiles());
-  const subdir = `${familyName}/${SAVED_DIR}`;
-  let flattened = true;   // 메모를 PDF 그림에 합쳤는지(합치기 라이브러리를 못 받으면 원본 그대로 올린다)
-  let pdfBase64 = store.get(`pdf_b64_${file.id}`);
-  const phoneFiles = () => (pdfBase64 ? [{ name: newFileName, base64: pdfBase64, folder: subdir }] : []);
-
   try {
-    // PDF 만들기(pdf-lib 받기 → 문서 열기 → 동그라미 그려 넣기). 같은 이름 저장본 확인(서버 왕복 1.5~3초)은 여기서 기다리지 않고
-    // 보관함이 올리기 직전에 한다(beforeOutboxSend) — 버튼은 PDF 를 만든 뒤 바로 끝난다
-    const bytes = drawingState.rawPdfBytes;
-    // 메모는 복사본으로 고정: 만드는 동안 더 적은 값이 그림에는 없는데 메모 JSON 에만 들어가는 어긋남을 막는다(그 값은 dirty 가 남아 닫을 때 다시 저장된다)
     const notesAtBuild = structuredClone(drawingState.notes);
-    const built = bytes ? buildAnnotatedPdfBase64(null, null, notesAtBuild, tr).catch((err) => { console.warn('메모 합치기 실패', err); return null; }) : Promise.resolve(null);
-    // 계측용 도면이거나 오늘 저장본을 이어 적는 중(여럿이 나눠 적는 날): 다른 폰이 먼저 저장한 같은 이름 저장본이 있을 수 있다
-    const rivalCheck = file.templateOf || stemOf(file.name) === stemOf(newFileName);
-    // '원본이름_수정날짜(요일한글자).pdf' 로 야장 메모가 합쳐진 새 PDF. 합치기 라이브러리를 못 받으면 원본 그대로 올린다(메모는 서버에 따로 남는다)
-    if (bytes) {
-      pdfBase64 = await built;
-      if (!pdfBase64) { flattened = false; pdfBase64 = uint8ToBase64(bytes); }
-    }
-    if (!pdfBase64) throw new Error('도면이 아직 다 열리지 않았습니다. 도면이 보인 뒤 다시 저장해 주세요.');
-
-    // 새 저장본의 메모에 바탕 원본을 적어 둔다: 저장본을 다시 열어도 원본 위에 동그라미 한 겹만 그린다. history 가 커져 시트 한 칸을 넘지 않게 줄인다
-    const fullNotes = { ...notesAtBuild, sourceId: (drawingState.sourceFile || file).id };
-    const savedNotes = typeof trimNotesForCell === 'function' ? trimNotesForCell(fullNotes) : fullNotes;
-    // 업로드(1~2MB, 폰 LTE 로 5~15초)는 보관함(IndexedDB)에 넣고 뒤에서 보낸다 — 사진 저장과 같은 길. 버튼·닫기는 PDF 를 만든 뒤 바로 끝나고, 신호가 끊겨도 폰에 남아 다음에 올라간다.
-    // 서버 응답(새 파일 id)은 onOutboxSent 가 받아 목록·캐시·계측용 전환을 한다
+    const savedNotes = typeof trimNotesForCell === 'function' ? trimNotesForCell(notesAtBuild) : notesAtBuild;
     const result = await submitOrQueue({
-      id: `drawing:${crypto.randomUUID()}`,
-      action: 'drawing_upload',
-      kind: 'drawing',
-      label: `도면 ${newFileName}`,
-      payload: { site: drawingState.site, file: { name: newFileName, base64: pdfBase64, replaceSameName: true, subdir, user: $('user')?.value || '', notes: savedNotes } },
-      meta: {
-        site: drawingState.site, familyName, subdir, templateId: file.templateOf ? file.id : '',
-        rival: rivalCheck ? { fileName: newFileName, excludeId: file.id, bytesId: fullNotes.sourceId, today: todayKst() } : null,
+      id: `drawing_notes:${targetFile.id}`,
+      action: 'drawing_notes_save',
+      kind: 'drawing_notes',
+      label: `도면 메모 ${targetFile.name}`,
+      payload: {
+        fileId: targetFile.id,
+        site: drawingState.site,
+        fileName: targetFile.name,
+        user: $('user')?.value || '',
+        data: savedNotes,
       },
     }, true);
 
+    store.set(`pdf_notes_${targetFile.id}`, JSON.stringify(notesAtBuild));
+    syncPendingOutboxDrawings();
     if (notesVersion === ver) drawingState.dirty = false;
     tr?.step('save:done');
     tr?.end(result === 'queued' ? 'queued' : 'ok');
-    btn.textContent = result === 'queued' ? '폰보관✓' : '저장됨✓';
+    if (btn) btn.textContent = result === 'queued' ? '폰보관✓' : '저장됨✓';
     if (showAlert) {
-      const where = result === 'queued'
-        ? '신호가 없어 이 폰에 보관했습니다. 신호가 잡히면 자동으로 클라우드에 올라갑니다.'
-        : '클라우드에는 뒤에서 올립니다(맨 위 줄에서 진행을 볼 수 있습니다).';
-      askPhoneSave(flattened
-        ? `'${newFileName}' 이름으로 저장했습니다. ${where}`
-        : `'${newFileName}' 이름으로 저장했지만, 합치기 기능 파일을 받지 못해 메모를 PDF 그림에 합치지는 못했습니다.\n메모 자체는 서버에 보관되어 다시 열면 보입니다. ${where}`, phoneFiles());
+      alert(result === 'queued'
+        ? `'${targetFile.name}' 메모를 이 폰에 보관했습니다. 신호가 잡히면 자동으로 저장됩니다.`
+        : `'${targetFile.name}' 도면에 동그라미 메모를 저장했습니다.`);
     }
   } catch (err) {
     tr?.end(err.network ? 'network' : 'error');
     if (err.isAuth) { drawingState.dirty = false; signOut(); closePdfViewer(); return; }
-    btn.textContent = '폰보관✓';
-    const reason = friendlyError(err, '메모를 PDF로 만들지 못했습니다.');
-    // 서버가 입력을 거부한 것(파일 이름·메모 크기 등)은 신호 문제가 아니므로 그 사유를 그대로 보여 준다
-    if (showAlert) askPhoneSave(err.network ? `신호가 약해 이 휴대폰에 먼저 보관했습니다: ${reason}` : `서버에 저장하지 못해 이 휴대폰에만 보관했습니다: ${reason}`, phoneFiles());
-    else if (err.rival) alert(`저장하지 않았습니다: ${reason}\n적은 값은 이 휴대폰에 남아 있습니다.`);   // 닫으며 저장할 때도 남의 값을 덮지 않고 멈춘 것은 알린다
+    if (btn) btn.textContent = '저장실패';
+    const reason = friendlyError(err, '메모를 저장하지 못했습니다.');
+    if (showAlert) alert(`저장하지 못했습니다: ${reason}`);
   } finally {
-    btn.disabled = false;
-    setTimeout(() => { if (btn.textContent !== '저장중..') btn.textContent = '다른이름 저장'; }, BTN_RESET_MS);
+    if (btn) {
+      btn.disabled = false;
+      setTimeout(() => { if (btn.textContent !== '저장중..') btn.textContent = '저장'; }, BTN_RESET_MS);
+    }
   }
 }
 
 // 보관함(outbox.js)이 도면 업로드를 서버에 보낸 뒤: 새 파일을 목록에 넣고, 다시 열 때 0.1초 만에 뜨게 캐시를 채우고,
 // 계측용(가상) 도면이 아직 열려 있으면 그 저장본을 연 것으로 바꾼다(이어 적는 값은 저장본 메모·실시간 줄에 그 id 로 남고, 가상 보관분은 치운다)
 function onOutboxSent(item, res) {
+  if (item?.kind === 'drawing_notes') {
+    syncPendingOutboxDrawings();
+    return;
+  }
   if (item?.kind !== 'drawing' || !res?.file) return;
   const m = item.meta || {};
   const sent = item.payload?.file || {};
@@ -2719,6 +2727,23 @@ async function fetchRival(callApi, site, fileName, excludeId, check = () => {}) 
 // 안 하면 replaceSameName 으로 먼저 적은 값이 사라진다. 저장 버튼이 이 왕복(1.5~3초)을 기다리지 않게 여기로 옮겼다.
 // 그쪽 메모를 못 받으면 던진다 → 보관함이 올리지 않고 나중에 다시 한다(덮어쓰지 않음)
 async function beforeOutboxSend(item) {
+  if (item?.kind === 'drawing_notes' && item.payload?.fileId && item.payload?.data) {
+    const fileId = item.payload.fileId;
+    const theirs = await api('drawing_notes_get', { fileId });
+    if (!theirs?.updated || !Array.isArray(theirs.data?.pins)) return item;
+    const their = normalizeNotes(theirs.data);
+    const today = todayKst();
+    const merged = mergeNotesForSave(item.payload.data, their, today);
+    if (JSON.stringify(merged.pins) === JSON.stringify(item.payload.data.pins)) return item;
+    if ((drawingState.sourceFile || drawingState.currentFile)?.id === fileId) {
+      drawingState.notes = mergeNotesForSave(drawingState.notes, their, today);
+      persistNotesNow();
+      renderPagePins();
+      updatePageInfo();
+    }
+    const data = typeof trimNotesForCell === 'function' ? trimNotesForCell(merged) : merged;
+    return { ...item, payload: { ...item.payload, data } };
+  }
   const r = item?.kind === 'drawing' ? item.meta?.rival : null;
   const sent = item?.payload?.file;
   if (!r || !sent?.notes) return item;
@@ -2845,7 +2870,7 @@ async function saveTypedPdfs() {
 
 function initDrawingModule() {
   renderPinLegend();
-  $('pdfSaveTyped').addEventListener('click', saveTypedPdfs);
+  $('pdfSaveTyped')?.addEventListener('click', saveTypedPdfs);
   $('drawingBackSites').addEventListener('click', loadDrawingTab);
   $('drawingViewSeg').addEventListener('click', (e) => { const b = e.target.closest('button[data-view]'); if (b) setDrawingView(b.dataset.view); });
   // 검색(search.js): 현장 목록은 줄을 숨기고, 도면 목록은 묶음·파일을 걸러 다시 그린다. search.js 가 없는 옛 사본이면 검색 칸을 숨긴다

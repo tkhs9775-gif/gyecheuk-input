@@ -81,13 +81,15 @@ async function prepareForSend(item) {
 
 // 같은 도면(현장·폴더·이름)이 아직 보관함에 있으면 그 옛 항목은 지운다: 새 항목이 그 뒤의 값까지 다 담고 있고, 같은 이름이라 서버에서도 덮어쓴다
 function supersedes(a, b) {
-  if (a.kind !== 'drawing' || b.kind !== 'drawing' || a.id === b.id) return false;
+  if (a.id === b.id || a.kind !== b.kind) return false;
+  if (a.kind === 'drawing_notes') return !!a.payload?.fileId && a.payload.fileId === b.payload?.fileId;
+  if (a.kind !== 'drawing') return false;
   const fa = a.payload?.file || {};
   const fb = b.payload?.file || {};
   return a.payload?.site === b.payload?.site && fa.subdir === fb.subdir && fa.name === fb.name;
 }
 async function dropSuperseded(item) {
-  if (item.kind !== 'drawing') return;
+  if (item.kind !== 'drawing' && item.kind !== 'drawing_notes') return;
   try {
     for (const old of await outboxAll()) if (supersedes(item, old)) await outboxDelete(old.id);
   } catch (err) { console.warn('보관함 옛 도면 정리 실패', err); }

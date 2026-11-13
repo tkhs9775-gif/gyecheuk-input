@@ -645,8 +645,15 @@ dialog::backdrop { background: rgba(27, 42, 87, .45); }
 .list li.drawing .meta b { font-size: 16px; line-height: 1.35; }
 .list li.drawing .meta small { display: block; margin-top: 2px; font-size: 13px; }
 .list li.drawing { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }   /* 길게 눌러 이름 수정: 글자 선택·iOS 메뉴가 끼지 않게 */
+.list li.drawing.is-original {
+  border: 1px solid rgba(217, 155, 38, 0.45);
+  border-left: 4px solid #D99B26;
+  padding-left: 13px;
+  background: linear-gradient(90deg, rgba(254, 243, 199, 0.28) 0%, transparent 48%);
+}
 .list .val.chev { font-size: 22px; font-weight: 500; color: var(--muted); }
 .list .kind { display: inline-block; margin-right: 6px; padding: 1px 9px; border-radius: 10px; background: var(--chip); color: var(--accent); font-size: 12px; font-weight: 700; vertical-align: 2px; }
+.list .kind.outbox-wait { background: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; }
 .list li.folder { background: var(--chip); border-color: transparent; }
 .list li.folder .meta b { font-size: 16px; }
 .list li.in-folder { margin-left: 22px; }
