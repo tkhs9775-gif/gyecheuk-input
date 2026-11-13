@@ -1,3 +1,4 @@
 android/app/google-services.json
 *adminsdk*.json
 .playwright-cli/
+android/rust-core/target/

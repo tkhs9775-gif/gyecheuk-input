@@ -731,6 +731,22 @@ public class MainActivity extends Activity {
         public int version() {
             return BuildConfig.VERSION_CODE;
         }
+
+        @JavascriptInterface
+        public String rustPing() {
+            if (!RustCore.isLoaded()) {
+                return "{\"ok\":false,\"error\":\"not_loaded\"}";
+            }
+            return RustCore.ping();
+        }
+
+        @JavascriptInterface
+        public String sanitizeFilename(String name) {
+            if (!RustCore.isLoaded()) {
+                return name == null ? "file" : name;
+            }
+            return RustCore.sanitizeFilename(name == null ? "" : name);
+        }
     }
 
     public class GalleryBridge {
