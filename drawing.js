@@ -1111,7 +1111,14 @@ function applyServerNotes(file, noteRes) {
   if (drawingState.currentFile !== file || drawingState.dirty) return;
   // 서버에 줄이 있을 때만(updated): 줄이 없으면 빈 메모가 오는데, 그것으로 폰에만 있는 동그라미(저장이 거부됐던 원본 등)를 지우지 않게
   if (!noteRes?.updated || !noteRes.data || !Array.isArray(noteRes.data.pins)) return;
-  drawingState.notes = normalizeNotes(noteRes.data);
+  const targetId = String((drawingState.sourceFile || file).id);
+  const srv = normalizeNotes(noteRes.data);
+  if (pendingOutboxIds.has(targetId)) {
+    const today = typeof todayKst === 'function' ? todayKst() : '';
+    drawingState.notes = mergeNotesForSave(drawingState.notes, srv, today);
+  } else {
+    drawingState.notes = srv;
+  }
   persistNotesNow();
   updatePageInfo();
   redrawPageInk();
@@ -2620,8 +2627,11 @@ async function doSaveDrawingNotes(showAlert) {
   try {
     const notesAtBuild = structuredClone(drawingState.notes);
     const savedNotes = typeof trimNotesForCell === 'function' ? trimNotesForCell(notesAtBuild) : notesAtBuild;
+    const uid = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const result = await submitOrQueue({
-      id: `drawing_notes:${targetFile.id}`,
+      id: `drawing_notes:${targetFile.id}:${uid}`,
       action: 'drawing_notes_save',
       kind: 'drawing_notes',
       label: `도면 메모 ${targetFile.name}`,
@@ -2664,6 +2674,7 @@ async function doSaveDrawingNotes(showAlert) {
 function onOutboxSent(item, res) {
   if (item?.kind === 'drawing_notes') {
     syncPendingOutboxDrawings();
+    if (typeof loadRecent === 'function') loadRecent().catch(() => {});
     return;
   }
   if (item?.kind !== 'drawing' || !res?.file) return;
