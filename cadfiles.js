@@ -6,6 +6,8 @@
 const CAD_NET_RETRIES = 3;               // 신호가 끊긴 조각을 다시 보내거나 받는 횟수
 const CAD_CALL_MS = 3 * 60 * 1000;       // 조각 하나(약 5.6MB 글자) 요청의 시간 한도
 const CAD_RETRY_WAIT_MS = 1500;
+const CAD_STD_CHUNK = 4 * 1024 * 1024;
+const CAD_DL_CONCURRENCY = 3;            // 대용량 도면 병렬 조각 다운로드 동시 요청 수
 const cadFiles = { site: '', seq: 0 };
 
 const cadMb = (n) => (n / MB).toFixed(1);
@@ -14,6 +16,7 @@ const cadSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const cadKey = (id) => `cloud:${id}`;
 
 function base64ToBytes(b64) {
+  if (typeof rustB64ToBytes === 'function') return rustB64ToBytes(b64);
   const bin = atob(b64 || '');
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
@@ -145,7 +148,8 @@ async function openCadCloud(f) {
   }
   busyShow(`도면을 받는 중... 0 / ${cadMb(f.size)}MB`);
   try {
-    const res = await cadDownloadAll(f.id, (got, total) => busyText(`도면을 받는 중... ${cadMb(got)} / ${cadMb(total)}MB`));
+    const onProgress = (got, total) => busyText(`도면을 받는 중... ${cadMb(got)} / ${cadMb(total || f.size)}MB`);
+    const res = await cadDownloadAll(f.id, onProgress, f.size, f.updated);
     await cadRemember(f.name, res.buf.slice(0), { key, id: f.id, updated: res.updated, site: cadFiles.site });
     await cadOpen(f.name, res.buf);   // 모래시계를 닫지 않은 채 열기로 넘어간다(받기→열기 사이에 깜빡이지 않게)
   } catch (err) {
@@ -156,18 +160,106 @@ async function openCadCloud(f) {
   }
 }
 
-// 조각을 차례로 받아 붙인다. 받는 도중 서버 파일이 바뀌면(수정시각·크기) 섞이지 않게 멈춘다
-async function cadDownloadAll(fileId, onProgress) {
+// Cloudflare Worker /cad 바이너리 스트리밍 경로: Base64 오버헤드 없이 원본 바이트를 바로 스트리밍한다.
+async function cadDownloadBinaryWorker(fileId, expectedSize, expectedUpdated, onProgress) {
+  const workerBase = (typeof PUSH_URL === 'string' && PUSH_URL) ? PUSH_URL.replace(/\/+$/, '') : '';
+  if (!workerBase || !state?.code) return null;
+  try {
+    const res = await fetch(`${workerBase}/cad`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain;charset=UTF-8', accept: 'application/octet-stream, application/json' },
+      body: JSON.stringify({ code: state.code, fileId, size: expectedSize || 0, updated: expectedUpdated || '' }),
+      signal: AbortSignal.timeout(CAD_CALL_MS),
+    });
+    if (!res || !res.ok) return null;
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/octet-stream')) return null;
+    const updated = res.headers.get('x-cad-updated') || expectedUpdated || '';
+    const hdrSize = Number(res.headers.get('x-cad-size')) || expectedSize || 0;
+    if (res.body && typeof res.body.getReader === 'function' && hdrSize > 0) {
+      const out = new Uint8Array(hdrSize);
+      const reader = res.body.getReader();
+      let got = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (got + value.byteLength > out.byteLength) return null;
+        out.set(value, got);
+        got += value.byteLength;
+        onProgress?.(got, hdrSize);
+      }
+      if (got > 0 && got === hdrSize) return { buf: out.buffer, updated };
+      return null;
+    }
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength > 0 && (!expectedSize || buf.byteLength === expectedSize)) {
+      onProgress?.(buf.byteLength, buf.byteLength);
+      return { buf, updated };
+    }
+  } catch {
+    // 워커 미지원·차단 시 GAS 병렬 조각 다운로드로 즉시 전환
+  }
+  return null;
+}
+
+// Rust WASM 조각 계획(rustPlanCadChunks)과 인플레이스 디코딩(rustDecodeB64At)으로 여러 조각을 동시에 병렬 다운로드한다.
+async function cadDownloadAll(fileId, onProgress, expectedSize = 0, expectedUpdated = '') {
+  const viaWorker = await cadDownloadBinaryWorker(fileId, expectedSize, expectedUpdated, onProgress);
+  if (viaWorker) return viaWorker;
+
+  const decodeInto = (b64, out, offset) => {
+    if (typeof rustDecodeB64At === 'function') {
+      const w = rustDecodeB64At(b64, out, offset);
+      if (w > 0) return w;
+    }
+    const bytes = base64ToBytes(b64);
+    if (offset + bytes.byteLength > out.byteLength) return -1;
+    out.set(bytes, offset);
+    return bytes.byteLength;
+  };
+
+  if (expectedSize > CAD_STD_CHUNK) {
+    const plan = typeof rustPlanCadChunks === 'function'
+      ? rustPlanCadChunks(expectedSize, CAD_STD_CHUNK, 0)
+      : Array.from({ length: Math.ceil(expectedSize / CAD_STD_CHUNK) }, (_, idx) => ({
+          offset: idx * CAD_STD_CHUNK,
+          length: Math.min(CAD_STD_CHUNK, expectedSize - idx * CAD_STD_CHUNK),
+          index: idx,
+        }));
+    const out = new Uint8Array(expectedSize);
+    let firstMeta = null;
+    let gotBytes = 0;
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(CAD_DL_CONCURRENCY, plan.length) }, async () => {
+      while (cursor < plan.length) {
+        const item = plan[cursor];
+        cursor += 1;
+        const r = await cadRetry(() => api('cad_download', { fileId, offset: item.offset }, { timeoutMs: CAD_CALL_MS }));
+        if (!firstMeta) firstMeta = r;
+        if (r.size !== expectedSize || r.updated !== firstMeta.updated) {
+          throw new Error('받는 도중 도면이 바뀌었습니다. 목록을 새로 연 뒤 다시 눌러 주세요.');
+        }
+        const written = decodeInto(r.base64, out, r.offset);
+        if (r.offset !== item.offset || written <= 0 || r.offset + written > out.length) {
+          throw new Error('받은 조각이 맞지 않습니다. 다시 눌러 주세요.');
+        }
+        gotBytes += written;
+        onProgress?.(gotBytes, expectedSize);
+      }
+    });
+    await Promise.all(workers);
+    return { buf: out.buffer, updated: firstMeta?.updated || expectedUpdated };
+  }
+
   let out = null, first = null, at = 0;
   for (;;) {
     const r = await cadRetry(() => api('cad_download', { fileId, offset: at }, { timeoutMs: CAD_CALL_MS }));
     if (!first) { first = r; out = new Uint8Array(r.size); }
     if (r.size !== first.size || r.updated !== first.updated) throw new Error('받는 도중 도면이 바뀌었습니다. 목록을 새로 연 뒤 다시 눌러 주세요.');
-    const bytes = base64ToBytes(r.base64);
-    if (r.offset !== at || at + bytes.length > out.length) throw new Error('받은 조각이 맞지 않습니다. 다시 눌러 주세요.');
-    out.set(bytes, at);
+    const written = decodeInto(r.base64, out, r.offset);
+    if (r.offset !== at || written < 0 || at + written > out.length) throw new Error('받은 조각이 맞지 않습니다. 다시 눌러 주세요.');
     at = r.next;
-    onProgress(at, r.size);
+    onProgress?.(at, r.size);
     if (r.done) return { buf: out.buffer, updated: r.updated };
   }
 }

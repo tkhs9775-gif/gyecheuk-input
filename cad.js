@@ -137,6 +137,8 @@ async function cadOpen(name, buf) {
     // 작업자가 읽기 전에 멈추면(파일 받기 실패 등, 메시지 없음) 새 작업자로 한 번 더
     // 엔진 파일(wasm 약 14.9MB)이 폰에 없으면 먼저 받으며 받은 양을 보여 준다(미리 받는 중이면 거기에 합류). 못 받아도 아래에서 자기 오류를 낸다
     await cadWasmReady((a, b) => busyText(cadWasmProgressText(a, b))).catch(() => {});
+    const wantPocket = pocketWanted();
+    const pocketWarmP = wantPocket ? pocketStart().catch(() => null) : null;
     const res = await cadParse(name, buf).catch(async (err) => {
       if (err.crash) { busyText('다시 시도하는 중...'); return cadParse(name, buf); }
       if (!cadWasmBroken(err)) throw err;
@@ -160,7 +162,8 @@ async function cadOpen(name, buf) {
     cadFit(cad.model.extents, CAD_MECH.openMargin);
     cadSetTool('pan');
     cadSheet(null);
-    if (pocketWanted()) {
+    if (wantPocket) {
+      await pocketWarmP;
       if (res.dxf) await pocketShow(name, res.dxf);
       else await pocketShowBytes(name, buf);
     }
@@ -183,8 +186,9 @@ function cadClose() {
   cad.model = null; cad.order = null; cad.snapIdx = null;   // 큰 목록을 놓아 메모리를 돌려준다
 }
 
-// 색별로 묶어 그리면 stroke 호출이 수십만 번에서 수십 번으로 준다
+// 색별로 묶어 그리면 stroke 호출이 수십만 번에서 수십 번으로 준다(Rust WASM 선형 메모리 정렬 우선)
 function cadColorOrder(polys) {
+  if (typeof rustCadColorOrder === 'function') return rustCadColorOrder(polys);
   const by = new Map();
   polys.forEach((p, i) => { const k = `${p.c}`; if (!by.has(k)) by.set(k, []); by.get(k).push(i); });
   return [...by].map(([c, idx]) => ({ c: Number(c), idx: Uint32Array.from(idx) }));

@@ -1,5 +1,6 @@
 // CAD 탭 작업자(모듈 워커): Pure Rust(cadpocket/acadrust wasm)로 DWG·DXF를 DXF 변환 없이 직접 파싱하고
 // 도각·글자·블록·레이어·스냅 도구 모델을 생성한다. (미지원 구형 DWG만 libredwg 폴백)
+import './rust-core.js';
 import './cad-engine.js';
 
 let pocketP = null;
@@ -81,10 +82,16 @@ self.onmessage = async ({ data }) => {
       await runLibreFallback(data, isDxf);
       return;
     }
+    const rawBytes = new Uint8Array(data.buf);
+    const cadFmt = typeof self.rustSniffCadFormat === 'function' ? self.rustSniffCadFormat(rawBytes) : 0;
+    if (cadFmt === 2 && !isDxf) {
+      await runLibreFallback({ ...data, wantDxf: true }, false);
+      return;
+    }
     const m = await ensurePocket();
     say('DWG/DXF 원본을 직접 읽는 중...');
     try {
-      const model = m.extract_cad_tools(data.name, new Uint8Array(data.buf));
+      const model = m.extract_cad_tools(data.name, rawBytes);
       finalizeModel(model, null);
       return;
     } catch (rustErr) {

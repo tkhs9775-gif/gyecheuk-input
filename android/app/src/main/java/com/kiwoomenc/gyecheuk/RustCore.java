@@ -27,4 +27,8 @@ public final class RustCore {
     public static native boolean looksLikePdf(byte[] data);
 
     public static native String sniffImageMime(byte[] data);
+
+    public static native int sniffCadFormat(byte[] data);
+
+    public static native long fnv1a64(byte[] data);
 }

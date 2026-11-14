@@ -64,14 +64,34 @@ pub fn sanitize_filename_core(name: &str, max_len: usize) -> String {
     format!("{}{}", stem, ext)
 }
 
-/// Fast LUT Base64 decoder. Returns `None` on malformed input.
+/// Fast LUT Base64 decoder with 4-byte unrolled SIMD-friendly fast path. Returns `None` on malformed input.
 pub fn b64_decode_into(src: &[u8], dst: &mut [u8]) -> Option<usize> {
     let mut out = 0usize;
+    let mut idx = 0usize;
+
+    // 4-byte unrolled fast path for contiguous non-padded Base64 quadruplets
+    while idx + 4 <= src.len() && out + 3 <= dst.len() {
+        let v0 = B64_DEC[src[idx] as usize];
+        let v1 = B64_DEC[src[idx + 1] as usize];
+        let v2 = B64_DEC[src[idx + 2] as usize];
+        let v3 = B64_DEC[src[idx + 3] as usize];
+        if (v0 | v1 | v2 | v3) >= 64 {
+            break;
+        }
+        let triple = ((v0 as u32) << 18) | ((v1 as u32) << 12) | ((v2 as u32) << 6) | (v3 as u32);
+        dst[out] = (triple >> 16) as u8;
+        dst[out + 1] = (triple >> 8) as u8;
+        dst[out + 2] = triple as u8;
+        idx += 4;
+        out += 3;
+    }
+
     let mut buf = [0u8; 4];
     let mut count = 0usize;
     let mut pad = 0usize;
 
-    for (idx, &b) in src.iter().enumerate() {
+    for (rem_offset, &b) in src[idx..].iter().enumerate() {
+        let cur_idx = idx + rem_offset;
         let v = B64_DEC[b as usize];
         if v == 0xFD {
             continue;
@@ -109,7 +129,7 @@ pub fn b64_decode_into(src: &[u8], dst: &mut [u8]) -> Option<usize> {
             out += n;
             count = 0;
             if pad > 0 {
-                for &rem in &src[idx + 1..] {
+                for &rem in &src[cur_idx + 1..] {
                     if B64_DEC[rem as usize] != 0xFD {
                         return None;
                     }
@@ -287,6 +307,174 @@ pub fn plan_visible_tiles_into(
     count
 }
 
+/// Inspects CAD header bytes:
+/// 1 = Modern DWG (AC1015..AC1032, R2000..R2018+ supported natively by Rust acadrust/cadpocket)
+/// 2 = Legacy DWG (AC1012/AC1014 R13/R14 or older, requires libredwg fallback)
+/// 3 = DXF (ASCII or Binary DXF)
+/// 0 = Unknown
+pub fn sniff_cad_format_core(bytes: &[u8]) -> u8 {
+    if bytes.len() >= 6 && &bytes[0..2] == b"AC" {
+        return match &bytes[0..6] {
+            b"AC1015" | b"AC1018" | b"AC1021" | b"AC1024" | b"AC1027" | b"AC1032" => 1,
+            b"AC1014" | b"AC1012" | b"AC1009" | b"AC1006" | b"AC1004" | b"AC1003"
+            | b"AC1002" | b"AC1.50" | b"AC2.10" => 2,
+            _ => 1,
+        };
+    }
+    if bytes.len() >= 18 && &bytes[0..18] == b"AutoCAD Binary DXF" {
+        return 3;
+    }
+    let head_len = bytes.len().min(256);
+    let head = &bytes[..head_len];
+    let mut i = 0usize;
+    while i < head.len()
+        && (head[i] == b' '
+            || head[i] == b'\t'
+            || head[i] == b'\r'
+            || head[i] == b'\n'
+            || head[i] == 0xEF
+            || head[i] == 0xBB
+            || head[i] == 0xBF)
+    {
+        i += 1;
+    }
+    if i < head.len() && (head[i] == b'0' || head[i..].starts_with(b"999")) {
+        for w in head[i..].windows(7) {
+            if w.eq_ignore_ascii_case(b"SECTION") || w.eq_ignore_ascii_case(b"ENTITIE") {
+                return 3;
+            }
+        }
+    }
+    0
+}
+
+/// Plans parallel DWG/DXF download chunks `[offset, length, index]` (3 x u32 per chunk).
+pub fn plan_cad_chunks_into(
+    total_size: u32,
+    chunk_size: u32,
+    start_offset: u32,
+    out: &mut [u32],
+) -> usize {
+    if chunk_size == 0 || start_offset >= total_size {
+        return 0;
+    }
+    let max_chunks = out.len() / 3;
+    let mut at = start_offset;
+    let mut idx = start_offset / chunk_size;
+    let mut count = 0usize;
+    while at < total_size && count < max_chunks {
+        let len = (total_size - at).min(chunk_size);
+        let base = count * 3;
+        out[base] = at;
+        out[base + 1] = len;
+        out[base + 2] = idx;
+        at = at.saturating_add(len);
+        idx += 1;
+        count += 1;
+    }
+    count
+}
+
+/// Fast 64-bit FNV-1a hash for DWG/DXF binary fingerprinting and cache validation.
+pub fn fnv1a64_core(bytes: &[u8]) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x00000100000001b3;
+    let mut h = OFFSET_BASIS;
+    let mut i = 0usize;
+    while i + 8 <= bytes.len() {
+        h ^= bytes[i] as u64;
+        h = h.wrapping_mul(PRIME);
+        h ^= bytes[i + 1] as u64;
+        h = h.wrapping_mul(PRIME);
+        h ^= bytes[i + 2] as u64;
+        h = h.wrapping_mul(PRIME);
+        h ^= bytes[i + 3] as u64;
+        h = h.wrapping_mul(PRIME);
+        h ^= bytes[i + 4] as u64;
+        h = h.wrapping_mul(PRIME);
+        h ^= bytes[i + 5] as u64;
+        h = h.wrapping_mul(PRIME);
+        h ^= bytes[i + 6] as u64;
+        h = h.wrapping_mul(PRIME);
+        h ^= bytes[i + 7] as u64;
+        h = h.wrapping_mul(PRIME);
+        i += 8;
+    }
+    while i < bytes.len() {
+        h ^= bytes[i] as u64;
+        h = h.wrapping_mul(PRIME);
+        i += 1;
+    }
+    h
+}
+
+/// Groups polyline indices by their 32-bit RGB color in order of first appearance.
+/// Writes unique colors into `out_colors`, group lengths into `out_counts`, and flat polyline indices into `out_indices`.
+/// Returns number of unique color groups (or `usize::MAX` if unique colors exceed `out_colors.len()`).
+pub fn cad_color_order_into(
+    colors: &[u32],
+    out_colors: &mut [u32],
+    out_counts: &mut [u32],
+    out_indices: &mut [u32],
+) -> usize {
+    let n = colors.len();
+    if n == 0 {
+        return 0;
+    }
+    if out_indices.len() < n {
+        return usize::MAX;
+    }
+    let max_groups = out_colors.len().min(out_counts.len());
+    if max_groups == 0 {
+        return usize::MAX;
+    }
+    // Open-addressing hash table over group slots (power-of-two capacity)
+    let cap = (max_groups * 2).next_power_of_two().max(64);
+    let mask = cap - 1;
+    let mut slot_key = vec![u32::MAX; cap];
+    let mut slot_grp = vec![u32::MAX; cap];
+    let mut poly_grp = vec![0u32; n];
+    let mut num_groups = 0usize;
+
+    for (i, &c) in colors.iter().enumerate() {
+        let mut h = (c.wrapping_mul(0x9E3779B9) as usize) & mask;
+        let grp = loop {
+            let g = slot_grp[h];
+            if g == u32::MAX {
+                if num_groups >= max_groups {
+                    return usize::MAX;
+                }
+                let new_g = num_groups as u32;
+                slot_key[h] = c;
+                slot_grp[h] = new_g;
+                out_colors[num_groups] = c;
+                out_counts[num_groups] = 0;
+                num_groups += 1;
+                break new_g;
+            }
+            if slot_key[h] == c {
+                break g;
+            }
+            h = (h + 1) & mask;
+        };
+        poly_grp[i] = grp;
+        out_counts[grp as usize] += 1;
+    }
+
+    let mut offsets = vec![0u32; num_groups];
+    let mut acc = 0u32;
+    for g in 0..num_groups {
+        offsets[g] = acc;
+        acc += out_counts[g];
+    }
+    for (i, &g) in poly_grp.iter().enumerate() {
+        let pos = offsets[g as usize] as usize;
+        out_indices[pos] = i as u32;
+        offsets[g as usize] += 1;
+    }
+    num_groups
+}
+
 // ============================================================================
 // C / WebAssembly ABI exports (`wasm32-unknown-unknown` & native)
 // ============================================================================
@@ -398,6 +586,88 @@ pub unsafe extern "C" fn wasm_plan_tiles(
     plan_visible_tiles_into(css_w, css_h, dpr, tile_px, vx0, vy0, vx1, vy1, pad, out)
 }
 
+#[no_mangle]
+/// # Safety
+/// `ptr..ptr+len` must be a valid slice in linear memory.
+pub unsafe extern "C" fn wasm_sniff_cad_format(ptr: *const u8, len: usize) -> u32 {
+    if ptr.is_null() || len == 0 {
+        return 0;
+    }
+    sniff_cad_format_core(core::slice::from_raw_parts(ptr, len)) as u32
+}
+
+#[no_mangle]
+/// # Safety
+/// `out_ptr` must point to at least `max_chunks * 3` `u32` elements.
+pub unsafe extern "C" fn wasm_plan_cad_chunks(
+    total_size: u32,
+    chunk_size: u32,
+    start_offset: u32,
+    out_ptr: *mut u32,
+    max_chunks: usize,
+) -> usize {
+    if out_ptr.is_null() || max_chunks == 0 {
+        return 0;
+    }
+    let out = core::slice::from_raw_parts_mut(out_ptr, max_chunks * 3);
+    plan_cad_chunks_into(total_size, chunk_size, start_offset, out)
+}
+
+#[no_mangle]
+/// # Safety
+/// `src_ptr..src_ptr+src_len` and `dst_ptr..dst_ptr+dst_total` must be valid slices in linear memory.
+pub unsafe extern "C" fn wasm_b64_decode_at(
+    src_ptr: *const u8,
+    src_len: usize,
+    dst_ptr: *mut u8,
+    dst_total: usize,
+    offset: usize,
+) -> usize {
+    if src_ptr.is_null() || dst_ptr.is_null() || offset >= dst_total {
+        return usize::MAX;
+    }
+    let src = core::slice::from_raw_parts(src_ptr, src_len);
+    let dst = core::slice::from_raw_parts_mut(dst_ptr.add(offset), dst_total - offset);
+    b64_decode_into(src, dst).unwrap_or(usize::MAX)
+}
+
+#[no_mangle]
+/// # Safety
+/// `ptr..ptr+len` must be a valid slice in linear memory.
+pub unsafe extern "C" fn wasm_fnv1a64(ptr: *const u8, len: usize) -> u64 {
+    if ptr.is_null() || len == 0 {
+        return 0;
+    }
+    fnv1a64_core(core::slice::from_raw_parts(ptr, len))
+}
+
+#[no_mangle]
+/// # Safety
+/// `colors_ptr`, `out_colors_ptr`, `out_counts_ptr`, and `out_indices_ptr` must be valid slices in linear memory.
+pub unsafe extern "C" fn wasm_cad_color_order(
+    colors_ptr: *const u32,
+    n: usize,
+    out_colors_ptr: *mut u32,
+    out_counts_ptr: *mut u32,
+    out_indices_ptr: *mut u32,
+    max_groups: usize,
+) -> usize {
+    if colors_ptr.is_null()
+        || out_colors_ptr.is_null()
+        || out_counts_ptr.is_null()
+        || out_indices_ptr.is_null()
+        || n == 0
+        || max_groups == 0
+    {
+        return 0;
+    }
+    let colors = core::slice::from_raw_parts(colors_ptr, n);
+    let out_colors = core::slice::from_raw_parts_mut(out_colors_ptr, max_groups);
+    let out_counts = core::slice::from_raw_parts_mut(out_counts_ptr, max_groups);
+    let out_indices = core::slice::from_raw_parts_mut(out_indices_ptr, n);
+    cad_color_order_into(colors, out_colors, out_counts, out_indices)
+}
+
 // ============================================================================
 // Android JNI exports (non-wasm32 targets)
 // ============================================================================
@@ -406,7 +676,7 @@ pub unsafe extern "C" fn wasm_plan_tiles(
 mod jni_bridge {
     use super::*;
     use jni::objects::{JByteArray, JClass, JString};
-    use jni::sys::{jboolean, jbyteArray, jstring, JNI_FALSE, JNI_TRUE};
+    use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring, JNI_FALSE, JNI_TRUE};
     use jni::JNIEnv;
     use serde_json::json;
 
@@ -484,6 +754,26 @@ mod jni_bridge {
             .expect("Failed to create JNI string")
             .into_raw()
     }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_kiwoomenc_gyecheuk_RustCore_sniffCadFormat<'local>(
+        env: JNIEnv<'local>,
+        _class: JClass<'local>,
+        data: JByteArray<'local>,
+    ) -> jint {
+        let bytes = env.convert_byte_array(data).unwrap_or_default();
+        sniff_cad_format_core(&bytes) as jint
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_kiwoomenc_gyecheuk_RustCore_fnv1a64<'local>(
+        env: JNIEnv<'local>,
+        _class: JClass<'local>,
+        data: JByteArray<'local>,
+    ) -> jlong {
+        let bytes = env.convert_byte_array(data).unwrap_or_default();
+        fnv1a64_core(&bytes) as jlong
+    }
 }
 
 #[cfg(test)]
@@ -531,5 +821,41 @@ mod tests {
         let first_row = out[1];
         assert!((1..=2).contains(&first_col));
         assert!((1..=2).contains(&first_row));
+    }
+
+    #[test]
+    fn test_sniff_cad_format() {
+        assert_eq!(sniff_cad_format_core(b"AC1032\x00\x00"), 1);
+        assert_eq!(sniff_cad_format_core(b"AC1015\x00\x00"), 1);
+        assert_eq!(sniff_cad_format_core(b"AC1014\x00\x00"), 2);
+        assert_eq!(sniff_cad_format_core(b"AC1012\x00\x00"), 2);
+        assert_eq!(sniff_cad_format_core(b"  0\r\nSECTION\r\n  2\r\nHEADER"), 3);
+        assert_eq!(sniff_cad_format_core(b"AutoCAD Binary DXF\r\n\x1a\x00"), 3);
+        assert_eq!(sniff_cad_format_core(b"random"), 0);
+    }
+
+    #[test]
+    fn test_plan_cad_chunks() {
+        let mut out = [0u32; 3 * 8];
+        let n = plan_cad_chunks_into(6_815_744, 4_194_304, 0, &mut out);
+        assert_eq!(n, 2);
+        assert_eq!(&out[0..6], &[0, 4_194_304, 0, 4_194_304, 2_621_440, 1]);
+    }
+
+    #[test]
+    fn test_fnv1a64_and_color_order() {
+        let h1 = fnv1a64_core(b"AC1032_DWG_SAMPLE_BYTES_12345678");
+        let h2 = fnv1a64_core(b"AC1032_DWG_SAMPLE_BYTES_12345679");
+        assert_ne!(h1, h2);
+
+        let colors = [0xFF0000u32, 0x00FF00, 0xFF0000, 0x0000FF, 0x00FF00, 0xFF0000];
+        let mut out_c = [0u32; 8];
+        let mut out_cnt = [0u32; 8];
+        let mut out_idx = [0u32; 6];
+        let g = cad_color_order_into(&colors, &mut out_c, &mut out_cnt, &mut out_idx);
+        assert_eq!(g, 3);
+        assert_eq!(&out_c[..3], &[0xFF0000, 0x00FF00, 0x0000FF]);
+        assert_eq!(&out_cnt[..3], &[3, 2, 1]);
+        assert_eq!(&out_idx, &[0, 2, 5, 1, 4, 3]);
     }
 }

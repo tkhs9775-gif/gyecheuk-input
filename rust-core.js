@@ -54,20 +54,26 @@
     const comma = b64.indexOf(',');
     const clean = comma >= 0 && comma < 64 && b64.slice(0, comma).includes('base64') ? b64.slice(comma + 1) : b64;
     if (wasm && textEnc) {
-      const srcBytes = textEnc.encode(clean);
-      const srcLen = srcBytes.byteLength;
-      const dstCap = wasm.wasm_b64_decoded_cap(srcLen);
-      const srcPtr = wasm.wasm_alloc(srcLen);
+      const capLen = clean.length;
+      const dstCap = wasm.wasm_b64_decoded_cap(capLen);
+      const srcPtr = wasm.wasm_alloc(capLen);
       const dstPtr = wasm.wasm_alloc(dstCap);
       if (srcPtr && dstPtr) {
         try {
-          new Uint8Array(wasm.memory.buffer, srcPtr, srcLen).set(srcBytes);
+          let srcLen = capLen;
+          if (typeof textEnc.encodeInto === 'function') {
+            srcLen = textEnc.encodeInto(clean, new Uint8Array(wasm.memory.buffer, srcPtr, capLen)).written;
+          } else {
+            const sb = textEnc.encode(clean);
+            srcLen = sb.byteLength;
+            new Uint8Array(wasm.memory.buffer, srcPtr, srcLen).set(sb);
+          }
           const written = wasm.wasm_b64_decode(srcPtr, srcLen, dstPtr, dstCap);
           if (written !== 0xFFFFFFFF && written <= dstCap) {
             return new Uint8Array(wasm.memory.buffer.slice(dstPtr, dstPtr + written));
           }
         } finally {
-          wasm.wasm_dealloc(srcPtr, srcLen);
+          wasm.wasm_dealloc(srcPtr, capLen);
           wasm.wasm_dealloc(dstPtr, dstCap);
         }
       }
@@ -284,6 +290,177 @@
     return out;
   }
 
+  // CAD 파일 헤더 판별: 1 = 최신 DWG(AC1015..AC1032, cadpocket 직접 지원), 2 = 구형 DWG(AC1012/AC1014 등, libredwg 폴백), 3 = DXF, 0 = 미상
+  function rustSniffCadFormat(bytes) {
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+    if (u8.byteLength < 6) return 0;
+    const len = Math.min(u8.byteLength, 256);
+    if (wasm && typeof wasm.wasm_sniff_cad_format === 'function') {
+      const ptr = wasm.wasm_alloc(len);
+      if (ptr) {
+        try {
+          new Uint8Array(wasm.memory.buffer, ptr, len).set(u8.subarray(0, len));
+          return wasm.wasm_sniff_cad_format(ptr, len) >>> 0;
+        } finally {
+          wasm.wasm_dealloc(ptr, len);
+        }
+      }
+    }
+    if (u8[0] === 0x41 && u8[1] === 0x43) { // "AC"
+      const ver = String.fromCharCode(u8[0], u8[1], u8[2], u8[3], u8[4], u8[5]);
+      if (/^AC10(15|18|21|24|27|32)$/.test(ver)) return 1;
+      if (/^AC(1014|1012|1009|1006|1004|1003|1002|1\.50|2\.10)$/.test(ver)) return 2;
+      return 1;
+    }
+    const head = textDec ? textDec.decode(u8.subarray(0, len)) : String.fromCharCode.apply(null, u8.subarray(0, len));
+    if (head.startsWith('AutoCAD Binary DXF') || /^\s*(?:0|999)\s[\s\S]*?(?:SECTION|ENTITIES)/i.test(head)) return 3;
+    return 0;
+  }
+
+  // 대용량 DWG·DXF 병렬 다운로드 조각 계획: [{ offset, length, index }, ...]
+  function rustPlanCadChunks(totalSize, chunkSize = 4 * 1024 * 1024, startOffset = 0) {
+    const total = Math.max(0, Math.floor(Number(totalSize) || 0));
+    const chunk = Math.max(1, Math.floor(Number(chunkSize) || (4 * 1024 * 1024)));
+    const start = Math.max(0, Math.floor(Number(startOffset) || 0));
+    if (start >= total) return [];
+    const maxChunks = Math.ceil((total - start) / chunk) + 1;
+    if (wasm && typeof wasm.wasm_plan_cad_chunks === 'function') {
+      const byteLen = maxChunks * 3 * 4;
+      const outPtr = wasm.wasm_alloc(byteLen);
+      if (outPtr) {
+        try {
+          const count = wasm.wasm_plan_cad_chunks(total, chunk, start, outPtr, maxChunks);
+          const view = new Uint32Array(wasm.memory.buffer, outPtr, count * 3);
+          const plan = new Array(count);
+          for (let i = 0; i < count; i += 1) {
+            const b = i * 3;
+            plan[i] = { offset: view[b], length: view[b + 1], index: view[b + 2] };
+          }
+          return plan;
+        } finally {
+          wasm.wasm_dealloc(outPtr, byteLen);
+        }
+      }
+    }
+    const plan = [];
+    for (let at = start, idx = Math.floor(start / chunk); at < total; at += chunk, idx += 1) {
+      plan.push({ offset: at, length: Math.min(chunk, total - at), index: idx });
+    }
+    return plan;
+  }
+
+  // Base64 조각을 목표 버퍼(targetU8)의 지정된 offset 위치에 직접 고속 디코딩한다.
+  function rustDecodeB64At(b64, targetU8, offset = 0) {
+    if (typeof b64 !== 'string' || !b64.length || !(targetU8 instanceof Uint8Array)) return 0;
+    const at = Math.max(0, Math.floor(Number(offset) || 0));
+    if (at >= targetU8.byteLength) return 0;
+    if (wasm && textEnc && typeof wasm.wasm_b64_decode_at === 'function') {
+      const capLen = b64.length;
+      const dstCap = Math.min(targetU8.byteLength - at, wasm.wasm_b64_decoded_cap(capLen));
+      const srcPtr = wasm.wasm_alloc(capLen);
+      const dstPtr = wasm.wasm_alloc(dstCap);
+      if (srcPtr && dstPtr) {
+        try {
+          let srcLen = capLen;
+          if (typeof textEnc.encodeInto === 'function') {
+            srcLen = textEnc.encodeInto(b64, new Uint8Array(wasm.memory.buffer, srcPtr, capLen)).written;
+          } else {
+            const sb = textEnc.encode(b64);
+            srcLen = sb.byteLength;
+            new Uint8Array(wasm.memory.buffer, srcPtr, srcLen).set(sb);
+          }
+          const written = wasm.wasm_b64_decode_at(srcPtr, srcLen, dstPtr, dstCap, 0);
+          if (written !== 0xFFFFFFFF && written <= dstCap) {
+            targetU8.set(new Uint8Array(wasm.memory.buffer, dstPtr, written), at);
+            return written;
+          }
+        } finally {
+          wasm.wasm_dealloc(srcPtr, capLen);
+          wasm.wasm_dealloc(dstPtr, dstCap);
+        }
+      }
+    }
+    const decoded = rustB64ToBytes(b64);
+    if (at + decoded.byteLength > targetU8.byteLength) return 0;
+    targetU8.set(decoded, at);
+    return decoded.byteLength;
+  }
+
+  // DWG/DXF 바이너리 지문(64비트 FNV-1a 해시, 16자리 16진수 문자열)
+  function rustFnv1a64(bytes) {
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+    if (!u8.byteLength) return '0000000000000000';
+    if (wasm && typeof wasm.wasm_fnv1a64 === 'function') {
+      const len = u8.byteLength;
+      const ptr = wasm.wasm_alloc(len);
+      if (ptr) {
+        try {
+          new Uint8Array(wasm.memory.buffer, ptr, len).set(u8);
+          const h = wasm.wasm_fnv1a64(ptr, len);
+          const u64 = BigInt.asUintN(64, BigInt(h));
+          return u64.toString(16).padStart(16, '0');
+        } finally {
+          wasm.wasm_dealloc(ptr, len);
+        }
+      }
+    }
+    let h = 0xcbf29ce484222325n;
+    const prime = 0x100000001b3n;
+    for (let i = 0; i < u8.byteLength; i += 1) {
+      h ^= BigInt(u8[i]);
+      h = BigInt.asUintN(64, h * prime);
+    }
+    return h.toString(16).padStart(16, '0');
+  }
+
+  // 수십만 개 CAD 폴리라인의 색상별 그룹 묶기(cadColorOrder)를 Rust 선형 메모리에서 수행한다.
+  function rustCadColorOrder(polys) {
+    if (!Array.isArray(polys) || !polys.length) return [];
+    const n = polys.length;
+    if (wasm && typeof wasm.wasm_cad_color_order === 'function') {
+      const maxGroups = Math.min(n, 4096);
+      const colorsBytes = n * 4;
+      const groupsBytes = maxGroups * 4;
+      const colorsPtr = wasm.wasm_alloc(colorsBytes);
+      const outColorsPtr = wasm.wasm_alloc(groupsBytes);
+      const outCountsPtr = wasm.wasm_alloc(groupsBytes);
+      const outIndicesPtr = wasm.wasm_alloc(colorsBytes);
+      if (colorsPtr && outColorsPtr && outCountsPtr && outIndicesPtr) {
+        try {
+          const inColors = new Uint32Array(wasm.memory.buffer, colorsPtr, n);
+          for (let i = 0; i < n; i += 1) inColors[i] = (polys[i].c >>> 0);
+          const gCount = wasm.wasm_cad_color_order(colorsPtr, n, outColorsPtr, outCountsPtr, outIndicesPtr, maxGroups);
+          if (gCount > 0 && gCount <= maxGroups) {
+            const outC = new Uint32Array(wasm.memory.buffer, outColorsPtr, gCount);
+            const outCnt = new Uint32Array(wasm.memory.buffer, outCountsPtr, gCount);
+            const idxBuf = wasm.memory.buffer.slice(outIndicesPtr, outIndicesPtr + colorsBytes);
+            const res = new Array(gCount);
+            let pos = 0;
+            for (let g = 0; g < gCount; g += 1) {
+              const cnt = outCnt[g];
+              res[g] = { c: outC[g], idx: new Uint32Array(idxBuf, pos * 4, cnt) };
+              pos += cnt;
+            }
+            return res;
+          }
+        } finally {
+          wasm.wasm_dealloc(colorsPtr, colorsBytes);
+          wasm.wasm_dealloc(outColorsPtr, groupsBytes);
+          wasm.wasm_dealloc(outCountsPtr, groupsBytes);
+          wasm.wasm_dealloc(outIndicesPtr, colorsBytes);
+        }
+      }
+    }
+    const by = new Map();
+    for (let i = 0; i < n; i += 1) {
+      const c = polys[i].c >>> 0;
+      let arr = by.get(c);
+      if (!arr) { arr = []; by.set(c, arr); }
+      arr.push(i);
+    }
+    return [...by].map(([c, idx]) => ({ c, idx: Uint32Array.from(idx) }));
+  }
+
   const api = {
     ensure: ensureRustWasm,
     ensureRustWasm,
@@ -297,6 +474,11 @@
     planTiles: rustPlanTiles,
     packThumbBundle,
     unpackThumbBundle,
+    sniffCadFormat: rustSniffCadFormat,
+    planCadChunks: rustPlanCadChunks,
+    decodeB64At: rustDecodeB64At,
+    fnv1a64: rustFnv1a64,
+    cadColorOrder: rustCadColorOrder,
   };
 
   root.RustCore = api;
@@ -307,6 +489,11 @@
   root.rustPlanTiles = rustPlanTiles;
   root.rustPackThumbBundle = packThumbBundle;
   root.rustUnpackThumbBundle = unpackThumbBundle;
+  root.rustSniffCadFormat = rustSniffCadFormat;
+  root.rustPlanCadChunks = rustPlanCadChunks;
+  root.rustDecodeB64At = rustDecodeB64At;
+  root.rustFnv1a64 = rustFnv1a64;
+  root.rustCadColorOrder = rustCadColorOrder;
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -318,6 +505,11 @@
       rustPlanTiles,
       rustPackThumbBundle: packThumbBundle,
       rustUnpackThumbBundle: unpackThumbBundle,
+      rustSniffCadFormat,
+      rustPlanCadChunks,
+      rustDecodeB64At,
+      rustFnv1a64,
+      rustCadColorOrder,
     };
   }
 
