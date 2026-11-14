@@ -22,8 +22,14 @@ function phoneAlbumFolder(site) {
   return safeFilePart(site) || NO_SITE_NAME;
 }
 
-// 클라우드로 보내는 것과 같은 압축본(150KB 이하 JPEG, base64)을 파일 조각으로 되돌린다
+// 클라우드로 보내는 것과 같은 압축본(150KB 이하 JPEG, base64)을 파일 조각으로 되돌린다 (Rust WASM 가속 지원)
 function base64ToBlob(base64, mime = 'image/jpeg') {
+  if (typeof rustB64ToBytes === 'function') {
+    try { return new Blob([rustB64ToBytes(base64)], { type: mime }); } catch { /* fallback below */ }
+  }
+  if (typeof Uint8Array.fromBase64 === 'function') {
+    try { return new Blob([Uint8Array.fromBase64(base64)], { type: mime }); } catch { /* fallback below */ }
+  }
   const bin = atob(base64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);

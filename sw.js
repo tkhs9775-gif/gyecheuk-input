@@ -6,7 +6,7 @@ const NET_WAIT_MS = 3000;   // 화면 파일(index.html)을 이만큼 기다려�
 // 핵심 파일: 앱이 열리는 데 꼭 필요하다(index.html이 부르고 app.js가 바로 쓰는 것). 하나라도 못 받으면 설치를 멈춘다 → 옛 화면이 그대로 남는다.
 const CORE = [
   './', 'index.html',
-  `style.css?v=${V}`, `theme.css?v=${V}`, `brand.css?v=${V}`, `config.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
+  `style.css?v=${V}`, `theme.css?v=${V}`, `brand.css?v=${V}`, `config.js?v=${V}`, `rust-core.js?v=${V}`, `weather.js?v=${V}`, `entries.js?v=${V}`, `push.js?v=${V}`,
   `outbox.js?v=${V}`, `sitesort.js?v=${V}`, `drawing.js?v=${V}`, `phonecopy.js?v=${V}`, `pinhistory.js?v=${V}`, `perf.js?v=${V}`, `busy.js?v=${V}`,
   `gps.js?v=${V}`, `gallery.js?v=${V}`, `camera.js?v=${V}`, `app.js?v=${V}`,
 ];

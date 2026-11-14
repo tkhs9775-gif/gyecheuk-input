@@ -303,6 +303,7 @@ public class MainActivity extends Activity {
         if (name.endsWith(".css")) return "text/css";
         if (name.endsWith(".png")) return "image/png";
         if (name.endsWith(".json")) return "application/json";
+        if (name.endsWith(".wasm")) return "application/wasm";
         return "application/octet-stream";
     }
 
@@ -754,7 +755,12 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public boolean savePhoto(String base64, String siteFolder, String fileName) {
             try {
-                return writeImage(Base64.decode(base64, Base64.DEFAULT), siteFolder, fileName);
+                byte[] bytes = RustCore.isLoaded() ? RustCore.decodeBase64(base64 == null ? "" : base64) : null;
+                if (bytes == null || bytes.length == 0) {
+                    bytes = Base64.decode(base64, Base64.DEFAULT);
+                }
+                String safeName = RustCore.isLoaded() && fileName != null ? RustCore.sanitizeFilename(fileName) : fileName;
+                return writeImage(bytes, siteFolder, safeName);
             } catch (Exception e) {
                 return false;
             }

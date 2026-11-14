@@ -357,15 +357,61 @@ function galleryFail(err, what) {
   galleryNote(err.network ? `신호가 약해 ${what}을 불러오지 못했습니다. 신호가 잡히면 다시 열어 주세요.` : `${what}을 불러오지 못했습니다: ${err.message}`);
 }
 
+function rememberThumbBlobUrl(key, u8) {
+  if (!key || !u8?.byteLength || thumbUrlMap.has(key)) return;
+  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return;
+  try {
+    const mime = typeof rustSniffImageMime === 'function' ? rustSniffImageMime(u8) : (u8[0] === 0xff ? 'image/jpeg' : 'image/png');
+    const url = URL.createObjectURL(new Blob([u8], { type: mime }));
+    thumbUrlMap.set(key, { url, css: `url("${url}")` });
+    if (thumbUrlMap.size > G_THUMB_URL_MAX) {
+      const [oldK, oldV] = thumbUrlMap.entries().next().value;
+      thumbUrlMap.delete(oldK);
+      try { URL.revokeObjectURL(oldV.url); } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+}
+
+function u8ToB64Fast(u8) {
+  if (typeof rustBytesToB64 === 'function') {
+    try { return rustBytesToB64(u8); } catch { /* fallback below */ }
+  }
+  let s = '';
+  const step = 0x8000;
+  for (let i = 0; i < u8.length; i += step) {
+    s += String.fromCharCode.apply(null, u8.subarray(i, i + step));
+  }
+  return btoa(s);
+}
+
 async function fetchThumbBatch(ids, px) {
   if (!ids.length || thumbsUnsupported) return {};
   try {
-    if (typeof postWorker === 'function') {
-      const w = await postWorker('/thumbs', { ids, px }).catch(() => null);
-      if (w?.thumbs) {
-        const rows = Object.entries(w.thumbs).filter(([, d]) => !!d).map(([id, data]) => ({ id, px, data }));
+    const callWorker = typeof postWorkerBinary === 'function'
+      ? () => postWorkerBinary('/thumbs', { ids, px })
+      : (typeof postWorker === 'function' ? () => postWorker('/thumbs', { ids, px }).then((d) => (d ? { binary: false, data: d } : null)) : null);
+    if (callWorker) {
+      const w = await callWorker().catch(() => null);
+      if (w?.binary && w.bytes?.byteLength && typeof rustUnpackThumbBundle === 'function') {
+        const unpacked = rustUnpackThumbBundle(w.bytes);
+        if (unpacked) {
+          const out = {};
+          const rows = [];
+          for (const [id, entry] of Object.entries(unpacked)) {
+            const u8 = entry?.bytes || entry;
+            if (!u8?.byteLength) continue;
+            rememberThumbBlobUrl(gThumbKey(id, px), u8);
+            const b64 = u8ToB64Fast(u8);
+            out[id] = b64;
+            rows.push({ id, px, data: b64 });
+          }
+          await gThumbsPutMany(rows);
+          return out;
+        }
+      } else if (w && !w.binary && w.data?.thumbs) {
+        const rows = Object.entries(w.data.thumbs).filter(([, d]) => !!d).map(([id, data]) => ({ id, px, data }));
         await gThumbsPutMany(rows);
-        return w.thumbs;
+        return w.data.thumbs;
       }
     }
     const g = await api('photo_thumbs', { ids, px }, { timeoutMs: 25000 });
@@ -376,16 +422,6 @@ async function fetchThumbBatch(ids, px) {
   } catch (err) {
     if (err?.code === 'bad_action') thumbsUnsupported = true;
     return {};
-  }
-}
-
-async function fillMissingThumbs(targets, px, batchSize, applyFn, isAlive) {
-  for (let i = 0; i < targets.length; i += batchSize) {
-    if (!isAlive()) return;
-    const chunk = targets.slice(i, i + batchSize);
-    const map = await fetchThumbBatch(chunk.map((t) => t.id), px);
-    if (!isAlive()) return;
-    applyFn(chunk, map);
   }
 }
 
@@ -475,10 +511,15 @@ function applyThumbStyle(el, id, px, b64) {
 }
 
 function fillMissingThumbs(targets, px, batchSize, elMap, isAlive) {
-  return (async () => {
-    for (let i = 0; i < targets.length; i += batchSize) {
+  const chunks = [];
+  for (let i = 0; i < targets.length; i += batchSize) {
+    chunks.push(targets.slice(i, i + batchSize));
+  }
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < chunks.length) {
       if (!isAlive()) return;
-      const chunk = targets.slice(i, i + batchSize);
+      const chunk = chunks[cursor++];
       const map = await fetchThumbBatch(chunk.map((t) => t.id), px);
       if (!isAlive()) return;
       for (const t of chunk) {
@@ -489,7 +530,9 @@ function fillMissingThumbs(targets, px, batchSize, elMap, isAlive) {
         else if (!el.style.backgroundImage) el.textContent = '🖼';
       }
     }
-  })().catch(() => {});
+  };
+  const concurrency = Math.min(3, chunks.length);
+  return Promise.all(Array.from({ length: concurrency }, () => worker())).catch(() => {});
 }
 
 function showAlbums() {
@@ -664,11 +707,12 @@ async function loadMorePhotos() {
     galleryNote(gallery.total ? `사진 ${gallery.total.toLocaleString('ko-KR')}장` : '이 앨범에 사진이 없습니다.');
     show($('galleryMore'), gallery.files.length < gallery.total);
 
+    const isAlive = () => my === gallery.seq && gallery.site === site;
     const missing = activeSlice
       .filter((f) => !thumbMap[f.id] && !serverKnown.has(f.id) && !String(f.id).startsWith('opt:'))
       .map((f) => ({ id: f.id, key: f.id }));
     if (missing.length) {
-      fillMissingThumbs(missing, G_GRID_PX, G_TILE_BATCH, tileEls, () => my === gallery.seq && gallery.site === site);
+      fillMissingThumbs(missing, G_GRID_PX, G_TILE_BATCH, tileEls, isAlive);
     }
   } catch (err) {
     if (my !== gallery.seq) return;
@@ -739,14 +783,18 @@ function hidePhotoViewer() {
   gallery.index = -1;
 }
 
-function rememberFull(id, mime, base64, isPreview = false) {
+function rememberFull(id, mime, base64, isPreview = false, rawBytes = null) {
   const prev = fullCache.get(id);
   if (prev && (!prev.isPreview || isPreview)) return prev;
   if (prev) {
     try { URL.revokeObjectURL(prev.url); } catch { /* ignore */ }
     fullCache.delete(id);
   }
-  const entry = { url: URL.createObjectURL(base64ToBlob(base64, mime || 'image/jpeg')), base64, isPreview: !!isPreview };
+  const blob = rawBytes?.byteLength
+    ? new Blob([rawBytes], { type: mime || 'image/jpeg' })
+    : base64ToBlob(base64, mime || 'image/jpeg');
+  const b64 = base64 || (rawBytes?.byteLength ? u8ToB64Fast(rawBytes) : '');
+  const entry = { url: URL.createObjectURL(blob), base64: b64, isPreview: !!isPreview };
   fullCache.set(id, entry);
   if (fullCache.size > G_FULL_CACHE_MAX) {
     const [oldId, old] = fullCache.entries().next().value;
@@ -756,12 +804,41 @@ function rememberFull(id, mime, base64, isPreview = false) {
   return entry;
 }
 
+async function fetchWorkerPhotoView(id) {
+  const callWorker = typeof postWorkerBinary === 'function'
+    ? () => postWorkerBinary('/photo_view', { fileId: id, px: G_VIEW_PX })
+    : (typeof postWorker === 'function' ? () => postWorker('/photo_view', { fileId: id, px: G_VIEW_PX }).then((d) => (d ? { binary: false, data: d } : null)) : null);
+  if (!callWorker) return null;
+  const w = await callWorker().catch(() => null);
+  if (w?.binary && w.bytes?.byteLength) {
+    const mime = w.mime || (typeof rustSniffImageMime === 'function' ? rustSniffImageMime(w.bytes) : 'image/jpeg');
+    const isPreview = w.headers?.get?.('x-preview') !== '0';
+    return { mime, bytes: w.bytes, base64: u8ToB64Fast(w.bytes), isPreview };
+  }
+  if (w && !w.binary && w.data?.base64) {
+    return { mime: w.data.mime || 'image/jpeg', base64: w.data.base64, isPreview: w.data.preview !== false };
+  }
+  return null;
+}
+
+// 앨범을 열었을 때 상위 사진을 Worker /photo_view 로만 조용히 예열한다(구형 서버 drive_download 폴백은 호출하지 않음)
+function warmTopAlbumViews(files, isAlive) {
+  if (photoViewUnsupported || typeof postWorkerBinary !== 'function') return;
+  const top = (files || []).slice(0, 3).filter((f) => f?.id && !String(f.id).startsWith('opt:') && !fullCache.has(f.id));
+  for (const f of top) {
+    if (!isAlive()) return;
+    fetchWorkerPhotoView(f.id).then((got) => {
+      if (!got || !isAlive()) return;
+      gIdbCachePhoto(f.id, got.mime, got.base64, got.isPreview);
+      rememberFull(f.id, got.mime, got.base64, got.isPreview, got.bytes || null);
+    }).catch(() => {});
+  }
+}
+
 async function fetchViewOrOriginal(id, requireOriginal) {
   if (!requireOriginal && !photoViewUnsupported) {
-    if (typeof postWorker === 'function') {
-      const w = await postWorker('/photo_view', { fileId: id, px: G_VIEW_PX }).catch(() => null);
-      if (w?.base64) return { mime: w.mime || 'image/jpeg', base64: w.base64, isPreview: w.preview !== false };
-    }
+    const w = await fetchWorkerPhotoView(id);
+    if (w) return w;
     try {
       const g = await api('photo_view', { fileId: id, px: G_VIEW_PX }, { timeoutMs: 30000 });
       if (g?.base64) return { mime: g.mime || 'image/jpeg', base64: g.base64, isPreview: g.preview !== false };
@@ -789,7 +866,7 @@ async function fullPhoto(id, requireOriginal = false) {
     if (cached?.base64 && (!requireOriginal || !cached.preview)) return rememberFull(id, cached.mime, cached.base64, !!cached.preview);
     const got = await fetchViewOrOriginal(id, requireOriginal);
     gIdbCachePhoto(id, got.mime, got.base64, got.isPreview);
-    return rememberFull(id, got.mime, got.base64, got.isPreview);
+    return rememberFull(id, got.mime, got.base64, got.isPreview, got.bytes || null);
   })().finally(() => fullInflight.delete(inflightKey));
   fullInflight.set(inflightKey, job);
   return job;
@@ -801,14 +878,26 @@ async function showPhoto(i) {
   gallery.index = i;
   resetZoom();
   const img = $('pvImg');
-  const previewThumb = thumbMemData.get(f.id) || f.thumb || '';
-  if (previewThumb) img.src = `data:${gThumbMime(previewThumb)};base64,${previewThumb}`;   // 큰 사진이 올 때까지 작은 그림을 먼저
-  else img.removeAttribute('src');
+  const fastHit = fullCache.get(f.id);
+  if (fastHit?.url) {
+    img.src = fastHit.url;
+  } else {
+    const blobThumb = thumbUrlMap.get(gThumbKey(f.id, G_GRID_PX)) || thumbUrlMap.get(gThumbKey(f.id, G_COVER_PX));
+    const previewThumb = thumbMemData.get(f.id) || f.thumb || '';
+    if (blobThumb?.url) img.src = blobThumb.url;
+    else if (previewThumb) img.src = `data:${gThumbMime(previewThumb)};base64,${previewThumb}`;   // 큰 사진이 올 때까지 작은 그림을 먼저
+    else img.removeAttribute('src');
+  }
   img.alt = f.name;
   $('pvCount').textContent = `${i + 1} / ${gallery.total}`;
   $('pvInfo').textContent = [photoLabel(f.name), f.updated, f.name].filter(Boolean).join(' · ');
   show($('pvPrev'), i > 0);
   show($('pvNext'), i < gallery.total - 1);
+  if (i + 1 >= gallery.files.length - 4) loadMorePhotos();   // 끝에 가까우면 다음 사진 목록을 미리
+  const next = gallery.files[i + 1];
+  const prev = gallery.files[i - 1];
+  if (next) fullPhoto(next.id, false).catch(() => {});   // 현재 사진 요청과 동시에 앞뒤 사진도 병렬로 미리 받아 넘길 때 0ms 로 보이게
+  if (prev) fullPhoto(prev.id, false).catch(() => {});
   try {
     const full = await fullPhoto(f.id, false);
     if (gallery.index === i) img.src = full.url;
@@ -816,11 +905,6 @@ async function showPhoto(i) {
     if (err.isAuth) { hidePhotoViewer(); signOut(); return; }
     if (gallery.index === i) $('pvInfo').textContent = `큰 사진을 받지 못했습니다: ${err.message}`;
   }
-  if (i + 1 >= gallery.files.length - 4) loadMorePhotos();   // 끝에 가까우면 다음 사진 목록을 미리
-  const next = gallery.files[i + 1];
-  const prev = gallery.files[i - 1];
-  if (next) fullPhoto(next.id, false).catch(() => {});   // 앞뒤 사진을 미리 받아 넘길 때 바로 보이게
-  if (prev) fullPhoto(prev.id, false).catch(() => {});
 }
 
 function stepPhoto(d) {

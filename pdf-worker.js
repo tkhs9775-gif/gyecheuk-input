@@ -3,27 +3,57 @@
 const V = new URL(self.location.href).searchParams.get('v') || '-';
 
 class OffscreenCanvasFactory {
+  constructor({ enableHWA = false } = {}) {
+    this._enableHWA = enableHWA;
+  }
   create(w, h) {
     const canvas = new OffscreenCanvas(Math.max(1, Math.ceil(w)), Math.max(1, Math.ceil(h)));
-    return { canvas, context: canvas.getContext('2d') };
+    return { canvas, context: canvas.getContext('2d', { willReadFrequently: !this._enableHWA }) };
   }
   reset(entry, w, h) {
     entry.canvas.width = Math.max(1, Math.ceil(w));
     entry.canvas.height = Math.max(1, Math.ceil(h));
   }
   destroy(entry) {
+    if (!entry?.canvas) return;
     entry.canvas.width = 0;
     entry.canvas.height = 0;
+    entry.canvas = null;
+    entry.context = null;
   }
 }
 
+class NoopFilterFactory {
+  constructor() {}
+  addFilter() { return 'none'; }
+  addHCMFilter() { return 'none'; }
+  addAlphaFilter() { return 'none'; }
+  addLuminosityFilter() { return 'none'; }
+  addHighlightHCMFilter() { return 'none'; }
+  destroy() {}
+}
+
+const CMAP_URL = new URL('./vendor/cmaps/', self.location.href).href;
+const STANDARD_FONT_URL = new URL('./vendor/standard_fonts/', self.location.href).href;
+
 let libP = null;
+let nestedPdfWorker = null;
 async function ensureLib() {
   if (!libP) {
     libP = import(`./vendor/pdf4.min.js?v=${V}`).then(() => {
       const lib = globalThis.pdfjsLib;
       if (!lib?.getDocument) throw new Error('pdf.js load failed in worker');
-      lib.GlobalWorkerOptions.workerSrc = new URL(`./vendor/pdf4.worker.min.js?v=${V}`, self.location.href).href;
+      const workerUrl = new URL(`./vendor/pdf4.worker.min.js?v=${V}`, self.location.href).href;
+      if (!nestedPdfWorker && typeof Worker !== 'undefined') {
+        try {
+          nestedPdfWorker = new Worker(workerUrl, { type: 'module' });
+          lib.GlobalWorkerOptions.workerPort = nestedPdfWorker;
+        } catch {
+          lib.GlobalWorkerOptions.workerSrc = workerUrl;
+        }
+      } else if (!lib.GlobalWorkerOptions.workerPort) {
+        lib.GlobalWorkerOptions.workerSrc = workerUrl;
+      }
       return lib;
     }).catch((err) => {
       libP = null;
@@ -151,7 +181,13 @@ self.onmessage = async ({ data }) => {
       const opts = {
         data: data.bytes,
         isEvalSupported: false,
+        CanvasFactory: OffscreenCanvasFactory,
         canvasFactory: new OffscreenCanvasFactory(),
+        FilterFactory: NoopFilterFactory,
+        cMapUrl: CMAP_URL,
+        cMapPacked: true,
+        standardFontDataUrl: STANDARD_FONT_URL,
+        useWorkerFetch: true,
         ownerDocument: self.fonts ? { fonts: self.fonts, baseURI: data.baseURI } : { baseURI: data.baseURI },
         disableFontFace: !self.fonts,
       };

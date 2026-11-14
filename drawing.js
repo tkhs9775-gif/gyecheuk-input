@@ -19,7 +19,7 @@ const MAX_DRAWING_BYTES = 18 * 1024 * 1024;   // 서버 상한(base64 25,000,000
 const PREFETCH_COUNT = 8;      // 현장을 열면 미리 받아 두는 원본 도면 수(데이터 절약 모드이고 Wi-Fi 가 아닐 때)
 const PREFETCH_MAX = 24;       // 그 밖(데이터 절약 모드가 아니거나 Wi-Fi)일 때 미리 받는 수
 const PREFETCH_PARALLEL = 1;   // 동시에 1개만 미리 받는다: 2개씩 받으면 사용자가 방금 누른 도면·야장 조회가 뒤로 밀린다
-const PREFETCH_DELAY_MS = 450; // 현장 폴더를 연 직후 사용자가 바로 도면을 누를 여유 시간
+const PREFETCH_DELAY_MS = 1200; // 현장 폴더를 연 직후 사용자가 바로 도면을 누를 여유 시간(너무 일찍 시작하면 첫 도면 열기와 대역폭이 겹친다)
 const DOWNLOAD_TIMEOUT_MS = 3 * 60 * 1000;   // 도면 받기: 보내는 양은 작고 받는 양(수 MB)이 커서 기본 30초로는 느린 신호에서 끊긴다
 const LOWRES_DPR = 0.5;        // 처음 그릴 때 먼저 보여 주는 거친 그림의 선명도(화면 1px 에 0.5px). 이어서 선명한 그림으로 바꾼다
 const NOTES_SAVE_DELAY_MS = 300;
@@ -75,15 +75,19 @@ function ensurePdfJs() {
 
 // 앱을 연 뒤 한가할 때 pdf.js 본체와 백그라운드 워커까지 미리 올려 둔다(app.js·도면 탭 진입 시): 첫 도면을 눌러도 워커 부팅·엔진 해석을 기다리지 않는다
 function warmPdfWorker() {
-  if (navigator.onLine === false || typeof getPdfWorker !== 'function') return;
-  if (getPdfWorker()) workerCall('warm').catch(() => {});
+  if (navigator.onLine === false || typeof getPdfWorker !== 'function') return false;
+  if (getPdfWorker()) {
+    workerCall('warm').catch(() => {});
+    return true;
+  }
+  return false;
 }
 function warmDrawing() {
   if (navigator.onLine === false) return;
-  ensurePdfJs().catch(() => {});
-  fetch(PDFJS_WORKER).catch(() => {});
-  fetch(`pdf-worker.js?v=${DRAWING_BUILD}`).catch(() => {});
-  warmPdfWorker();
+  if (!warmPdfWorker()) {
+    ensurePdfJs().catch(() => {});
+    fetch(PDFJS_WORKER).catch(() => {});
+  }
 }
 const ensureTesseract = () => ensureLib(TESSERACT_CDN, 'Tesseract');
 const ensurePdfLib = () => ensureLib(PDFLIB_CDN, 'PDFLib');
@@ -498,6 +502,9 @@ async function fetchDrawingNotes(fileId, callApi = api) {
 }
 
 function b64ToUint8(base64) {
+  if (typeof rustB64ToBytes === 'function') {
+    try { return rustB64ToBytes(base64); } catch { /* fallback below */ }
+  }
   if (typeof Uint8Array.fromBase64 === 'function') {
     try { return Uint8Array.fromBase64(base64); } catch { /* fallback below */ }
   }
@@ -511,6 +518,23 @@ function b64ToUint8(base64) {
 // 같은 파일을 두 번 받지 않는다: 미리 받는 중이면 그 약속을 돌려주어 열 때 기다릴 수 있다
 const prefetchInFlight = new Map();
 const downloadPdf = (fileId) => api('drive_download', { fileId }, { timeoutMs: DOWNLOAD_TIMEOUT_MS });
+
+async function downloadPdfBytes(fileId) {
+  if (typeof postWorkerBinary === 'function') {
+    try {
+      const w = await postWorkerBinary('/pdf', { fileId });
+      if (w?.binary && w.bytes?.byteLength > 4) {
+        const okPdf = typeof rustLooksLikePdf === 'function' ? rustLooksLikePdf(w.bytes) : (w.bytes[0] === 0x25 && w.bytes[1] === 0x50);
+        if (okPdf) return w.bytes;
+      } else if (w && !w.binary && typeof w.data?.base64 === 'string' && w.data.base64) {
+        return b64ToUint8(w.data.base64);
+      }
+    } catch { /* GAS 폴백 */ }
+  }
+  const dl = await downloadPdf(fileId);
+  if (typeof dl?.base64 !== 'string' || !dl.base64) throw new Error('서버에서 도면 내용을 받지 못했습니다.');
+  return b64ToUint8(dl.base64);
+}
 
 // 사용자가 직접 연 도면을 받는 동안에는 대기 중인 미리 받기를 시작하지 않는다(이미 받는 중인 것은 끝까지 받는다).
 // userLoads 가 0 이 되면 userIdle 이 풀려 미리 받기가 이어진다
@@ -535,8 +559,8 @@ function prefetchPdfToCache(fileId) {
     prefetchInFlight.set(fileId, (async () => {
       try {
         if (await getCachedPdfBytes(fileId)) return;
-        const dl = await downloadPdf(fileId);
-        if (typeof dl?.base64 === 'string' && dl.base64) await putCachedPdfBytes(fileId, b64ToUint8(dl.base64));
+        const bytes = await downloadPdfBytes(fileId);
+        if (bytes?.byteLength) await putCachedPdfBytes(fileId, bytes);
       } catch (err) {
         console.warn('도면 미리 받기 실패', err);
       } finally {
@@ -548,6 +572,7 @@ function prefetchPdfToCache(fileId) {
 }
 
 function updatePageInfo() {
+  if (drawingState.renderFailed) return;
   $('pdfPageInfo').textContent = `${drawingState.pageNum} / ${drawingState.pageCount}쪽 · 마커 ${currentPagePins().length}개`;
 }
 
@@ -580,8 +605,7 @@ let drawingSiteHint;
 
 function loadDrawingTab() {
   drawingSiteHint = SiteSort.cached((s) => SiteSort.newest(readCached(`drawings_${s}`), readCached(`drawing_folders_${s}`)));
-  ensurePdfJs().catch(() => {}); // 도면 탭 진입 즉시 PDF 엔진 + 백그라운드 워커 예열!
-  warmPdfWorker();
+  if (!warmPdfWorker()) ensurePdfJs().catch(() => {}); // 도면 탭 진입 즉시 백그라운드 워커 예열(워커 불가 시 메인 스레드 폴백)
   pruneDrawingCache().catch(() => {});
   show($('drawingSitesView'), true);
   show($('drawingFilesView'), false);
@@ -1117,9 +1141,7 @@ async function loadPdfBytes(fileId, tr = null) {
     }
     const legacyB64 = store.get(`pdf_b64_${fileId}`);
     if (legacyB64) { bytes = b64ToUint8(legacyB64); tr?.step('bytes:legacy', bytes.length); return bytes; }
-    const dl = await downloadPdf(fileId);
-    if (typeof dl.base64 !== 'string' || !dl.base64) throw new Error('서버에서 도면 내용을 받지 못했습니다.');
-    bytes = b64ToUint8(dl.base64);
+    bytes = await downloadPdfBytes(fileId);
     tr?.step('bytes:server', bytes.length);
     putCachedPdfBytes(fileId, bytes);
     return bytes;
@@ -1403,9 +1425,13 @@ function shouldUseTiles(cssW, cssH, dpr, maxBasePx = BASE_MAX_PX) {
   return cssW * cssH * dpr * dpr > maxBasePx;
 }
 
-// 순수 함수: 현재 뷰포트 안에 들어오는 512px 타일 목록(가운데 가까운 것부터 우선)
+// 순수 함수: 현재 뷰포트 안에 들어오는 512px 타일 목록(가운데 가까운 것부터 우선, Rust WASM 가속 지원)
 function planVisibleTiles({ pageW, pageH, viewLeft, viewTop, viewW, viewH, tileSize = PDF_TILE_SIZE, margin = PDF_TILE_MARGIN }) {
   if (!(pageW > 0 && pageH > 0 && viewW > 0 && viewH > 0)) return [];
+  if (typeof rustPlanTiles === 'function') {
+    const fast = rustPlanTiles({ pageW, pageH, viewLeft, viewTop, viewW, viewH, tileSize, margin });
+    if (fast) return fast;
+  }
   const x0 = Math.max(0, Math.floor((viewLeft - margin) / tileSize) * tileSize);
   const y0 = Math.max(0, Math.floor((viewTop - margin) / tileSize) * tileSize);
   const x1 = Math.min(pageW, viewLeft + viewW + margin);
@@ -1494,11 +1520,14 @@ function workerCall(type, payload, transfer = []) {
 async function openPdfFallback(bytes) {
   const pdfjsLib = await ensurePdfJs();
   // isEvalSupported:false — pdf.js 3.x 는 PDF 글꼴로 임의 JS를 실행당할 수 있다(CVE-2024-4367). 4.2.67 이상으로 올려도 이 줄은 둔다
-  const raw = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported: false }).promise;
+  const cMapUrl = new URL('./vendor/cmaps/', document.baseURI).href;
+  const standardFontDataUrl = new URL('./vendor/standard_fonts/', document.baseURI).href;
+  const raw = await pdfjsLib.getDocument({ data: bytes.slice(), isEvalSupported: false, cMapUrl, cMapPacked: true, standardFontDataUrl }).promise;
   let minMainSeq = 0;
   let destroyed = false;
   return {
     numPages: raw.numPages,
+    getPage: (pageNum) => raw.getPage(pageNum),
     async pageDims(pageNum, userRotation) {
       const page = await raw.getPage(pageNum);
       const rotation = (page.rotate + (userRotation || 0)) % 360;
@@ -1564,6 +1593,18 @@ async function openPdfDocument(bytes) {
       return {
         numPages: res.numPages,
         isWorker: true,
+        getPage: async (pageNum) => {
+          const dims = await workerCall('pageDims', { docSeq: myDocSeq, pageNum, userRotation: 0 });
+          return {
+            rotate: dims.rotate,
+            getViewport: ({ scale = 1, rotation = 0 } = {}) => {
+              const swap = ((rotation % 360) + 360) % 180 !== 0;
+              const w = (swap ? dims.height : dims.width) * scale;
+              const h = (swap ? dims.width : dims.height) * scale;
+              return { width: w, height: h, scale, rotation: (dims.rotate + rotation) % 360 };
+            },
+          };
+        },
         pageDims: (pageNum, userRotation) => workerCall('pageDims', { docSeq: myDocSeq, pageNum, userRotation }),
         renderRegion: (params) => workerCall('render', { docSeq: myDocSeq, ...params }),
         cancelBelow: (minSeq) => { try { getPdfWorker()?.postMessage({ type: 'cancelBelow', docSeq: myDocSeq, minSeq }); } catch { /* ignore */ } },
@@ -1720,6 +1761,7 @@ async function renderPdfPage(afterLayout) {
   const my = ++renderSeq;
   const tr = drawingState.openTrace;   // 도면을 열 때의 첫 그리기만 속도 기록에 적는다
   const doc = drawingState.pdfDoc;
+  drawingState.renderFailed = false;
   clearPdfTiles();
   doc.cancelBelow(my);
   if (my !== renderSeq) return;
@@ -1733,7 +1775,7 @@ async function renderPdfPage(afterLayout) {
     const nativeDpr = Math.min(window.devicePixelRatio || 1, 2);
     const cssW = Math.max(1, Math.round(dims.width * fitScale));
     const cssH = Math.max(1, Math.round(dims.height * fitScale));
-    const tiled = shouldUseTiles(cssW, cssH, nativeDpr);
+    const tiled = drawingState.scale > 1.5 && shouldUseTiles(cssW, cssH, nativeDpr);
     const backdropDpr = Math.min(
       nativeDpr,
       Math.sqrt((tiled ? BASE_MAX_PX : MAX_CANVAS_PX) / Math.max(1, cssW * cssH)),
@@ -1758,8 +1800,8 @@ async function renderPdfPage(afterLayout) {
     if (afterLayout) afterLayout();
 
     tr?.step('render:start');
-    // 화면에 아무 그림도 없고 큰 고해상도 캔버스(>600K 화소)일 때만 거친 그림을 먼저 그린다. 일반 첫 열기는 한 번에 선명하게 그려 2중 렌더링을 없앤다
-    if (fresh && backdropDpr > LOWRES_DPR && (cssW * cssH * backdropDpr * backdropDpr) > 600000) {
+    // 화면에 아무 그림도 없고 아주 큰 고해상도 캔버스(>2.2MP)일 때만 거친 그림을 먼저 그린다. 일반 첫 열기는 한 번에 선명하게 그려 2중 렌더링을 없앤다
+    if (fresh && backdropDpr > LOWRES_DPR && (cssW * cssH * backdropDpr * backdropDpr) > 2200000) {
       const low = await doc.renderRegion({
         seq: my,
         pageNum: drawingState.pageNum,
@@ -1797,6 +1839,7 @@ async function renderPdfPage(afterLayout) {
     shownKey = key;
     shownRot = rotation;
     shownSharp = true;
+    drawingState.renderFailed = false;
     tr?.step('render:swap');
     updatePageInfo();
     // 쪽 그림 저장은 화면이 다 뜬 뒤 한 박자 쉬고(그리는 시간에 끼지 않게), 그사이 다른 쪽으로 바뀌지 않았을 때만
@@ -1824,7 +1867,19 @@ async function renderPdfPage(afterLayout) {
     }
   } catch (err) {
     if (err?.name === 'RenderingCancelledException' || my !== renderSeq) return;
+    if (doc.isWorker && drawingState.rawPdfBytes) {
+      console.warn('도면 워커 그리기 실패, 기본 렌더러로 자동 복구합니다', err);
+      pdfWorkerDisabled = true;
+      resetPdfWorker();
+      try {
+        drawingState.pdfDoc = await openPdfFallback(drawingState.rawPdfBytes);
+        if (my === renderSeq) return await renderPdfPage(afterLayout);
+      } catch (fbErr) {
+        console.warn('기본 렌더러 복구 실패', fbErr);
+      }
+    }
     console.warn('도면 그리기 실패', err);
+    drawingState.renderFailed = true;
     $('pdfPageInfo').textContent = '이 쪽을 그리지 못했습니다. 확대·축소를 다시 눌러 주세요.';
   }
 }
@@ -3101,8 +3156,10 @@ const PHONE_JPEG_QUALITY = 0.85;
 
 // 앱의 갤러리 저장은 JPG만 받으므로 PDF를 쪽마다 JPG(base64)로 그린다
 async function pdfToJpegs(base64) {
-  await ensurePdfJs();
-  const doc = await pdfjsLib.getDocument({ data: b64ToUint8(base64), isEvalSupported: false }).promise;
+  const pdfjsLib = await ensurePdfJs();
+  const cMapUrl = new URL('./vendor/cmaps/', document.baseURI).href;
+  const standardFontDataUrl = new URL('./vendor/standard_fonts/', document.baseURI).href;
+  const doc = await pdfjsLib.getDocument({ data: b64ToUint8(base64), isEvalSupported: false, cMapUrl, cMapPacked: true, standardFontDataUrl }).promise;
   try {
     const out = [];
     for (let n = 1; n <= doc.numPages; n += 1) {

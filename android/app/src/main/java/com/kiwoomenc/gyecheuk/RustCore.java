@@ -21,4 +21,10 @@ public final class RustCore {
     public static native String ping();
 
     public static native String sanitizeFilename(String input);
+
+    public static native byte[] decodeBase64(String input);
+
+    public static native boolean looksLikePdf(byte[] data);
+
+    public static native String sniffImageMime(byte[] data);
 }

@@ -102,7 +102,7 @@ const networkError = (message) => Object.assign(new Error(message), { network: t
 // ---------- 읽기 우회(중계 서버 캐시) ----------
 // 자주 여는 목록은 중계 서버(worker)가 기억했다 바로 준다. 느리거나(WORKER_WAIT_MS) 안 되면 예전처럼 구글 서버에 직접 묻는다. 쓰기는 늘 구글 서버로 직접
 const CACHED_READS = new Set(['config', 'drawing_list', 'cad_list', 'photo_albums', 'photo_page']);   // worker/src/cache.js RULES 와 같다
-const SLOW_CACHED_READS = new Set(['photo_albums', 'photo_page']);   // 냉각 상태 Apps Script 첫 응답이 완료될 때까지 충분히 기다려 중복 직접 호출을 피한다
+const SLOW_CACHED_READS = new Set(['photo_albums', 'photo_page', 'drawing_list', 'cad_list']);   // 냉각 상태 Apps Script 첫 응답이 완료될 때까지 충분히 기다려 중복 직접 호출을 피한다
 const FORGET_ALL = new Set(['add_site', 'remove_site', 'add_user', 'remove_user', 'add_instrument']);
 const FORGET_SITE = new Set(['drawing_upload', 'drawing_rename']);
 const WORKER_WAIT_MS = 2500;
@@ -138,10 +138,45 @@ async function postWorker(path, payload = {}, signal) {
   return data;
 }
 
+// 중계 서버 바이너리 엔드포인트(/thumbs GKT1 묶음, /photo_view JPEG, /pdf PDF 바이트).
+// 서버가 바이너리(octet-stream·image/*·application/pdf)로 주면 Uint8Array 를 그대로 돌려주고,
+// 구버전 Worker 나 모의 시험(JSON)이 응답하면 자동으로 JSON 으로 풀어 호환성을 지킨다.
+async function postWorkerBinary(path, payload = {}, signal) {
+  await pendingForget;
+  if (!readCacheOn() || Date.now() < workerSkipUntil) return null;
+  const res = await fetch(PUSH_URL + path, {
+    method: 'POST',
+    headers: { Accept: 'application/octet-stream, image/*, application/pdf, application/json' },
+    body: JSON.stringify({ code: state.code, ...payload }),
+    signal,
+  });
+  if (res.status === 404 || res.status === 400 || res.status === 503) return null;
+  if (!res.ok) throw new Error(`worker ${res.status}`);
+  const ct = String(res.headers?.get?.('content-type') || '').toLowerCase();
+  if (ct.includes('application/octet-stream') || ct.startsWith('image/') || ct.includes('application/pdf')) {
+    const ab = await res.arrayBuffer();
+    return {
+      ok: true,
+      binary: true,
+      bytes: new Uint8Array(ab),
+      mime: ct.split(';')[0].trim(),
+      headers: res.headers,
+    };
+  }
+  let text = '';
+  let data = null;
+  try { text = await res.text(); data = JSON.parse(text); } catch (e) { if (e.name === 'AbortError') throw e; data = null; }
+  if (!data || typeof data !== 'object' || !data.ok) return null;
+  return { ok: true, binary: false, data, headers: res.headers };
+}
+
+const READ_REQUIRED_ARRAY = { config: 'sites', drawing_list: 'files', cad_list: 'files', photo_albums: 'albums', photo_page: 'files' };
+
 // worker 답을 waitMs 까지 기다리고, 그 안에 안 오거나 실패하면 구글 서버에 직접 묻는다(그사이 worker 답이 먼저 오면 그걸 쓴다)
-async function workerFirst(body, signal, direct, waitMs = WORKER_WAIT_MS) {
+async function workerFirst(body, signal, direct, waitMs = WORKER_WAIT_MS, action = '') {
   await pendingForget;   // 방금 바꾼 것을 알리는 중이면 끝난 뒤에 읽는다(내가 올린 도면이 옛 목록에 빠져 보이지 않게)
   if (Date.now() < workerSkipUntil) return direct();
+  const reqField = READ_REQUIRED_ARRAY[action];
   return new Promise((resolve, reject) => {
     let gas = null;
     const toGas = () => { if (!gas) { gas = direct(); gas.then(resolve, reject); } };
@@ -149,6 +184,7 @@ async function workerFirst(body, signal, direct, waitMs = WORKER_WAIT_MS) {
     postJson(PUSH_URL + '/read', body, signal)
       .then((r) => {
         if (!r.res.ok || !r.data || typeof r.data !== 'object') throw new Error(`worker ${r.res.status}`);
+        if (r.data.ok && reqField && !Array.isArray(r.data[reqField])) throw new Error('worker incomplete');
         clearTimeout(timer);
         resolve(r);
       })
@@ -186,7 +222,7 @@ async function api(action, payload = {}, opts = {}) {
   try {
     const direct = () => postJson(API_URL, body, ctl.signal);
     const waitMs = SLOW_CACHED_READS.has(action) ? WORKER_SLOW_WAIT_MS : WORKER_WAIT_MS;
-    ({ data, got } = await (readCacheOn() && CACHED_READS.has(action) ? workerFirst(body, ctl.signal, direct, waitMs) : direct()));
+    ({ data, got } = await (readCacheOn() && CACHED_READS.has(action) ? workerFirst(body, ctl.signal, direct, waitMs, action) : direct()));
     // Apps Script answers JSON even for its own errors; an HTML page (sign-in, quota, broken deployment) is not a verdict on the input.
     if (!data || typeof data !== 'object') throw networkError('서버 응답이 올바르지 않습니다(배포 확인).');
   } catch (err) {

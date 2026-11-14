@@ -12,7 +12,7 @@ try {
     New-Item -ItemType Directory -Force -Path $Arm64Out | Out-Null
     Copy-Item "target\aarch64-linux-android\release\libgyecheuk_core.so" (Join-Path $Arm64Out "libgyecheuk_core.so") -Force
 
-    Write-Host "[2/2] Building x86_64 (x86_64-linux-android)..." -ForegroundColor Cyan
+    Write-Host "[2/3] Building x86_64 (x86_64-linux-android)..." -ForegroundColor Cyan
     cargo build --release --target x86_64-linux-android
     if ($LASTEXITCODE -ne 0) { throw "x86_64 build failed" }
 
@@ -20,7 +20,15 @@ try {
     New-Item -ItemType Directory -Force -Path $X64Out | Out-Null
     Copy-Item "target\x86_64-linux-android\release\libgyecheuk_core.so" (Join-Path $X64Out "libgyecheuk_core.so") -Force
 
-    Write-Host "Done! jniLibs updated at: $JniDir" -ForegroundColor Green
+    Write-Host "[3/3] Building WebAssembly (wasm32-unknown-unknown)..." -ForegroundColor Cyan
+    cargo build --release --target wasm32-unknown-unknown
+    if ($LASTEXITCODE -ne 0) { throw "wasm32 build failed" }
+
+    $VendorDir = Join-Path (Split-Path -Parent (Split-Path -Parent $CoreDir)) "vendor"
+    New-Item -ItemType Directory -Force -Path $VendorDir | Out-Null
+    Copy-Item "target\wasm32-unknown-unknown\release\gyecheuk_core.wasm" (Join-Path $VendorDir "gyecheuk_core.wasm") -Force
+
+    Write-Host "Done! jniLibs and gyecheuk_core.wasm updated." -ForegroundColor Green
 } finally {
     Pop-Location
 }
