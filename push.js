@@ -13,11 +13,12 @@ function buildNotice(action, payload) {
   const who = payload.user || en.user || '누군가';
   if (action === 'save') {
     return en.issue
-      ? { kind: 'issue', who, title: `⚠️ 이상보고 · ${site}`, body: `${who}님이 ${site}에서 ${en.id} ${en.issue} 보고` }
-      : { kind: 'input', who, title: `계측 입력 · ${site}`, body: `${who}님이 ${site}에서 ${en.id} 계측값 입력` };
+      ? { kind: 'issue', who, site: en.site, title: `⚠️ 이상보고 · ${site}`, body: `${who}님이 ${site}에서 ${en.id} ${en.issue} 보고` }
+      : { kind: 'input', who, site: en.site, title: `계측 입력 · ${site}`, body: `${who}님이 ${site}에서 ${en.id} 계측값 입력` };
   }
-  if (action === 'photo') return { kind: 'input', who, title: `사진 등록 · ${site}`, body: `${who}님이 ${site}에서 사진 ${(payload.photos ?? []).length}장 등록` };
-  if (action === 'survey') return { kind: 'input', who, title: `측량파일 · ${site}`, body: `${who}님이 ${site}에서 측량파일 등록` };
+  // kind 를 photo·survey·drawing 으로 나눠야 알림을 눌렀을 때 그 화면(갤러리·도면)으로 간다. PC 팝업은 모르는 kind 를 '현장 입력'으로 보여 준다
+  if (action === 'photo') return { kind: 'photo', who, site: en.site, title: `사진 등록 · ${site}`, body: `${who}님이 ${site}에서 사진 ${(payload.photos ?? []).length}장 등록` };
+  if (action === 'survey') return { kind: 'survey', who, site: en.site, title: `측량파일 · ${site}`, body: `${who}님이 ${site}에서 측량파일 등록` };
   if (action === 'memo_add') return { kind: 'memo', who, date: payload.date, title: `📌 상황 메모 · ${dayLabel(payload.date)}`, body: `${who} 님이 새 보고를 남겼습니다 · 눌러서 확인해 주세요` }   // 내용은 알림에 안 보이게(앱에서 열어야 확인 기록이 남는다);
   if (action === 'schedule_add') {
     const items = payload.items ?? [];
@@ -27,8 +28,8 @@ function buildNotice(action, payload) {
   }
   if (action === 'schedule_update') return { kind: 'schedule', who, date: payload.item?.date, title: `✏️ 일정 수정 · ${dayLabel(payload.item?.date)}`, body: clip(`${who}: ${payload.item?.title || ''}`) };
   // 도면 메모: 보낼지 말지(실시간 저장 빼기·10분 간격)는 announceSaved 에서 Rust 코어가 정한다
-  if (action === 'drawing_notes_save') return { kind: 'input', who, title: `📐 도면 저장 · ${payload.site || '현장 미지정'}`, body: clip(`${who}님이 ${payload.fileName || '도면'}에 기록을 저장했습니다`) };
-  if (action === 'contact_save') return { kind: 'contact', who, title: `🪪 명함 등록 · ${payload.contact?.site || ''}`, body: clip(`${who}님이 ${payload.contact?.name || '현장 담당자'} 명함을 올렸습니다`) };
+  if (action === 'drawing_notes_save') return { kind: 'drawing', who, site: payload.site, fileId: payload.fileId, title: `📐 도면 저장 · ${payload.site || '현장 미지정'}`, body: clip(`${who}님이 ${payload.fileName || '도면'}에 기록을 저장했습니다`) };
+  if (action === 'contact_save') return { kind: 'contact', who, site: payload.contact?.site, title: `🪪 명함 등록 · ${payload.contact?.site || ''}`, body: clip(`${who}님이 ${payload.contact?.name || '현장 담당자'} 명함을 올렸습니다`) };
   return null;
 }
 
@@ -94,11 +95,36 @@ function announceSaved(action, payload, result) {
   pushPost('/notify', { ...notice, skipToken: pushToken() }).catch(() => {});
 }
 
-// 알림을 눌러 앱이 열렸으면 그 날짜 창을 연다(앱이 켜져 있을 때 누르면 안드로이드가 onPushOpen 을 부른다)
+// 알림을 누르면 그 알림이 가리키는 곳을 연다: 메모·일정 = 그 날짜 창, 사진 = 그 현장 갤러리, 도면 = 그 도면, 명함 = 그 현장 도면 폴더(명함이 위에 보인다).
+// APK 는 종류(kind)·날짜만 넘겨주므로(재설치 없이 되게), 현장·도면은 중계 서버의 최근 알림 목록에서 같은 종류의 가장 최근 것으로 찾는다.
+// ponytail: 같은 종류 알림이 여러 개 쌓였을 때 옛 알림을 눌러도 가장 최근 것이 열린다. 정확히 그 알림이어야 하면 APK 가 알림 번호(ts)를 넘기게 바꾼다
+const PUSH_OPEN_HASH = { photo: '#gallery', drawing: '#drawing', contact: '#drawing' };
+function pushGoHash(hash) {
+  if (location.hash === hash) return Promise.resolve();
+  const moved = new Promise((resolve) => window.addEventListener('hashchange', resolve, { once: true }));
+  location.hash = hash;
+  return moved;   // route()가 탭을 먼저 그린 뒤에 그 안을 연다
+}
+async function pushLatestNotice(kind) {
+  try {
+    const r = await pushPost('/recent', { since: 0 });
+    return (r?.notices || []).filter((n) => n.kind === kind && n.site).pop() || null;
+  } catch { return null; }   // 신호가 없으면 탭까지만 연다
+}
+async function pushOpenTarget(kind) {
+  await pushGoHash(PUSH_OPEN_HASH[kind]);   // 탭은 바로 연다(찾는 동안 첫 화면에 머물지 않게)
+  const n = await pushLatestNotice(kind);
+  if (!n) return;
+  if (kind === 'photo') { if (typeof openAlbum === 'function') openAlbum(n.site); return; }
+  if (typeof openRecentDrawing === 'function') openRecentDrawing({ site: n.site, fileId: kind === 'drawing' ? n.fileId || '' : '' });
+}
+// 앱이 꺼져 있던 때는 첫 화면이 다 뜬 뒤(schedule.js), 켜져 있을 때 누르면 안드로이드가 onPushOpen 을 부른다
 function takePushOpen() {
   let o = null;
   try { o = JSON.parse(window.AndroidPush?.takeOpen?.() || 'null'); } catch { o = null; }
-  if (o && /^\d{4}-\d{2}-\d{2}$/.test(o.date || '') && typeof schedOpenDay === 'function') schedOpenDay(o.date);
+  if (!o) return;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(o.date || '') && typeof schedOpenDay === 'function') schedOpenDay(o.date);
+  else if (PUSH_OPEN_HASH[o.kind]) pushOpenTarget(o.kind).catch(() => {});
 }
 if (typeof window !== 'undefined') window.onPushOpen = () => takePushOpen();
 
