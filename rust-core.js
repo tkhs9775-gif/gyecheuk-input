@@ -467,8 +467,21 @@
     return wasm.wasm_drawing_notice_due(isLive ? 1 : 0, nowMs, lastMs || 0) === 1;
   }
 
+  // 도면 동그라미 규칙(Rust 판단): 값 칸 수, 값을 도면에 늘 펼칠지. wasm 이 없으면 같은 규칙으로 판단
+  const typeCode = (type) => String(type || '').charCodeAt(0) || 0;
+  function rustPinValueCells(type) {
+    if (wasm && typeof wasm.wasm_pin_value_cells === 'function') return wasm.wasm_pin_value_cells(typeCode(type));
+    return type === 'L' ? 3 : 1;
+  }
+  function rustPinValuesOnDrawing(type) {
+    if (wasm && typeof wasm.wasm_pin_values_on_drawing === 'function') return wasm.wasm_pin_values_on_drawing(typeCode(type)) === 1;
+    return type !== 'L';
+  }
+
   const api = {
     drawingNoticeDue: rustDrawingNoticeDue,
+    pinValueCells: rustPinValueCells,
+    pinValuesOnDrawing: rustPinValuesOnDrawing,
     ensure: ensureRustWasm,
     ensureRustWasm,
     tryInstantiateSync,

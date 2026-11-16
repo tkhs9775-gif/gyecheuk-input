@@ -821,21 +821,21 @@ body.cad-open { overflow: hidden; }
 
 /* 하중계·변형률계 묶음(v87 새 디자인): 흰 카드 + 파란 테두리, 단 머리는 파랑, 신규설치 띠는 주황. PDF 그림(drawing.js drawGroupTag)과 같은 모양.
    어두운 테마의 .pdf-pin-tag 배경 규칙(theme.css)을 이기도록 .pin-layer 를 앞에 붙인다 */
-.pin-layer .pdf-pin-tag.grp {
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp {
   display: flex; flex-direction: column; padding: 0; overflow: hidden; max-width: none; pointer-events: auto;
   background: #FFFFFF; color: #10264F; border: 1.5px solid #1F62A8; border-radius: 8px; font-size: 11px;
   box-shadow: 0 4px 14px rgba(31, 98, 168, .3);
 }
-.pin-layer .pdf-pin-tag.grp .grp-note { background: linear-gradient(90deg, #FF8A1F, #F2600C); color: #FFF; text-align: center; padding: 3px 8px; font-weight: 800; letter-spacing: .2px; }
-.pin-layer .pdf-pin-tag.grp .grp-row { display: flex; height: 20px; align-items: stretch; border-top: 1px solid #D3E0F2; }
-.pin-layer .pdf-pin-tag.grp .grp-row:first-child, .pin-layer .pdf-pin-tag.grp .grp-note + .grp-row { border-top: 0; }
-.pin-layer .pdf-pin-tag.grp .grp-row:nth-child(even) { background: #F3F7FD; }
-.pin-layer .pdf-pin-tag.grp .grp-row.active { background: #FFF1DE; }
-.pin-layer .pdf-pin-tag.grp i { font-style: normal; width: 28px; background: #1F62A8; color: #FFF; font-size: 10px; font-weight: 800; display: grid; place-items: center; }
-.pin-layer .pdf-pin-tag.grp .grp-row.active i { background: #F2600C; }
-.pin-layer .pdf-pin-tag.grp b { width: 66px; font-weight: 800; color: #10264F; display: grid; place-items: center; border-left: 1px solid #D3E0F2; }
-.pin-layer .pdf-pin-tag.grp.strain b { width: 50px; }
-.pin-layer .pdf-pin-tag.grp i + b, .pin-layer .pdf-pin-tag.grp .grp-row > b:first-child { border-left: 0; }
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp .grp-note { background: linear-gradient(90deg, #FF8A1F, #F2600C); color: #FFF; text-align: center; padding: 3px 8px; font-weight: 800; letter-spacing: .2px; }
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp .grp-row { display: flex; height: 20px; align-items: stretch; border-top: 1px solid #D3E0F2; }
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp .grp-row:first-child, .pin-layer .pdf-pin-tag.grp .grp-note + .grp-row { border-top: 0; }
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp .grp-row:nth-child(even) { background: #F3F7FD; }
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp .grp-row.active { background: #FFF1DE; }
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp i { font-style: normal; width: 28px; background: #1F62A8; color: #FFF; font-size: 10px; font-weight: 800; display: grid; place-items: center; }
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp .grp-row.active i { background: #F2600C; }
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp b { width: 66px; font-weight: 800; color: #10264F; display: grid; place-items: center; border-left: 1px solid #D3E0F2; }
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp.strain b { width: 50px; }
+:is(.pin-layer, .pin-group-view) .pdf-pin-tag.grp i + b, .pin-layer .pdf-pin-tag.grp .grp-row > b:first-child { border-left: 0; }
 
 /* 메모 상자: 단 선택(알약 버튼) · 변형률계 값 칸 3개 · 신규설치 표시 한 줄. 어두운 테마에서도 읽히게 글자색은 var(--text), 바탕은 반투명 파랑 */
 .pin-levels { display: flex; gap: 6px; overflow-x: auto; margin: 6px 0 8px; padding-bottom: 2px; scrollbar-width: none; }
@@ -871,3 +871,12 @@ body.cad-open { overflow: hidden; }
 .pin-key.freq { margin-left: 10px; border: 2px dashed #F2600C; background: rgba(242, 96, 12, .08); color: #F2600C; font-size: 17px; }
 .pin-key.freq:active { background: #F2600C; color: #FFF; }
 .pin-key.freq.chip { border-style: solid; background: linear-gradient(180deg, #FF8A1F, #F2600C); color: #FFF; font-size: 16px; box-shadow: 0 3px 10px rgba(242, 96, 12, .35); }
+
+/* 하중계 값 팝업(drawing.js renderPinGroupUi): 도면에 펼치지 않는 묶음을 메모 상자 안에 크게 보인다 */
+.pin-group-view { margin: 4px 0 8px; }
+.pin-group-view .pdf-pin-tag.grp { position: static; transform: none; font-size: 14px; width: fit-content; max-width: 100%; }
+.pin-group-view .pdf-pin-tag.grp .grp-row { height: 30px; }
+.pin-group-view .pdf-pin-tag.grp i { width: 40px; font-size: 13px; }
+.pin-group-view .pdf-pin-tag.grp b, .pin-group-view .pdf-pin-tag.grp.strain b { width: 84px; }
+/* 도면에 값을 펼치지 않는 동그라미(하중계): 값이 있으면 오른쪽 위에 초록 점 */
+.pdf-pin.has-values::after { content: ''; position: absolute; top: -2px; right: -2px; width: 9px; height: 9px; border-radius: 50%; background: #22C55E; border: 1.5px solid #FFF; }

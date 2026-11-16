@@ -207,7 +207,11 @@ function strainCells(text) {
   return Array.from({ length: STRAIN_CELLS }, (_, i) => (parts[i] || '').trim());
 }
 const joinStrainCells = (cells) => cells.map((c) => String(c).trim()).join('/').replace(/\/+$/, '');
-const rowCells = (pin) => (pin.type === 'S' ? strainCells(pin.text) : [String(pin.text ?? '').trim()]);
+// 칸 수·도면 위 펼침 규칙은 Rust 코어(rust-core.js → lib.rs pin_value_cells / pin_values_on_drawing)가 정한다: 하중계(L) 3칸·누르면 팝업
+const rustCore = () => (typeof RustCore !== 'undefined' ? RustCore : globalThis.RustCore || null);
+const isMultiCell = (type) => (rustCore()?.pinValueCells ? rustCore().pinValueCells(type) : (type === 'L' ? 3 : 1)) > 1;
+const valuesOnDrawing = (type) => (rustCore()?.pinValuesOnDrawing ? rustCore().pinValuesOnDrawing(type) : type !== 'L');
+const rowCells = (pin) => (isMultiCell(pin.type) ? strainCells(pin.text) : [String(pin.text ?? '').trim()]);
 
 // 손글씨(OCR)로 읽은 글을 변형률계 칸에 넣는다: 공백으로 나뉜 값마다 한 칸씩, 첫 빈 칸부터(값이 남은 칸보다 많으면 앞으로 당겨 넣고, 칸이 다 찼으면 뒤쪽 칸을 바꾼다)
 function placeOcrInCells(cells, text) {
@@ -2110,7 +2114,9 @@ function renderPagePins() {
     el.style.top = `${(at.y * 100).toFixed(2)}%`;
     el.textContent = label;
     if (item.rows) {
-      if (itemHasTag(item)) el.appendChild(buildGroupTag(item));
+      // 하중계처럼 상자가 큰 계측기는 도면에 펼치지 않는다(옆 동그라미를 가림). 값이 있으면 점만 찍고, 누르면 팝업에 보인다
+      if (!valuesOnDrawing(pin.type)) el.classList.toggle('has-values', itemHasTag(item));
+      else if (itemHasTag(item)) el.appendChild(buildGroupTag(item));
     } else if (pin.text) {
       const tag = document.createElement('span');
       tag.className = 'pdf-pin-tag';
@@ -2129,7 +2135,7 @@ function renderPagePins() {
 // 화면용 묶음 상자(PDF 그림과 같은 모양): (신규설치 줄) + 단마다 한 줄, 변형률계는 칸 3개
 function buildGroupTag(item) {
   const box = document.createElement('span');
-  box.className = `pdf-pin-tag grp${item.anchor.type === 'S' ? ' strain' : ''}`;
+  box.className = `pdf-pin-tag grp${isMultiCell(item.anchor.type) ? ' strain' : ''}`;
   const note = liveNote(item.anchor);
   if (note) {
     const n = document.createElement('span');
@@ -2209,7 +2215,7 @@ const levelButtonText = (row) => `${row.level ?? ''}단${rowCells(row.pin).some(
 
 function renderPinGroupUi(pin) {
   const grouped = GROUP_TYPES.includes(pin.type);
-  const strain = pin.type === 'S';
+  const strain = isMultiCell(pin.type);   // 칸 3개로 적는 계측기(하중계)
   const item = grouped ? itemOfPin(pin) : null;
   // 단 선택줄: 단마다 '1단 값' 버튼, 마지막에 ＋단(다음 단 추가)
   const levels = $('pinLevels');
@@ -2234,12 +2240,13 @@ function renderPinGroupUi(pin) {
       levels.appendChild(add);
     }
   }
-  // 변형률계: 키보드 칸 대신 칸 3개
+  // 하중계: 키보드 칸 대신 칸 3개
   show($('pinCells'), strain);
   $('pinMemoBox').classList.toggle('strain-mode', strain);   // 변형률계는 칸으로 적으므로 안내 글·손글씨 칸을 접어 상자를 작게
   show($('pinMemoKeyboard'), !strain);
   $('pinMemoOpenPad').textContent = strain ? '✍️ 손글씨로 입력 — 빈 칸에 차례로 들어갑니다' : '✍️ 펜 필기(OCR)';
   if (strain) strainCells(pin.text).forEach((c, i) => { $('pinCells').children[i].value = c; });
+  renderPinGroupView(pin);
   // 신규설치 표시
   show($('pinNoteBar'), grouped);
   if (!grouped) setKeypadOpen(false);
@@ -2261,7 +2268,7 @@ function addLevel(item) {
   saveDrawingNotesQuiet();
 }
 
-// 변형률계 칸 입력: 칸을 'a/b/c' 로 합쳐 값으로 저장한다. 한 칸이 6자리(숫자)가 되면 다음 칸으로
+// 하중계 칸 입력: 칸을 'a/b/c' 로 합쳐 값으로 저장한다. 한 칸이 6자리(숫자)가 되면 다음 칸으로
 function onStrainCellInput(e) {
   const inputs = [...$('pinCells').querySelectorAll('input')];
   const i = inputs.indexOf(e.target);
@@ -2269,7 +2276,15 @@ function onStrainCellInput(e) {
   if (i < inputs.length - 1 && e.target.value.replace(/\D/g, '').length >= 6) inputs[i + 1].focus();
 }
 
+// 도면에 펼치지 않는 계측기(하중계): 팝업 안에 모든 단 값·신규설치를 한 번에 보인다(사무실에서 옮겨 적기)
+function renderPinGroupView(pin) {
+  const item = GROUP_TYPES.includes(pin.type) && !valuesOnDrawing(pin.type) ? itemOfPin(pin) : null;
+  show($('pinGroupView'), !!item);
+  $('pinGroupView').replaceChildren(...(item ? [buildGroupTag(item)] : []));
+}
+
 function renderNoteBar(pin) {
+  renderPinGroupView(pin);
   const note = liveNote(noteOwner(pin));
   for (const id of ['pinNoteView', 'pinKeypadPreview']) {
     const view = $(id);
@@ -2338,7 +2353,7 @@ function renderPinReadings(pin) {
   const box = $('pinMemoPrev');
   if (typeof readingTiles !== 'function') { show(box, false); return; }
   const t = readingTiles(pin, todayKst());
-  if (pin.type === 'S') { t.delta = null; t.cumulative = null; }   // 값이 3칸이라 첫 숫자만 비교하면 틀린 변화가 나온다
+  if (isMultiCell(pin.type)) { t.delta = null; t.cumulative = null; }   // 값이 3칸이라 첫 숫자만 비교하면 틀린 변화가 나온다
   $('pinMemoKeyboard').placeholder = t.prev && !t.current ? '오늘 값을 입력하세요' : KEYBOARD_PLACEHOLDER;
   show(box, !!t.prev);
   if (!t.prev) { box.replaceChildren(); return; }
@@ -2407,7 +2422,7 @@ function updateActivePinText(newText, { keepCells = false } = {}) {
   $('pinMemoDisplay').textContent = newText;
   $('pinMemoKeyboard').value = newText;
   $('pinMemoKeyboard').dataset.stale = '';
-  if (pin.type === 'S' && !keepCells) strainCells(newText).forEach((c, i) => { $('pinCells').children[i].value = c; });   // 손글씨 판독 등 칸 밖에서 들어온 값
+  if (isMultiCell(pin.type) && !keepCells) strainCells(newText).forEach((c, i) => { $('pinCells').children[i].value = c; });   // 손글씨 판독 등 칸 밖에서 들어온 값
   renderPinReadings(next);
   refreshLevelButtons(next);
   renderPagePins();
@@ -2420,6 +2435,7 @@ function refreshLevelButtons(pin) {
   if (!item) return;
   const buttons = $('pinLevels').querySelectorAll('.pin-level-btn:not(.add)');
   item.rows.forEach((row, i) => { if (buttons[i]) buttons[i].textContent = levelButtonText(row); });
+  renderPinGroupView(pin);   // 팝업 안 단별 값도 따라 바꾼다
 }
 
 function deleteActivePin() {
@@ -2617,7 +2633,7 @@ function applyOcrTextAndClose(text) {
   const clean = String(text || '').trim();
   if (!clean) return;
   const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
-  if (pin?.type === 'S') {
+  if (pin && isMultiCell(pin.type)) {
     // 변형률계: 판독한 값은 오늘 적던 칸 다음의 첫 빈 칸에 넣는다(다 찼으면 마지막 칸을 바꾼다)
     updateActivePinText(joinStrainCells(placeOcrInCells(strainCells(pin.date === todayKst() ? pin.text : ''), clean)));
     $('ocrPadDialog').close();
@@ -2840,7 +2856,7 @@ function annTagBox(pin, textW, widthPx, heightPx) {
 
 // 묶음 상자 자리(원 아래, 쪽 안으로 당긴다). 줄이 몇 개든 높이는 줄 수 × ANN_ROW_H (+ 신규설치 줄)
 function annGroupBox(item, measure, widthPx, heightPx) {
-  const isS = item.anchor.type === 'S';
+  const isS = isMultiCell(item.anchor.type);   // 칸 3개 계측기(하중계)
   const head = item.rows.some((r) => r.level !== null) ? ANN_HEAD_W : 0;
   const cells = isS ? STRAIN_CELLS : 1;
   const cellW = isS ? ANN_CELL_W_S : ANN_CELL_W_L;
@@ -3565,4 +3581,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES, annotationBounds, placeOcrInCells, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState, pickEvictions, cacheBudgetOf, resolveNotesResponse, shouldUseTiles, planVisibleTiles };
+if (typeof module !== 'undefined') module.exports = { isMultiCell, valuesOnDrawing, rowCells, buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES, annotationBounds, placeOcrInCells, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState, pickEvictions, cacheBudgetOf, resolveNotesResponse, shouldUseTiles, planVisibleTiles };

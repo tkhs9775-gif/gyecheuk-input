@@ -682,6 +682,46 @@ pub extern "C" fn wasm_drawing_notice_due(is_live: u32, now_ms: f64, last_ms: f6
     drawing_notice_due(is_live != 0, now_ms, last_ms) as u32
 }
 
+/// 도면 동그라미 값 칸 수: 하중계(L)는 단마다 3칸, 그 밖(변형률계 S 포함)은 1칸
+pub fn pin_value_cells(type_code: u8) -> u32 {
+    if type_code == b'L' { 3 } else { 1 }
+}
+
+/// 값을 도면 위에 늘 펼쳐 둘지. 하중계(L)는 상자가 커서 옆 동그라미를 가리므로 펼치지 않고, 누르면 팝업으로 보인다
+pub fn pin_values_on_drawing(type_code: u8) -> bool {
+    type_code != b'L'
+}
+
+#[no_mangle]
+pub extern "C" fn wasm_pin_value_cells(type_code: u32) -> u32 {
+    pin_value_cells(type_code as u8)
+}
+
+#[no_mangle]
+pub extern "C" fn wasm_pin_values_on_drawing(type_code: u32) -> u32 {
+    pin_values_on_drawing(type_code as u8) as u32
+}
+
+#[cfg(test)]
+mod pin_rule_tests {
+    use super::*;
+
+    #[test]
+    fn load_cell_has_three_cells_strain_has_one() {
+        assert_eq!(pin_value_cells(b'L'), 3);
+        assert_eq!(pin_value_cells(b'S'), 1);
+        assert_eq!(pin_value_cells(b'W'), 1);
+        assert_eq!(wasm_pin_value_cells(b'L' as u32), 3);
+    }
+
+    #[test]
+    fn load_cell_values_only_in_popup() {
+        assert!(!pin_values_on_drawing(b'L'));
+        assert!(pin_values_on_drawing(b'S'));
+        assert_eq!(wasm_pin_values_on_drawing(b'L' as u32), 0);
+    }
+}
+
 #[cfg(test)]
 mod drawing_notice_tests {
     use super::*;

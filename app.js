@@ -18,6 +18,8 @@ const MIN_TIMEOUT_MS = 30 * 1000;
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const BYTES_PER_MS = 15;   // 느린 신호를 초당 약 15KB로 보고 시간 제한을 잡는다
 const BUILD = new URL(document.currentScript.src).searchParams.get('v') ?? '-';
+// 화면에 보이는 버전: 배포 횟수 100 → v1.00, 123 → v1.23 (?v= 는 횟수 숫자 그대로 둔다: 새 파일 받기에 쓴다)
+const VERSION_LABEL = /^\d+$/.test(BUILD) ? `v${(Number(BUILD) / 100).toFixed(2)}` : `v${BUILD}`;
 const TABBED = ['home', 'drawing', 'cad', 'shot', 'gallery', 'info'];
 const TZ = 'Asia/Seoul';   // 서버(Code.gs)가 날짜를 한국 시간으로 해석하므로 폰 시간대와 무관하게 맞춘다
 const SURVEY = '측량';
@@ -1029,7 +1031,7 @@ const apkOutdated = () => !!window.AndroidGallery && apkVersion() < LATEST_APK;
 
 function renderInfo() {
   const v = apkVersion();
-  $('appVersion').textContent = `v${BUILD}${window.AndroidGallery ? ` (안드로이드 앱${v ? ` 1.${v}` : ''}${isProApp() ? ' Pro' : ''})` : ''}`;
+  $('appVersion').textContent = `${VERSION_LABEL}${window.AndroidGallery ? ` (안드로이드 앱${v ? ` 1.${v}` : ''}${isProApp() ? ' Pro' : ''})` : ''}`;
   $('adminInfo').textContent = state.config.admin || '과장 정준업(Master)';
   show($('downloadApk'), !window.AndroidGallery);
   renderApkNotice();
@@ -1094,7 +1096,7 @@ async function reportDevice() {
     const key = `${BUILD}|${deviceAppName()}|${user}`;
     const last = readCached('devicePing') || {};
     if (last.key === key && Date.now() - (last.at || 0) < DEVICE_PING_MS) return;
-    await api('device_ping', { device: { id: deviceId(), user, web: `v${BUILD}`, app: deviceAppName(), model: await deviceModel() } });
+    await api('device_ping', { device: { id: deviceId(), user, web: VERSION_LABEL, app: deviceAppName(), model: await deviceModel() } });
     store.set('devicePing', JSON.stringify({ key, at: Date.now() }));
   } catch { /* 옛 서버(bad_action)·신호 없음: 다음에 앱을 열 때 다시 보낸다 */ }
 }
@@ -1105,7 +1107,7 @@ async function renderDevices() {
   try {
     const { devices = [] } = await api('device_list');
     box.textContent = devices.length
-      ? devices.map((d) => `${d.web === `v${BUILD}` ? '✅' : '⚠️'} ${d.user || '(측정자 없음)'} · ${d.web} · ${d.app} · ${d.model} · ${d.at.slice(5)}`).join('\n')
+      ? devices.map((d) => `${d.web === VERSION_LABEL ? '✅' : '⚠️'} ${d.user || '(측정자 없음)'} · ${d.web} · ${d.app} · ${d.model} · ${d.at.slice(5)}`).join('\n')
       : '아직 기록이 없습니다. 직원들이 앱을 한 번씩 열면 쌓입니다.';
   } catch (err) {
     box.textContent = err.code === 'bad_action' ? '서버(Code.gs)를 새 버전으로 배포하면 보입니다.' : '불러오지 못했습니다. 신호를 확인하세요.';
