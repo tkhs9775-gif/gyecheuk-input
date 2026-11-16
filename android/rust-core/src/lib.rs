@@ -668,6 +668,44 @@ pub unsafe extern "C" fn wasm_cad_color_order(
     cad_color_order_into(colors, out_colors, out_counts, out_indices)
 }
 
+/// 도면 저장 알림 간격: 같은 도면은 10분에 한 번만 알린다
+pub const DRAWING_NOTICE_GAP_MS: f64 = 10.0 * 60.0 * 1000.0;
+
+/// 도면 저장을 다른 기기에 알릴지 판단한다. 실시간 저장(live)은 알리지 않고,
+/// 같은 도면의 마지막 알림(last_ms, 없으면 0)에서 10분이 안 지났으면 알리지 않는다.
+pub fn drawing_notice_due(is_live: bool, now_ms: f64, last_ms: f64) -> bool {
+    !is_live && now_ms - last_ms >= DRAWING_NOTICE_GAP_MS
+}
+
+#[no_mangle]
+pub extern "C" fn wasm_drawing_notice_due(is_live: u32, now_ms: f64, last_ms: f64) -> u32 {
+    drawing_notice_due(is_live != 0, now_ms, last_ms) as u32
+}
+
+#[cfg(test)]
+mod drawing_notice_tests {
+    use super::*;
+
+    #[test]
+    fn live_save_never_notifies() {
+        assert!(!drawing_notice_due(true, 1.0e12, 0.0));
+    }
+
+    #[test]
+    fn first_save_notifies_then_waits_ten_minutes() {
+        let t = 1.0e12;
+        assert!(drawing_notice_due(false, t, 0.0));
+        assert!(!drawing_notice_due(false, t + DRAWING_NOTICE_GAP_MS - 1.0, t));
+        assert!(drawing_notice_due(false, t + DRAWING_NOTICE_GAP_MS, t));
+    }
+
+    #[test]
+    fn wasm_export_matches() {
+        assert_eq!(wasm_drawing_notice_due(0, 1.0e12, 0.0), 1);
+        assert_eq!(wasm_drawing_notice_due(1, 1.0e12, 0.0), 0);
+    }
+}
+
 // ============================================================================
 // Android JNI exports (non-wasm32 targets)
 // ============================================================================

@@ -26,6 +26,8 @@ function buildNotice(action, payload) {
     return { kind: 'schedule', who, date: first, title: `📅 새 일정 · ${dayLabel(first)}`, body: clip(`${who}: ${items[0]?.title || ''}`) };
   }
   if (action === 'schedule_update') return { kind: 'schedule', who, date: payload.item?.date, title: `✏️ 일정 수정 · ${dayLabel(payload.item?.date)}`, body: clip(`${who}: ${payload.item?.title || ''}`) };
+  // 도면 메모: 보낼지 말지(실시간 저장 빼기·10분 간격)는 announceSaved 에서 Rust 코어가 정한다
+  if (action === 'drawing_notes_save') return { kind: 'input', who, title: `📐 도면 저장 · ${payload.site || '현장 미지정'}`, body: clip(`${who}님이 ${payload.fileName || '도면'}에 기록을 저장했습니다`) };
   if (action === 'contact_save') return { kind: 'contact', who, title: `🪪 명함 등록 · ${payload.contact?.site || ''}`, body: clip(`${who}님이 ${payload.contact?.name || '현장 담당자'} 명함을 올렸습니다`) };
   return null;
 }
@@ -67,12 +69,23 @@ function registerPush(triesLeft = REGISTER_TRIES) {
 
 // 같은 계획서를 나눠 보내면(250건씩) 알림은 한 번만
 let lastPlanNotice = '';
+// 같은 도면은 10분에 한 번만, 실시간 저장은 안 알린다(판단은 Rust 코어 drawing_notice_due, 이 기기 기준)
+const lastDrawingNotice = {};
+function drawingNoticeDue(payload, now = Date.now()) {
+  const isLive = !!payload.data?.live;
+  const last = lastDrawingNotice[payload.fileId] || 0;
+  let due = window.RustCore?.drawingNoticeDue?.(isLive, now, last);
+  if (due == null) due = !isLive && now - last >= 10 * 60 * 1000;   // wasm 을 못 읽은 기기(PC 화면 등)용 같은 규칙
+  if (due) lastDrawingNotice[payload.fileId] = now;
+  return due;
+}
 // 저장이 서버에 새로 들어간 직후 호출(app.js api). 실패해도 저장에는 영향 없다
 function announceSaved(action, payload, result) {
   if (result.duplicate) return;
   if (action === 'schedule_add' && !result.added) return;
   const notice = buildNotice(action, payload);
   if (!notice) return;
+  if (action === 'drawing_notes_save' && !drawingNoticeDue(payload)) return;
   if (action === 'schedule_add' && payload.source) {
     if (lastPlanNotice === payload.source) return;
     lastPlanNotice = payload.source;

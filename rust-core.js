@@ -461,7 +461,14 @@
     return [...by].map(([c, idx]) => ({ c, idx: Uint32Array.from(idx) }));
   }
 
+  // 도면 저장 알림을 보낼지(Rust 판단). wasm 이 아직 없으면 null → 부르는 쪽이 같은 규칙으로 판단
+  function rustDrawingNoticeDue(isLive, nowMs, lastMs) {
+    if (!wasm || typeof wasm.wasm_drawing_notice_due !== 'function') return null;
+    return wasm.wasm_drawing_notice_due(isLive ? 1 : 0, nowMs, lastMs || 0) === 1;
+  }
+
   const api = {
+    drawingNoticeDue: rustDrawingNoticeDue,
     ensure: ensureRustWasm,
     ensureRustWasm,
     tryInstantiateSync,
