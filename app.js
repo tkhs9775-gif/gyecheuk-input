@@ -18,8 +18,8 @@ const MIN_TIMEOUT_MS = 30 * 1000;
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const BYTES_PER_MS = 15;   // 느린 신호를 초당 약 15KB로 보고 시간 제한을 잡는다
 const BUILD = new URL(document.currentScript.src).searchParams.get('v') ?? '-';
-// 화면에 보이는 버전: 배포 횟수 100 → v1.00, 123 → v1.23 (?v= 는 횟수 숫자 그대로 둔다: 새 파일 받기에 쓴다)
-const VERSION_LABEL = /^\d+$/.test(BUILD) ? `v${(Number(BUILD) / 100).toFixed(2)}` : `v${BUILD}`;
+// 화면에 보이는 버전(사용자 고정 규칙 2026-11-17): 배포 횟수 101 → "버전 1.01", 123 → "버전 1.23" (?v= 는 횟수 숫자 그대로 둔다: 새 파일 받기에 쓴다)
+const VERSION_LABEL = /^\d+$/.test(BUILD) ? `버전 ${(Number(BUILD) / 100).toFixed(2)}` : `버전 ${BUILD}`;
 const TABBED = ['home', 'drawing', 'cad', 'shot', 'gallery', 'info'];
 const TZ = 'Asia/Seoul';   // 서버(Code.gs)가 날짜를 한국 시간으로 해석하므로 폰 시간대와 무관하게 맞춘다
 const SURVEY = '측량';
@@ -368,9 +368,29 @@ async function loadRecent() {
     return;
   }
   const seq = ++recentSeq;
-  const { rows } = await api('recent', { user });
+  // 지난번 목록을 먼저 보여 주고(구글 서버 왕복 1.5~2초를 기다리지 않게) 새 목록이 오면 바꾼다. 2026-11-17
+  const saved = recentFromStore(user);
+  renderRecent(saved ?? [], '최근 입력을 불러오는 중...');   // 저장분이 없으면 다른 측정자 목록이 남지 않게 비운다
+  let rows;
+  try {
+    ({ rows } = await api('recent', { user }));
+  } catch (err) {
+    if (seq !== recentSeq) return;      // 그 사이 다른 측정자로 바뀌었으면 옛 요청의 실패는 화면에 내지 않는다
+    if (saved && !err.isAuth) return;   // 신호가 없으면 지난 목록을 그대로 둔다(맨 위 netBar 가 신호 상태를 알린다)
+    throw err;
+  }
   if (seq !== recentSeq) return;
-  renderRecent(Array.isArray(rows) ? rows : []);
+  const fresh = Array.isArray(rows) ? rows : [];
+  store.set(RECENT_KEY_PREFIX + user, JSON.stringify(fresh));
+  renderRecent(fresh);
+}
+
+const RECENT_KEY_PREFIX = 'recent_';
+function recentFromStore(user) {
+  try {
+    const rows = JSON.parse(store.get(RECENT_KEY_PREFIX + user) ?? 'null');
+    return Array.isArray(rows) ? rows : null;
+  } catch { return null; }
 }
 
 async function loadLatest() {
