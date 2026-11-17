@@ -120,12 +120,20 @@ async function pushNoticeFor(o) {
   } catch { return null; }   // 신호가 없으면 탭까지만 연다
 }
 // 도면을 보는 중에 사진·일정 알림을 누르면 도면을 닫고 간다(적던 값은 closePdfViewer 가 폰에 남긴다). 도면 알림은 openPdfFieldbook 이 바꿔 연다
+// 닫기는 뒤로가기(history.back)로 하므로 그 이동이 끝난 뒤에 다음 화면으로 간다(먼저 가면 늦게 온 뒤로가기가 그 이동을 되돌린다 — 가상 폰 시험에서 발견)
+const PUSH_LEAVE_WAIT_MS = 800;
 function pushLeaveViewer() {
   const viewer = typeof document !== 'undefined' ? document.getElementById('pdfViewer') : null;
-  if (viewer && !viewer.classList.contains('hidden') && typeof closePdfViewer === 'function') closePdfViewer();
+  if (!viewer || viewer.classList.contains('hidden') || typeof closePdfViewer !== 'function') return Promise.resolve();
+  const backDone = new Promise((resolve) => {
+    window.addEventListener('popstate', resolve, { once: true });
+    setTimeout(resolve, PUSH_LEAVE_WAIT_MS);   // 뒤로가기 없이 바로 닫힌 경우
+  });
+  closePdfViewer();
+  return backDone;
 }
 async function pushOpenTarget(o) {
-  if (o.kind !== 'drawing') pushLeaveViewer();
+  if (o.kind !== 'drawing') await pushLeaveViewer();
   await pushGoHash(PUSH_OPEN_HASH[o.kind]);   // 탭은 바로 연다(찾는 동안 첫 화면에 머물지 않게)
   const n = await pushNoticeFor(o);
   if (!n) return;
@@ -137,7 +145,7 @@ function takePushOpen() {
   let o = null;
   try { o = JSON.parse(window.AndroidPush?.takeOpen?.() || 'null'); } catch { o = null; }
   if (!o) return;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(o.date || '') && typeof schedOpenDay === 'function') { pushLeaveViewer(); schedOpenDay(o.date); }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(o.date || '') && typeof schedOpenDay === 'function') { pushLeaveViewer().then(() => schedOpenDay(o.date)); }
   else if (PUSH_OPEN_HASH[o.kind]) pushOpenTarget(o).catch(() => {});
 }
 if (typeof window !== 'undefined') window.onPushOpen = () => takePushOpen();
