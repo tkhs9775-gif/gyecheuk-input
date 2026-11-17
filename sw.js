@@ -66,9 +66,11 @@ self.addEventListener('fetch', (event) => {
   const net = fetch(req.url, { cache: 'no-cache' });
   net.catch(() => {});   // 저장분으로 이미 열었으면 실패해도 알릴 곳이 없다
   const late = new Promise((resolve) => setTimeout(() => resolve(null), NET_WAIT_MS));
-  const shown = Promise.race([net, late]).then((res) => (res
+  // 신호가 없으면 APK 가 앱 안 옛 사본(X-Offline-Copy, APK 만든 때의 화면)으로 바로 답한다. 그걸 띄우면 옛 판(예: 80판)이 열리므로
+  // 그때는 이 폰에 저장해 둔 최신 화면을 먼저 쓴다(2026-11-17 가상 폰 시험에서 발견). 저장분이 없을 때만 옛 사본을 쓴다
+  const shown = Promise.race([net, late]).then((res) => (res && !res.headers.get('X-Offline-Copy')
     ? { res, fresh: true }
-    : caches.match(req).then((hit) => (hit ? { res: hit, fresh: false } : net.then((r) => ({ res: r, fresh: true }))))));   // 저장분이 없으면 끝까지 기다린다
+    : caches.match(req).then((hit) => (hit ? { res: hit, fresh: false } : (res ? { res, fresh: true } : net.then((r) => ({ res: r, fresh: true })))))));   // 저장분이 없으면 끝까지 기다린다
   event.waitUntil(shown.then(({ res, fresh }) => {
     if (!fresh || !res.ok || res.headers.get('X-Offline-Copy')) return undefined;   // 신호가 없어 앱(APK)이 대신 준 옛 사본은 저장하지 않는다
     const copy = res.clone();   // 화면이 본문을 읽기 전에 복사해 둔다
