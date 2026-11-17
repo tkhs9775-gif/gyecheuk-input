@@ -1,4 +1,6 @@
 pub mod readcache;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod pushopen;
 
 const WIN_RESERVED_NAMES: &[&str] = &[
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -776,6 +778,23 @@ mod jni_bridge {
         env.new_string(payload)
             .expect("Failed to create JNI string")
             .into_raw()
+    }
+
+    // 알림 하나의 목적지 JSON(pushopen.rs). PushService 가 알림을 만들 때 PendingIntent 에 넣는다
+    #[no_mangle]
+    pub extern "system" fn Java_com_kiwoomenc_gyecheuk_RustCore_pushOpenJson<'local>(
+        mut env: JNIEnv<'local>,
+        _class: JClass<'local>,
+        kind: JString<'local>,
+        date: JString<'local>,
+        ts: JString<'local>,
+        site: JString<'local>,
+        file_id: JString<'local>,
+    ) -> jstring {
+        let mut read = |j: &JString<'local>| -> String { env.get_string(j).map(|s| s.into()).unwrap_or_default() };
+        let (k, d, t, s, f) = (read(&kind), read(&date), read(&ts), read(&site), read(&file_id));
+        let out = crate::pushopen::push_open_json(&k, &d, &t, &s, &f);
+        env.new_string(out).expect("Failed to create JNI string").into_raw()
     }
 
     #[no_mangle]

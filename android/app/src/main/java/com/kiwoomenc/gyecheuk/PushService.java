@@ -43,7 +43,7 @@ public class PushService extends FirebaseMessagingService {
         String title = data.get("title");
         String body = data.get("body");
         if (title == null || body == null) return;
-        show(this, title, body, value(data, "kind"), value(data, "date"));
+        show(this, title, body, value(data, "kind"), value(data, "date"), value(data, "ts"), value(data, "site"), value(data, "fileId"));
     }
 
     private static String value(Map<String, String> data, String key) {
@@ -70,6 +70,11 @@ public class PushService extends FirebaseMessagingService {
     }
 
     static void show(Context ctx, String title, String body, String kind, String date) {
+        show(ctx, title, body, kind, date, "", "", "");
+    }
+
+    // ts·site·fileId: 이 알림이 가리키는 곳(중계 서버가 함께 보낸다). 알림마다 따로 담아, 앱이 켜져 있을 때 다른 알림을 눌러도 그 곳으로 간다
+    static void show(Context ctx, String title, String body, String kind, String date, String ts, String site, String fileId) {
         NotificationManager nm = ctx.getSystemService(NotificationManager.class);
         ensureChannels(nm);
         boolean alert = "memo".equals(kind) || "issue".equals(kind);
@@ -78,7 +83,9 @@ public class PushService extends FirebaseMessagingService {
         String group = "kieum_" + (kind.isEmpty() ? "input" : kind);
         int id = (int) (System.currentTimeMillis() & 0x7fffffff);   // 번호가 달라야 알림이 서로 덮어쓰지 않고 쌓인다
 
-        String open = "{\"kind\":\"" + kind.replaceAll("[^a-z]", "") + "\",\"date\":\"" + date.replaceAll("[^0-9-]", "") + "\"}";
+        String open = RustCore.isLoaded()
+            ? RustCore.pushOpenJson(kind, date, ts, site, fileId)
+            : "{\"kind\":\"" + kind.replaceAll("[^a-z]", "") + "\",\"date\":\"" + date.replaceAll("[^0-9-]", "") + "\"}";
         Intent intent = new Intent(ctx, MainActivity.class)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .putExtra(EXTRA_OPEN, open);

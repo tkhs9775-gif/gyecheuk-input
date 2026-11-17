@@ -97,7 +97,8 @@ function announceSaved(action, payload, result) {
 
 // 알림을 누르면 그 알림이 가리키는 곳을 연다: 메모·일정 = 그 날짜 창, 사진 = 그 현장 갤러리, 도면 = 그 도면, 명함 = 그 현장 도면 폴더(명함이 위에 보인다).
 // APK 는 종류(kind)·날짜만 넘겨주므로(재설치 없이 되게), 현장·도면은 중계 서버의 최근 알림 목록에서 같은 종류의 가장 최근 것으로 찾는다.
-// ponytail: 같은 종류 알림이 여러 개 쌓였을 때 옛 알림을 눌러도 가장 최근 것이 열린다. 정확히 그 알림이어야 하면 APK 가 알림 번호(ts)를 넘기게 바꾼다
+// 새 APK(1.33~)는 알림마다 제 목적지(site·fileId·ts)를 들고 온다(Rust pushopen.rs) → 앱이 켜져 있을 때 다른 알림을 눌러도 그 알림의 곳으로 간다.
+// 옛 APK 는 종류·날짜만 주므로 예전처럼 같은 종류의 가장 최근 알림으로 찾는다
 const PUSH_OPEN_HASH = { photo: '#gallery', drawing: '#drawing', contact: '#drawing' };
 function pushGoHash(hash) {
   if (location.hash === hash) return Promise.resolve();
@@ -105,26 +106,39 @@ function pushGoHash(hash) {
   location.hash = hash;
   return moved;   // route()가 탭을 먼저 그린 뒤에 그 안을 연다
 }
-async function pushLatestNotice(kind) {
+// 순수 함수: 누른 알림(o)의 목적지. site 가 있으면 그대로, 번호(ts)만 있으면 그 번호의 알림, 둘 다 없으면 같은 종류의 가장 최근 것
+function pickPushNotice(o, notices) {
+  if (o?.site) return { site: o.site, fileId: o.fileId || '' };
+  const list = (Array.isArray(notices) ? notices : []).filter((n) => n && n.kind === o?.kind && n.site);
+  return (o?.ts && list.find((n) => String(n.ts) === String(o.ts))) || list.pop() || null;
+}
+async function pushNoticeFor(o) {
+  if (o?.site) return pickPushNotice(o, []);   // 서버에 묻지 않는다(신호가 약해도 바로 연다)
   try {
     const r = await pushPost('/recent', { since: 0 });
-    return (r?.notices || []).filter((n) => n.kind === kind && n.site).pop() || null;
+    return pickPushNotice(o, r?.notices);
   } catch { return null; }   // 신호가 없으면 탭까지만 연다
 }
-async function pushOpenTarget(kind) {
-  await pushGoHash(PUSH_OPEN_HASH[kind]);   // 탭은 바로 연다(찾는 동안 첫 화면에 머물지 않게)
-  const n = await pushLatestNotice(kind);
+// 도면을 보는 중에 사진·일정 알림을 누르면 도면을 닫고 간다(적던 값은 closePdfViewer 가 폰에 남긴다). 도면 알림은 openPdfFieldbook 이 바꿔 연다
+function pushLeaveViewer() {
+  const viewer = typeof document !== 'undefined' ? document.getElementById('pdfViewer') : null;
+  if (viewer && !viewer.classList.contains('hidden') && typeof closePdfViewer === 'function') closePdfViewer();
+}
+async function pushOpenTarget(o) {
+  if (o.kind !== 'drawing') pushLeaveViewer();
+  await pushGoHash(PUSH_OPEN_HASH[o.kind]);   // 탭은 바로 연다(찾는 동안 첫 화면에 머물지 않게)
+  const n = await pushNoticeFor(o);
   if (!n) return;
-  if (kind === 'photo') { if (typeof openAlbum === 'function') openAlbum(n.site); return; }
-  if (typeof openRecentDrawing === 'function') openRecentDrawing({ site: n.site, fileId: kind === 'drawing' ? n.fileId || '' : '' });
+  if (o.kind === 'photo') { if (typeof openAlbum === 'function') openAlbum(n.site); return; }
+  if (typeof openRecentDrawing === 'function') openRecentDrawing({ site: n.site, fileId: o.kind === 'drawing' ? n.fileId || '' : '' });
 }
 // 앱이 꺼져 있던 때는 첫 화면이 다 뜬 뒤(schedule.js), 켜져 있을 때 누르면 안드로이드가 onPushOpen 을 부른다
 function takePushOpen() {
   let o = null;
   try { o = JSON.parse(window.AndroidPush?.takeOpen?.() || 'null'); } catch { o = null; }
   if (!o) return;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(o.date || '') && typeof schedOpenDay === 'function') schedOpenDay(o.date);
-  else if (PUSH_OPEN_HASH[o.kind]) pushOpenTarget(o.kind).catch(() => {});
+  if (/^\d{4}-\d{2}-\d{2}$/.test(o.date || '') && typeof schedOpenDay === 'function') { pushLeaveViewer(); schedOpenDay(o.date); }
+  else if (PUSH_OPEN_HASH[o.kind]) pushOpenTarget(o).catch(() => {});
 }
 if (typeof window !== 'undefined') window.onPushOpen = () => takePushOpen();
 
@@ -174,4 +188,4 @@ if (typeof document !== 'undefined') {
   document.getElementById('pushSettings')?.addEventListener('click', () => window.AndroidPush?.openSettings?.());
 }
 
-if (typeof module !== 'undefined') module.exports = { buildNotice };
+if (typeof module !== 'undefined') module.exports = { buildNotice, pickPushNotice };

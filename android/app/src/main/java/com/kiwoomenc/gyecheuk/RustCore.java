@@ -31,4 +31,7 @@ public final class RustCore {
     public static native int sniffCadFormat(byte[] data);
 
     public static native long fnv1a64(byte[] data);
+
+    // 알림 하나의 목적지 JSON {kind,date,ts,site,fileId} (rust-core/src/pushopen.rs)
+    public static native String pushOpenJson(String kind, String date, String ts, String site, String fileId);
 }

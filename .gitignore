@@ -2,3 +2,6 @@ android/app/google-services.json
 *adminsdk*.json
 .playwright-cli/
 android/rust-core/target/
+android/.gradle/
+android/app/build/
+android/app/src/main/assets/
