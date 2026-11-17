@@ -161,7 +161,7 @@ class CEOMonitorApp(tk.Tk):
 
         tk.Label(
             title_box,
-            text="🔒 KIWOOM E&C · CEO STEALTH MONITOR",
+            text="🔒 KIEUM E&C · CEO STEALTH MONITOR",
             bg="#0F172A",
             fg="#38BDF8",
             font=("맑은 고딕", 9, "bold"),
