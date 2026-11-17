@@ -2309,7 +2309,9 @@ function onStrainCellInput(e) {
 
 // 도면에 펼치지 않는 계측기(하중계): 팝업 안에 모든 단 값·신규설치를 한 번에 보인다(사무실에서 옮겨 적기)
 function renderPinGroupView(pin) {
-  const item = GROUP_TYPES.includes(pin.type) && !valuesOnDrawing(pin.type) ? itemOfPin(pin) : null;
+  const found = GROUP_TYPES.includes(pin.type) && !valuesOnDrawing(pin.type) ? itemOfPin(pin) : null;
+  // 단이 하나뿐이고 신규설치 표시도 없으면(예: 변형률계 S1) 메모 상자의 초기치·전회·오늘 칸과 같은 내용이라 빈 상자만 보였다 → 그때는 숨긴다
+  const item = found && ((found.rows || []).length > 1 || liveNote(found.anchor)) ? found : null;
   show($('pinGroupView'), !!item);
   $('pinGroupView').replaceChildren(...(item ? [buildGroupTag(item)] : []));
 }
