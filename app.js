@@ -200,6 +200,7 @@ function forgetReads(action, payload, data) {
   let scope = null;
   if (FORGET_ALL.has(action) || (action === 'cad_upload_chunk' && data.done)) scope = {};   // CAD 조각 요청에는 현장 이름이 없어 전부 버린다(올리기 끝날 때 한 번)
   else if (FORGET_SITE.has(action)) scope = { site: payload.site };
+  else if (action === 'photo_delete') scope = { site: data?.site || '현장무관', albums: true, warm: true };
   else if (action === 'photo' || (action === 'save' && payload?.photos?.length)) {
     scope = { site: payload?.entry?.site || '현장무관', albums: true, warm: true };
   }

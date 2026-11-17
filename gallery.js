@@ -912,6 +912,39 @@ function stepPhoto(d) {
   if (i >= 0 && i < gallery.files.length) showPhoto(i);
 }
 
+// 사진 지우기(직원 누구나, 2026-11-17 사용자 결정): 확인 창 → 서버가 Drive 휴지통으로(30일 안에 되살림) + '사진삭제' 탭에 기록.
+// 아직 올라가지 않은 사진(opt:)은 서버에 없으므로 지우지 않는다. 지운 뒤 이 앨범을 서버에서 다시 불러온다
+async function deletePhoto() {
+  const f = gallery.files[gallery.index];
+  if (!f) return;
+  if (String(f.id).startsWith('opt:')) { alert('아직 올라가는 중인 사진입니다. 다 올라간 뒤에 지워 주세요.'); return; }
+  const user = (typeof store !== 'undefined' && store.get('user')) || $('user')?.value || '';
+  if (!user) { alert('측정자 이름을 먼저 골라 주세요(정보 탭).'); return; }
+  if (!confirm(`이 사진을 지울까요?
+${photoLabel(f.name) || f.name}
+
+휴지통으로 가며 30일 안에는 관리자가 되살릴 수 있습니다.`)) return;
+  const btn = $('pvDelete');
+  btn.disabled = true;
+  try {
+    const res = await api('photo_delete', { user, fileId: f.id });
+    const site = res.site || gallery.site;
+    invalidateGalleryCache(site);
+    fullCache.delete(f.id);
+    closePhotoViewer();
+    gallery.files = [];
+    gallery.total = 0;
+    gallery.loading = false;
+    gallery.seq += 1;
+    $('galleryPhotos').replaceChildren();
+    loadMorePhotos();
+  } catch (err) {
+    alert(`사진을 지우지 못했습니다: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function savePhotoToPhone() {
   const f = gallery.files[gallery.index];
   if (!f) return;
@@ -1003,6 +1036,7 @@ function initGallery() {
   $('pvPrev').addEventListener('click', () => stepPhoto(-1));
   $('pvNext').addEventListener('click', () => stepPhoto(1));
   $('pvSave').addEventListener('click', savePhotoToPhone);
+  $('pvDelete').addEventListener('click', deletePhoto);
   initViewerGestures();
   window.addEventListener('popstate', () => {
     if (!$('photoViewer').classList.contains('hidden')) { if (history.state?.gallery !== 'viewer') hidePhotoViewer(); return; }
