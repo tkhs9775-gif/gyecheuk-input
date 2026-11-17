@@ -689,9 +689,9 @@ pub fn pin_value_cells(type_code: u8) -> u32 {
     if type_code == b'L' { 3 } else { 1 }
 }
 
-/// 값을 도면 위에 늘 펼쳐 둘지. 하중계(L)는 상자가 커서 옆 동그라미를 가리므로 펼치지 않고, 누르면 팝업으로 보인다
+/// 값을 도면 위에 늘 펼쳐 둘지. 하중계(L)·변형률계(S)는 펼치지 않고 누르면 팝업으로 보인다(사용자 지시 2026-11-17)
 pub fn pin_values_on_drawing(type_code: u8) -> bool {
-    type_code != b'L'
+    type_code != b'L' && type_code != b'S'
 }
 
 #[no_mangle]
@@ -719,8 +719,10 @@ mod pin_rule_tests {
     #[test]
     fn load_cell_values_only_in_popup() {
         assert!(!pin_values_on_drawing(b'L'));
-        assert!(pin_values_on_drawing(b'S'));
+        assert!(!pin_values_on_drawing(b'S'));
+        assert!(pin_values_on_drawing(b'W'));
         assert_eq!(wasm_pin_values_on_drawing(b'L' as u32), 0);
+        assert_eq!(wasm_pin_values_on_drawing(b'S' as u32), 0);
     }
 }
 

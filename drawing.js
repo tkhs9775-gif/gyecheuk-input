@@ -210,7 +210,7 @@ const joinStrainCells = (cells) => cells.map((c) => String(c).trim()).join('/').
 // 칸 수·도면 위 펼침 규칙은 Rust 코어(rust-core.js → lib.rs pin_value_cells / pin_values_on_drawing)가 정한다: 하중계(L) 3칸·누르면 팝업
 const rustCore = () => (typeof RustCore !== 'undefined' ? RustCore : globalThis.RustCore || null);
 const isMultiCell = (type) => (rustCore()?.pinValueCells ? rustCore().pinValueCells(type) : (type === 'L' ? 3 : 1)) > 1;
-const valuesOnDrawing = (type) => (rustCore()?.pinValuesOnDrawing ? rustCore().pinValuesOnDrawing(type) : type !== 'L');
+const valuesOnDrawing = (type) => (rustCore()?.pinValuesOnDrawing ? rustCore().pinValuesOnDrawing(type) : !GROUP_TYPES.includes(type));
 const rowCells = (pin) => (isMultiCell(pin.type) ? strainCells(pin.text) : [String(pin.text ?? '').trim()]);
 
 // 손글씨(OCR)로 읽은 글을 변형률계 칸에 넣는다: 공백으로 나뉜 값마다 한 칸씩, 첫 빈 칸부터(값이 남은 칸보다 많으면 앞으로 당겨 넣고, 칸이 다 찼으면 뒤쪽 칸을 바꾼다)
