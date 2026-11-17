@@ -1214,6 +1214,7 @@ async function openPdfFieldbook(file, preset = null) {
   drawingState.rotation = 0;
   drawingState.activePinId = null;
   drawingState.dirty = false;
+  drawingState.familySources = [];   // 앞 도면의 지난 기록이 보이지 않게(loadFamilySources 가 다시 채운다)
   drawingState.notes = preset ? preset.notes : normalizeNotes(readCached(`pdf_notes_${file.id}`));
   drawingState.sourceFile = preset ? preset.source : sourceFileOf(file, drawingState.notes, allDrawingFiles());
   // 다른 폰(또는 PC)에서 저장한 저장본은 이 폰에 메모가 없어 원본 표시(sourceId)를 모른다 → 이름으로도 원본을 못 찾을 때만 서버 메모를 받아 본 뒤 원본을 정한다
@@ -1270,6 +1271,7 @@ async function openPdfFieldbook(file, preset = null) {
     await renderPdfPage();
     applyServerNotes(file, await notesPromise);
     if (seq === openSeq) { tr?.step('notes:applied'); tr?.end(); }
+    if (seq === openSeq) loadFamilySources(file, seq).catch((err) => console.warn('지난 기록 모으기 실패', err));
     // 저장 때 쓸 합치기 라이브러리(pdf-lib, 1MB)를 도면을 보는 동안 미리 받아 둔다(저장을 누른 뒤 받으면 그만큼 기다린다)
     if (navigator.onLine !== false) ensurePdfLib().catch(() => {});
   } catch (err) {
@@ -1312,6 +1314,35 @@ async function hideViewer() {
   if (typeof stopGps === 'function') stopGps();
   if (viewerReturnFocus?.isConnected) viewerReturnFocus.focus();
   viewerReturnFocus = null;
+}
+
+// 지난 기록: 같은 도면 묶음의 저장본(최근 FAMILY_MAX 개)의 메모를 모아 둔다(drawingState.familySources). 메모 상자의 '지난 기록' 목록이 쓴다.
+// 저장본 메모는 저장한 뒤 바뀌지 않으므로 폰에 받아 둔 것이 있으면 서버에 묻지 않는다. 도면 그리기가 끝난 뒤 뒤에서 받는다
+const FAMILY_MAX = 30;
+const FAMILY_PARALLEL = 3;
+async function loadFamilySources(file, seq) {
+  drawingState.familySources = [];
+  const base = drawingState.sourceFile || file;
+  const family = classifyDrawing(base).family;
+  const group = buildDrawingGroups().groups.find((g) => g.name === family);
+  const saved = (group?.saved || []).filter((it) => it.file.id !== file.id).slice(0, FAMILY_MAX);
+  if (!saved.length) return;
+  const out = new Array(saved.length).fill(null);
+  let next = 0;
+  const worker = async () => {
+    while (next < saved.length && seq === openSeq) {
+      const i = next++;
+      const it = saved[i];
+      const cached = await idbGet(NOTES_CACHE_STORE, String(it.file.id)).catch(() => null);
+      const res = cached?.data ? cached : await fetchDrawingNotes(it.file.id).catch(() => null);
+      if (res?.data && Array.isArray(res.data.pins)) out[i] = { date: it.date, user: res.user || '', pins: res.data.pins };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(FAMILY_PARALLEL, saved.length) }, worker));
+  if (seq !== openSeq) return;
+  drawingState.familySources = out.filter(Boolean);
+  const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
+  if (pin) renderPinReadings(pin);   // 메모 상자를 열어 둔 채 기다렸으면 목록을 바로 채운다
 }
 
 // 서버 메모가 늦게 도착해도, 그 사이 다른 도면으로 바뀌었거나 사용자가 이미 고친 게 있으면 덮어쓰지 않는다
@@ -2352,7 +2383,8 @@ const mmdd = (date) => (date ? date.slice(5).replace('-', '/') : '');
 function renderPinReadings(pin) {
   const box = $('pinMemoPrev');
   if (typeof readingTiles !== 'function') { show(box, false); return; }
-  const t = readingTiles(pin, todayKst());
+  const extra = typeof familyPinHistory === 'function' ? familyPinHistory(pin, drawingState.familySources || []) : [];
+  const t = readingTiles(pin, todayKst(), extra);
   if (isMultiCell(pin.type)) { t.delta = null; t.cumulative = null; }   // 값이 3칸이라 첫 숫자만 비교하면 틀린 변화가 나온다
   $('pinMemoKeyboard').placeholder = t.prev && !t.current ? '오늘 값을 입력하세요' : KEYBOARD_PLACEHOLDER;
   show(box, !!t.prev);
@@ -2377,18 +2409,23 @@ function renderPinReadings(pin) {
   if (t.cumulative !== null) today.append(el('span', 'cum', `누적 ${t.cumulative}`));
   readings.append(today);
   box.replaceChildren(readings);
-  if (t.past.length > 1) {
-    const hist = el('div', 'pin-history');
-    t.past.forEach((h, i) => {
-      const chip = el('span', i === t.past.length - 1 ? 'pin-hist last' : 'pin-hist');
-      chip.append(el('small', '', mmdd(h.date)), h.text);
-      hist.append(chip);
-    });
-    box.append(hist);
-    // 칩이 많으면 가장 최근(전회)이 보이게 오른쪽 끝으로. 상자가 아직 숨겨져 있을 수 있어 한 프레임 뒤에
-    requestAnimationFrame(() => { hist.scrollLeft = hist.scrollWidth; });
-  }
+  // 지난 기록 목록(계측기 모두): 최근 것부터 한 줄에 '날짜(요) · 값 · 적은 사람'. 초기치 줄은 표시를 붙인다
+  const list = el('ol', 'pin-history-list');
+  list.setAttribute('aria-label', `지난 기록 ${t.past.length}건`);
+  const head = el('div', 'pin-history-head', `지난 기록 ${t.past.length}건`);
+  [...t.past].reverse().forEach((h, i, arr) => {
+    const li = el('li', i === 0 ? 'pin-hist-row last' : 'pin-hist-row');
+    li.append(el('span', 'd', h.date ? `${h.date.replace(/-/g, '.')}${weekdayOf(h.date)}` : '날짜 모름'), el('b', 'v', h.text), el('span', 'who', h.author || ''));
+    if (i === arr.length - 1 && arr.length > 1) li.append(el('span', 'tag', '초기치'));
+    list.append(li);
+  });
+  box.append(head, list);
 }
+const weekdayOf = (date) => {
+  const [y, m, d] = String(date).split('-').map(Number);
+  const day = new Date(Date.UTC(y, m - 1, d)).getUTCDay();   // 날짜만으로 요일(시간대와 상관없이)
+  return Number.isNaN(day) ? '' : `(${WEEKDAYS_KO[day]})`;
+};
 
 // 메모 글자를 바꾼다. 지난 측정일의 값을 오늘 처음 고치는 순간 그 값이 history 로 넘어간다(같은 날에는 그냥 고쳐진다)
 function replaceActivePinText(newText) {

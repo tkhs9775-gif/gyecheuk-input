@@ -493,7 +493,7 @@ a.apk-link { display: grid; place-items: center; }
   .pin-memo-box .pin-reading { padding: 4px 6px 5px; }
   .pin-memo-box .pin-reading.today { padding: 3px 5px 4px; }
   .pin-memo-box .pin-reading .value { font-size: 18px; }
-  .pin-memo-box .pin-history { margin-top: 4px; }
+  .pin-memo-box .pin-history-head { margin-top: 4px; }
   .pin-memo-box .pin-memo-display { min-height: 40px; padding: 6px 10px; }
   .pin-memo-box .pin-memo-display:empty::before { font-size: 13px; }
   .pin-memo-box > .row { margin-top: 6px !important; }   /* index.html 인라인 margin-top: 8px */
@@ -690,12 +690,16 @@ dialog::backdrop { background: rgba(27, 42, 87, .45); }
 .pin-reading .delta { align-self: flex-start; margin-top: 2px; padding: 0 6px; border-radius: 8px; background: var(--card); color: var(--text); }   /* 부호(+/-)를 그대로 보이게: 좋고 나쁨은 계측기마다 달라 색으로 판단하지 않는다 */
 .pin-reading .delta::before { content: "변화 "; font-weight: 600; color: var(--muted); }   /* JS 는 '+0.02' 숫자만 넣는다 */
 .pin-reading .cum { color: var(--muted); }
-/* 날짜별 지난 값: 한 줄로 두고 넘치면 옆으로 민다(20개여도 상자 높이가 늘지 않게). 마지막(전회)은 파란 테두리 */
-.pin-history { display: flex; gap: 4px; margin-top: 6px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-.pin-history::-webkit-scrollbar { display: none; }
-.pin-hist { flex: none; display: inline-flex; align-items: baseline; gap: 4px; padding: 3px 8px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; }
-.pin-hist small { font-size: 11px; font-weight: 600; color: var(--muted); }
-.pin-hist.last { border-color: var(--accent); color: var(--accent); }
+/* 지난 기록 목록: 최근 것이 위. 줄마다 날짜(요)·값·적은 사람. 많으면 상자 안에서만 위아래로 민다(메모 상자 높이가 커지지 않게) */
+.pin-history-head { margin-top: 8px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.pin-history-list { list-style: none; margin: 4px 0 0; padding: 0; max-height: 168px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); -webkit-overflow-scrolling: touch; }
+.pin-hist-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: baseline; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); font-size: 14px; }
+.pin-hist-row:first-child { border-top: 0; }
+.pin-hist-row .d { font-size: 13px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pin-hist-row .v { font-weight: 800; color: var(--text); overflow-wrap: anywhere; }
+.pin-hist-row .who { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.pin-hist-row .tag { font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 8px; background: var(--chip); color: var(--accent); }
+.pin-hist-row.last .v { color: var(--accent); }   /* 맨 위 = 전회 */
 
 /* 사진: 찍기 / 갤러리 칸 */
 .seg { display: flex; gap: 4px; padding: 4px; margin: 8px 0 12px; border-radius: 24px; background: var(--chip); }
