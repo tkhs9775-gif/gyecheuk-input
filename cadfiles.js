@@ -311,8 +311,10 @@ async function cadSendChunk(token, offset, base64) {
 
 function initCadFiles() {
   if (!$('cadSitesView')) return;
-  attachListSearch($('cadSitesSearch'), $('cadSites'), (li) => li.querySelector('b')?.textContent || '');
-  attachListSearch($('cadFileSearch'), $('cadFileList'), (li) => li.dataset.name || '');
+  if (typeof attachListSearch === 'function') {   // search.js 는 없어도 되는 파일(sw.js LATER): 못 받으면 검색칸만 빠지고 CAD 탭은 그대로
+    attachListSearch($('cadSitesSearch'), $('cadSites'), (li) => li.querySelector('b')?.textContent || '');
+    attachListSearch($('cadFileSearch'), $('cadFileList'), (li) => li.dataset.name || '');
+  }
   $('cadBackSites').addEventListener('click', () => { showCadSites(true); renderCadSites(); renderCadRecent(); });
   $('cadUploadBtn').addEventListener('click', () => $('cadUploadFile').click());
   $('cadUploadFile').addEventListener('change', (e) => { const f = e.target.files?.[0]; e.target.value = ''; cadUploadPick(f); });
