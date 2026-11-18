@@ -1139,7 +1139,9 @@ async function renderDevices() {
 
 // 설정·전회값·내 최근 입력을 서버에서 받는다. 새 서버는 boot 한 번(요청마다 1.5초 안팎), boot를 모르는 옛 서버는 config만 받고 나머지는 따로.
 // 받는 사이 측정자를 바꾸거나 저장해서 더 새 목록을 부르면 그쪽이 이기도록 순번을 미리 올려 둔다
+let lastBootAt = 0;   // 마지막으로 boot 를 부른 시각(다시 보일 때 새로 받을지 정한다)
 async function fetchBoot() {
+  lastBootAt = Date.now();
   const user = store.get('user') || '';
   const seq = { latest: ++latestSeq, recent: ++recentSeq, user };
   try {
@@ -1255,6 +1257,22 @@ async function refreshInBackground() {
   renderOutbox();
   flushOutbox();
 }
+
+// 2026-11-18: 앱을 끄지 않고 뒤로 보냈다 다시 열면 시트에서 고친 계측기 목록이 안 바뀌었다(켤 때만 받았다).
+// 다시 보일 때 RESUME_REFRESH_MS 넘게 지났으면 조용히 새로 받는다. 신호가 없으면 지금 화면을 그대로 둔다(보내기 대기는 outbox.js 가 따로 한다)
+const RESUME_REFRESH_MS = 5 * 60 * 1000;
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !state.ready || !state.code) return;
+  if (Date.now() - lastBootAt < RESUME_REFRESH_MS) return;
+  try {
+    const boot = await fetchBoot();
+    state.offline = false;
+    refreshConfig(boot.config);
+    await applyLists(boot);
+  } catch (err) {
+    if (err.isAuth) { signOut(); alert(err.message); }
+  }
+});
 
 // ---------- events ----------
 
