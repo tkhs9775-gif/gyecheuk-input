@@ -215,7 +215,7 @@ function forgetReads(action, payload, data) {
 // The time limit grows with the body size: a slow signal needs longer for photos and survey files.
 // opts.timeoutMs: 응답이 큰 요청(도면 받기 등)은 보내는 양이 작아도 받는 데 오래 걸리므로 시간 제한을 따로 준다(MAX_TIMEOUT_MS 까지)
 async function api(action, payload = {}, opts = {}) {
-  const body = JSON.stringify({ code: state.code, action, ...payload });
+  const body = JSON.stringify({ code: state.code, device: deviceId(), action, ...payload });   // device: 서버가 맞게 들어온 적 있는 기기를 기억해, 누가 코드를 여러 번 틀려도 이 폰은 잠그지 않는다
   const ctl = new AbortController();
   const byBody = Math.max(MIN_TIMEOUT_MS, body.length / BYTES_PER_MS);
   const timer = setTimeout(() => ctl.abort(), Math.min(MAX_TIMEOUT_MS, Math.max(byBody, opts.timeoutMs || 0)));
@@ -805,6 +805,7 @@ function persistDraft() {
     values: MULTI_IDS.map((id) => $(id).value),
     memo: $('memo').value,
     date: $('date').value,
+    dateAuto: $('date').value === autoDate,   // 앱이 넣은 '오늘'이면 다음에 되살릴 때 그날의 오늘로 바꾼다
   };
   store.set('draft', JSON.stringify(draft));
 }
@@ -832,7 +833,7 @@ function restoreDraft() {
   $('value').value = draft.value ?? '';
   MULTI_IDS.forEach((id, i) => { $(id).value = draft.values?.[i] ?? ''; });
   $('memo').value = draft.memo ?? '';
-  if (draft.date) $('date').value = draft.date;
+  if (draft.date && !draft.dateAuto) $('date').value = draft.date;   // 사람이 고른 날짜만 되살린다(표시가 없는 옛 저장본은 전처럼)
   updateValueInfo();
   return true;
 }
@@ -1139,6 +1140,7 @@ async function renderDevices() {
 
 // 설정·전회값·내 최근 입력을 서버에서 받는다. 새 서버는 boot 한 번(요청마다 1.5초 안팎), boot를 모르는 옛 서버는 config만 받고 나머지는 따로.
 // 받는 사이 측정자를 바꾸거나 저장해서 더 새 목록을 부르면 그쪽이 이기도록 순번을 미리 올려 둔다
+let autoDate = '';    // 앱이 측정일 칸에 넣은 '오늘'(openApp·rollDate)
 let lastBootAt = 0;   // 마지막으로 boot 를 부른 시각(다시 보일 때 새로 받을지 정한다)
 async function fetchBoot() {
   lastBootAt = Date.now();
@@ -1171,7 +1173,8 @@ function openApp() {
   renderPeople();
   refreshWeather();
   if ($('today')) $('today').textContent = new Date().toLocaleDateString('ko-KR', { timeZone: TZ, month: 'long', day: 'numeric', weekday: 'short' });
-  $('date').value = todayKst();
+  autoDate = todayKst();
+  $('date').value = autoDate;
   renderTypes();
   renderIssues();
   if (!restoreDraft()) selectType(siteTypes()[0] ?? OTHER);
@@ -1261,9 +1264,20 @@ async function refreshInBackground() {
 // 2026-11-18: 앱을 끄지 않고 뒤로 보냈다 다시 열면 시트에서 고친 계측기 목록이 안 바뀌었다(켤 때만 받았다).
 // 다시 보일 때 RESUME_REFRESH_MS 넘게 지났으면 조용히 새로 받는다. 신호가 없으면 지금 화면을 그대로 둔다(보내기 대기는 outbox.js 가 따로 한다)
 const RESUME_REFRESH_MS = 5 * 60 * 1000;
+// 자정이 지났으면 true. 앱이 넣어 둔 측정일만 오늘로 바꾸고, 사람이 고른 날짜는 그대로 둔다(어제 날짜로 저장되던 문제)
+function rollDate() {
+  const today = todayKst();
+  if (today === autoDate) return false;
+  if ($('date').value === autoDate) $('date').value = today;
+  autoDate = today;
+  return true;
+}
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState !== 'visible' || !state.ready || !state.code) return;
-  if (Date.now() - lastBootAt < RESUME_REFRESH_MS) return;
+  const newDay = rollDate();
+  const stale = Date.now() - lastBootAt >= RESUME_REFRESH_MS;
+  if (newDay || stale) window.schedOnOpen?.();   // 홈 일정·오늘의 공지 판
+  if (!stale) return;
   try {
     const boot = await fetchBoot();
     state.offline = false;

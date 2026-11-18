@@ -651,7 +651,7 @@ async function schedSaveImport() {
 
 // ---------- 시작 ----------
 
-let schedStarted = false;
+let schedTodayWas = '';   // 지난번에 연 날의 오늘. 자정이 지나 다시 열면 그날을 보고 있던 달력만 오늘로 옮긴다
 // ---------- 오늘의 공지 판(2026-11-11 8차) ----------
 // 오늘이 든 달을 읽었을 때만 새로 만든다(다른 달을 보고 있어도 판은 그대로). 규칙은 SchedParse.todayBoard(휴대폰·PC 공용)
 const SCHED_BOARD_MEMOS = 3;   // 오늘 메모는 3줄까지, 나머지는 「외 N건」
@@ -732,12 +732,12 @@ function schedRenderBoard() {
 }
 
 function schedOnOpen() {
-  if (!schedStarted) {
-    schedStarted = true;
-    const today = todayKst();
+  const today = todayKst();
+  if (!schedTodayWas || (today !== schedTodayWas && sched.selected === schedTodayWas)) {
     sched.selected = today;
     sched.month = today.slice(0, 7);
   }
+  schedTodayWas = today;
   schedRender();
   schedLoad();
 }

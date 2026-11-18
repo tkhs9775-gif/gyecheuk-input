@@ -13,6 +13,15 @@ const store = {
   set(key, value) { try { localStorage.setItem(key, value); } catch { /* 저장 못 해도 앱은 동작해야 한다 */ } },
   remove(key) { try { localStorage.removeItem(key); } catch { /* 위와 같음 */ } },
 };
+// 이 기기의 무작위 표시(직원 앱 app.js deviceId 와 같은 저장 키). 서버가 맞게 들어온 적 있는 기기를 기억해, 누가 코드를 여러 번 틀려도 이 기기는 잠그지 않는다
+function deviceId() {
+  let id = store.get('deviceId');
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(id || '')) {
+    id = globalThis.crypto?.randomUUID?.() || `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    store.set('deviceId', id);
+  }
+  return id;
+}
 
 // 기기 시계 기준 오늘(yyyy-MM-dd). toISOString 은 UTC 라 한국 새벽에 어제로 나온다.
 const localToday = () => {
@@ -40,7 +49,7 @@ async function api(action, payload = {}) {
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   let data;
   try {
-    const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ code: state.code, action, ...payload }), signal: ctl.signal });
+    const res = await fetch(API_URL, { method: 'POST', body: JSON.stringify({ code: state.code, device: deviceId(), action, ...payload }), signal: ctl.signal });
     data = await res.json();
   } catch {
     throw Object.assign(new Error('인터넷 연결을 확인하세요.'), { network: true });
