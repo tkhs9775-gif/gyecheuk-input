@@ -478,7 +478,68 @@
     return type !== 'L';
   }
 
+  // 2026-11-18: 다시 볼 때·임시저장·기기 id 판단(Rust resume.rs·lock.rs). wasm 이 아직 없으면 같은 규칙의 JS 로 판단
+  // 글자열 묶음 = 글자열마다 [길이 아래 16비트][길이 위 16비트][UTF-16 글자들] (apps-script/Code.gs rustLock 과 같은 모양)
+  const hasFn = (name) => !!wasm && typeof wasm[name] === 'function';
+  const str = (v) => (v == null ? '' : String(v));
+  function callTexts(strs, fn) {
+    const units = strs.reduce((n, s) => n + 2 + s.length, 0);
+    const ptr = wasm.wasm_alloc(units * 2);
+    try {
+      const dv = new DataView(wasm.memory.buffer);   // 할당 뒤에 본다(메모리가 늘면 buffer 가 바뀐다)
+      let o = ptr;
+      for (const s of strs) {
+        dv.setUint16(o, s.length & 0xFFFF, true); dv.setUint16(o + 2, s.length >>> 16, true); o += 4;
+        for (let i = 0; i < s.length; i += 1, o += 2) dv.setUint16(o, s.charCodeAt(i), true);
+      }
+      return fn(ptr, units);
+    } finally {
+      wasm.wasm_dealloc(ptr, units * 2);
+    }
+  }
+  // wasm 이 없거나 던지면(메모리 모자람 등) 같은 규칙의 JS 답: 다시 열기·임시저장이 멈추지 않게
+  function viaWasm(name, run, js) {
+    if (!hasFn(name)) return js();
+    try { return run(); } catch (err) { console.warn(`${name} 실패, 같은 규칙의 JS 로 판단`, err); return js(); }
+  }
+  const RESUME_REFRESH_MS = 5 * 60 * 1000;   // resume.rs RESUME_REFRESH_MS
+  // 앱이 다시 보일 때 할 일. today = 지금 오늘, autoDate = 앱이 측정일 칸에 넣은 오늘, fieldDate = 측정일 칸 값
+  function rustResumePlan(today, autoDate, fieldDate, nowMs, lastBootMs) {
+    const t = [str(today), str(autoDate), str(fieldDate)];
+    const plan = viaWasm('wasm_resume_plan', () => callTexts(t, (p, n) => wasm.wasm_resume_plan(p, n, Number(nowMs), Number(lastBootMs))), () => {
+      const newDay = t[0] !== t[1];
+      const stale = Number(nowMs) - Number(lastBootMs) >= RESUME_REFRESH_MS;   // NaN 이면 false
+      return (newDay ? 1 | (t[2] === t[1] ? 2 : 0) : 0) | (newDay || stale ? 4 : 0) | (stale ? 8 : 0);
+    });
+    return { rollDay: !!(plan & 1), setField: !!(plan & 2), sched: !!(plan & 4), fetchBoot: !!(plan & 8) };
+  }
+  // 일정 달력을 오늘로 옮길지: 처음 열 때, 또는 자정이 지났는데 그 전날을 보고 있었을 때만
+  function rustSchedFollowToday(today, todayWas, selected) {
+    const t = [str(today), str(todayWas), str(selected)];
+    return viaWasm('wasm_sched_follow_today', () => callTexts(t, (p, n) => wasm.wasm_sched_follow_today(p, n)) === 1,
+      () => !t[1] || (t[0] !== t[1] && t[2] === t[1]));
+  }
+  // 임시저장할 때: 측정일이 앱이 넣은 오늘 그대로인지
+  function rustDateIsAuto(fieldDate, autoDate) {
+    const t = [str(fieldDate), str(autoDate)];
+    return viaWasm('wasm_date_is_auto', () => callTexts(t, (p, n) => wasm.wasm_date_is_auto(p, n)) === 1, () => t[0] === t[1]);
+  }
+  // 임시저장본을 되살릴 때 저장된 날짜를 쓸지: 사람이 고른 날짜만
+  function rustDraftKeepsDate(hasDate, wasAuto) {
+    return viaWasm('wasm_draft_keeps_date', () => wasm.wasm_draft_keeps_date(hasDate ? 1 : 0, wasAuto ? 1 : 0) === 1, () => !!hasDate && !wasAuto);
+  }
+  // 기기 id 모양(서버 lock.rs device_ok 와 같은 규칙: 8~64자, 영문·숫자·'-')
+  function rustDeviceIdOk(id) {
+    if (typeof id !== 'string') return false;
+    return viaWasm('wasm_lock_device_ok', () => callTexts([id], (p, n) => wasm.wasm_lock_device_ok(p, n)) === 1, () => /^[A-Za-z0-9-]{8,64}$/.test(id));
+  }
+
   const api = {
+    resumePlan: rustResumePlan,
+    schedFollowToday: rustSchedFollowToday,
+    dateIsAuto: rustDateIsAuto,
+    draftKeepsDate: rustDraftKeepsDate,
+    deviceIdOk: rustDeviceIdOk,
     drawingNoticeDue: rustDrawingNoticeDue,
     pinValueCells: rustPinValueCells,
     pinValuesOnDrawing: rustPinValuesOnDrawing,
@@ -518,6 +579,11 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       RustCore: api,
+      rustResumePlan,
+      rustSchedFollowToday,
+      rustDateIsAuto,
+      rustDraftKeepsDate,
+      rustDeviceIdOk,
       rustB64ToBytes,
       rustBytesToB64,
       rustSniffImageMime,

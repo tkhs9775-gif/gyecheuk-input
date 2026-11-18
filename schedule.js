@@ -733,7 +733,7 @@ function schedRenderBoard() {
 
 function schedOnOpen() {
   const today = todayKst();
-  if (!schedTodayWas || (today !== schedTodayWas && sched.selected === schedTodayWas)) {
+  if (RustCore.schedFollowToday(today, schedTodayWas, sched.selected)) {   // 판단은 Rust(resume.rs sched_follow_today)
     sched.selected = today;
     sched.month = today.slice(0, 7);
   }

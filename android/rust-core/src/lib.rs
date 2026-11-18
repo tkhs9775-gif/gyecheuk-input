@@ -1,4 +1,6 @@
+pub mod lock;
 pub mod readcache;
+pub mod resume;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pushopen;
 

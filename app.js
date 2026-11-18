@@ -805,7 +805,7 @@ function persistDraft() {
     values: MULTI_IDS.map((id) => $(id).value),
     memo: $('memo').value,
     date: $('date').value,
-    dateAuto: $('date').value === autoDate,   // 앱이 넣은 '오늘'이면 다음에 되살릴 때 그날의 오늘로 바꾼다
+    dateAuto: RustCore.dateIsAuto($('date').value, autoDate),   // 앱이 넣은 '오늘'이면 다음에 되살릴 때 그날의 오늘로 바꾼다(판단은 Rust resume.rs)
   };
   store.set('draft', JSON.stringify(draft));
 }
@@ -833,7 +833,7 @@ function restoreDraft() {
   $('value').value = draft.value ?? '';
   MULTI_IDS.forEach((id, i) => { $(id).value = draft.values?.[i] ?? ''; });
   $('memo').value = draft.memo ?? '';
-  if (draft.date && !draft.dateAuto) $('date').value = draft.date;   // 사람이 고른 날짜만 되살린다(표시가 없는 옛 저장본은 전처럼)
+  if (RustCore.draftKeepsDate(!!draft.date, !!draft.dateAuto)) $('date').value = draft.date;   // 사람이 고른 날짜만 되살린다(표시가 없는 옛 저장본은 전처럼, 판단은 Rust resume.rs)
   updateValueInfo();
   return true;
 }
@@ -1093,7 +1093,7 @@ const DEVICE_PING_MS = 6 * 60 * 60 * 1000;   // 판·측정자가 그대로면 6
 
 function deviceId() {
   let id = store.get('deviceId');
-  if (!/^[A-Za-z0-9-]{8,64}$/.test(id || '')) {
+  if (!RustCore.deviceIdOk(id)) {   // 서버와 같은 규칙(Rust lock.rs device_ok)
     id = globalThis.crypto?.randomUUID?.() || `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     store.set('deviceId', id);
   }
@@ -1140,10 +1140,13 @@ async function renderDevices() {
 
 // 설정·전회값·내 최근 입력을 서버에서 받는다. 새 서버는 boot 한 번(요청마다 1.5초 안팎), boot를 모르는 옛 서버는 config만 받고 나머지는 따로.
 // 받는 사이 측정자를 바꾸거나 저장해서 더 새 목록을 부르면 그쪽이 이기도록 순번을 미리 올려 둔다
-let autoDate = '';    // 앱이 측정일 칸에 넣은 '오늘'(openApp·rollDate)
+let autoDate = '';    // 앱이 측정일 칸에 넣은 '오늘'(openApp·다시 보일 때)
 let lastBootAt = 0;   // 마지막으로 boot 를 부른 시각(다시 보일 때 새로 받을지 정한다)
-async function fetchBoot() {
-  lastBootAt = Date.now();
+function fetchBoot() {
+  lastBootAt = Date.now();   // 받는 중에 다시 보여도 또 부르지 않는다
+  return bootOrConfig().catch((err) => { lastBootAt = 0; throw err; });   // 못 받았으면 다음에 다시 보일 때 바로 다시 받는다
+}
+async function bootOrConfig() {
   const user = store.get('user') || '';
   const seq = { latest: ++latestSeq, recent: ++recentSeq, user };
   try {
@@ -1262,22 +1265,16 @@ async function refreshInBackground() {
 }
 
 // 2026-11-18: 앱을 끄지 않고 뒤로 보냈다 다시 열면 시트에서 고친 계측기 목록이 안 바뀌었다(켤 때만 받았다).
-// 다시 보일 때 RESUME_REFRESH_MS 넘게 지났으면 조용히 새로 받는다. 신호가 없으면 지금 화면을 그대로 둔다(보내기 대기는 outbox.js 가 따로 한다)
-const RESUME_REFRESH_MS = 5 * 60 * 1000;
-// 자정이 지났으면 true. 앱이 넣어 둔 측정일만 오늘로 바꾸고, 사람이 고른 날짜는 그대로 둔다(어제 날짜로 저장되던 문제)
-function rollDate() {
-  const today = todayKst();
-  if (today === autoDate) return false;
-  if ($('date').value === autoDate) $('date').value = today;
-  autoDate = today;
-  return true;
-}
+// 다시 보일 때 무엇을 할지는 Rust(resume.rs resume_plan)가 정한다: 5분 넘게 지났으면 조용히 새로 받고,
+// 자정이 지났으면 앱이 넣어 둔 측정일만 오늘로 바꾼다(사람이 고른 날짜는 그대로 — 어제 날짜로 저장되던 문제). 신호가 없으면 지금 화면을 그대로 둔다(보내기 대기는 outbox.js 가 따로 한다)
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState !== 'visible' || !state.ready || !state.code) return;
-  const newDay = rollDate();
-  const stale = Date.now() - lastBootAt >= RESUME_REFRESH_MS;
-  if (newDay || stale) window.schedOnOpen?.();   // 홈 일정·오늘의 공지 판
-  if (!stale) return;
+  const today = todayKst();
+  const plan = RustCore.resumePlan(today, autoDate, $('date').value, Date.now(), lastBootAt);
+  if (plan.setField) $('date').value = today;
+  if (plan.rollDay) autoDate = today;
+  if (plan.sched) window.schedOnOpen?.();   // 홈 일정·오늘의 공지 판
+  if (!plan.fetchBoot) return;
   try {
     const boot = await fetchBoot();
     state.offline = false;
