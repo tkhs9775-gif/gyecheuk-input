@@ -2082,19 +2082,26 @@ function nextGroupBase(type, page) {
   return String(Math.max(0, ...bases.filter(Number.isFinite)) + 1);
 }
 
+// 그 밖의 종류: 이미 있는 번호와 겹치지 않게 (개수, 가장 큰 번호) 중 큰 것 + 1
+function nextPinNumber(type, page) {
+  if (GROUP_TYPES.includes(type)) return nextGroupBase(type, page);
+  const same = (drawingState.notes.pins || []).filter((p) => p.page === page && (p.type || '') === (type || ''));
+  const nums = same.map((p) => Number(p.num)).filter(Number.isFinite);
+  return String(Math.max(same.length, ...nums) + 1);
+}
+
 async function askPinNumber(type, page) {
   const dlg = $('pinNumDialog');
   const grouped = GROUP_TYPES.includes(type);
-  const same = (drawingState.notes.pins || []).filter((p) => p.page === page && (p.type || '') === (type || ''));
   $('pinNumLabel').textContent = type ? `${type} ${pinTypeName(type)} 번호 (원 안에 ${type}+번호로 표시)` : '번호 (원 안에 표시)';
   show($('pinLevelField'), grouped);
-  $('pinNumInput').value = grouped ? nextGroupBase(type, page) : String(same.length + 1);
+  $('pinNumInput').value = nextPinNumber(type, page);
   dlg.returnValue = '';   // 바탕을 눌러 닫으면 취소
   dlg.showModal();
   $('pinNumInput').select();
   await new Promise((resolve) => dlg.addEventListener('close', resolve, { once: true }));
   if (dlg.returnValue !== 'ok') return null;
-  return $('pinNumInput').value.trim().replace(/\s+/g, '') || (grouped ? nextGroupBase(type, page) : String(same.length + 1));
+  return $('pinNumInput').value.trim().replace(/\s+/g, '') || nextPinNumber(type, page);
 }
 
 function visiblePagePins() {
@@ -2211,9 +2218,12 @@ async function handleStageTapForPin(e) {
   const levels = grouped ? Math.max(1, Math.min(9, parseInt($('pinLevelInput').value, 10) || 1)) : 0;
   const time = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   const make = (n) => ({ id: crypto.randomUUID(), page, x, y, type, num: n, text: '', author: $('user')?.value || '', time });
-  // 하중계·변형률계: 같은 지점의 단을 한 번에 만든다(번호 'L1-1단'…). 이미 있는 지점 번호면 새로 만들지 않고 그 지점을 연다
-  const existing = grouped ? pinItems(drawingState.notes.pins.filter((p) => p.page === page && p.type === type)).find((it) => it.base === num) : null;
-  if (existing) { openPinMemoBox(existing.anchor.id); return; }
+  // 하중계·변형률계: 같은 지점의 단을 한 번에 만든다(번호 'L1-1단'…). 이미 있는 번호(W1 등 원 안 표시가 같은 것 포함)면
+  // 새로 만들지 않고 그 메모를 연다 — 같은 번호 동그라미가 두 개 생기던 문제(한남동 W1~4, 11-17)
+  const existing = grouped
+    ? pinItems(drawingState.notes.pins.filter((p) => p.page === page && p.type === type)).find((it) => it.base === num)?.anchor
+    : drawingState.notes.pins.find((p) => p.page === page && (p.type || '') === (type || '') && pinLabel(p) === `${type || ''}${num}`);
+  if (existing) { openPinMemoBox(existing.id); return; }
   const added = grouped ? Array.from({ length: levels }, (_, i) => make(`${num}-${i + 1}단`)) : [make(num)];
   drawingState.notes.pins.push(...added);
   markDirty();
