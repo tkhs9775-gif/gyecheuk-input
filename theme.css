@@ -126,4 +126,6 @@ html[data-theme="dark"] .pin-hist-row.last .v { color: #8FBAFF; }
 /* 계측용 줄: 흰 글자를 얹는 꼬리표는 단색 파랑(accent-fill, 4.7:1) */
 html[data-theme="dark"] .list li.drawing.template { border-color: var(--accent); }
 html[data-theme="dark"] .list li.drawing.template .kind { background: var(--accent-fill); }
+/* 원본 줄: 라이트의 연노랑 띠는 다크에서 회색 막이 돼 날짜·› 글자가 3.2:1 → 옅은 호박색 띠(약 5.6:1) */
+html[data-theme="dark"] .list li.drawing.is-original { background: linear-gradient(90deg, rgba(217, 155, 38, 0.18) 0%, transparent 48%); }
 /* 손글씨(OCR) 패드: .ocr-canvas-wrap · #ocrPadCanvas 는 글씨를 쓰는 종이라 흰색 그대로 */
