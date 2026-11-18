@@ -911,7 +911,7 @@ function drawingFileRow(it, group, inFolder = false) {
 }
 
 // 계측용(번호만) 줄: 원본 메모(원본에 저장한 적 없으면 최근 저장본 메모)의 동그라미를 값 없이 원본 위에 띄우는 가상 도면(파일로 만들지 않는다).
-// 저장본이 있는 원본 아래에만 보인다. small 의 '전회' 날짜는 최근 저장본 날짜다(원본 메모는 목록에서 받지 않는다)
+// 저장본이 있는 원본 아래에만 보인다. small 에 날짜는 넣지 않는다: 목록은 원본 메모를 받지 않고, 저장본은 [저장] 단일화(32a4c1f) 뒤로 새로 안 생겨 그 날짜가 멈춰 있다
 function templateRow(group) {
   const latest = group.saved[0];
   const title = document.createDocumentFragment();
@@ -919,10 +919,9 @@ function templateRow(group) {
   kind.className = 'kind';
   kind.textContent = '계측용';
   title.append(kind, group.name);
-  const when = latest.date === todayKst() ? '오늘 저장본 있음' : `전회 ${dateTitle(latest)}`;
   return drawingRow({
     title,
-    sub: `번호만 있는 동그라미 · 터치해 오늘 값 입력 · ${when}`,
+    sub: '번호만 있는 동그라미 · 터치해 오늘 값 입력',
     onOpen: () => openTemplateDrawing(group),
     cls: 'template',
     data: { template: group.name, latestId: latest.file.id },
