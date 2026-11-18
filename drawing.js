@@ -910,7 +910,8 @@ function drawingFileRow(it, group, inFolder = false) {
   return drawingRow({ title, sub: [f.updated || '', fmtSize(f.size || 0)].filter(Boolean).join(' · '), onOpen: open, cls, data });
 }
 
-// 계측용(번호만) 줄: 최근 저장본의 동그라미를 값 없이 원본 위에 띄우는 가상 도면(파일로 만들지 않는다). 저장본이 있는 원본 아래에만 보인다
+// 계측용(번호만) 줄: 원본 메모(원본에 저장한 적 없으면 최근 저장본 메모)의 동그라미를 값 없이 원본 위에 띄우는 가상 도면(파일로 만들지 않는다).
+// 저장본이 있는 원본 아래에만 보인다. small 의 '전회' 날짜는 최근 저장본 날짜다(원본 메모는 목록에서 받지 않는다)
 function templateRow(group) {
   const latest = group.saved[0];
   const title = document.createDocumentFragment();
@@ -1161,9 +1162,9 @@ let openSeq = 0;              // 도면을 연달아 두 번 누르면 먼저 �
 let viewerReturnFocus = null; // 뷰어를 닫으면 열기 전에 있던 자리(도면 줄)로 포커스를 돌려준다
 let closingViewer = false;
 
-// 계측용(번호만) 도면: 최근 저장본의 동그라미만(지난 값은 history 로) 원본 위에 띄운다. Drive 파일이 아니라 열 때 만드는 가상 파일이고,
-// id 는 'tpl:<현장>|<원본이름>' 로 묶음마다 하나다(그 뒤 다른 폰이 새 저장본을 만들어도 이 폰에 적어 둔 값을 같은 키로 찾는다).
-// 값을 적고 닫으면 다른이름 저장과 같은 흐름으로 '<원본이름>_오늘날짜(요).pdf' 가 <원본이름>/저장본 에 저장된다(name 이 원본 이름이라 같은 묶음에 들어간다).
+// 계측용(번호만) 도면: 원본의 동그라미만(지난 값은 history 로) 원본 위에 띄운다. Drive 파일이 아니라 열 때 만드는 가상 파일이고,
+// id 는 'tpl:<현장>|<원본이름>' 로 묶음마다 하나다(이 폰에서 적다가 저장 못 한 값을 같은 키로 찾는다).
+// [저장]은 원본 메모에 쓴다(32a4c1f) → 바탕도 원본 메모다. 원본에 아직 저장한 적 없는 현장(저장본으로만 적던 곳)은 최근 저장본 메모가 바탕이다(templateBaseNotes).
 // 메모는 폰 보관분 → 서버 순으로 받아 templateNotes() 로 만든다. 고치다가 저장 못 한 값이 폰에 남아 있으면(앱이 꺼졌던 경우) 그것을 이어서 쓴다
 const TEMPLATE_PREFIX = 'tpl:';
 const templateId = (site, family) => `${TEMPLATE_PREFIX}${site}|${family}`;
@@ -1177,17 +1178,24 @@ async function openTemplateDrawing(group) {
   const file = { id: templateId(drawingState.site, group.name), name: `${group.name}.pdf`, label: `계측용 · ${group.name}`, templateOf: latest.id, mime: 'application/pdf' };
   const latestNotes = normalizeNotes(readCached(`pdf_notes_${latest.id}`));
   const source = sourceFileOf(latest, latestNotes, allDrawingFiles()) || original;
-  const fresh = templateNotes(latestNotes, today);
-  // 폰에 적어 둔 값(고친 게 있을 때만 남는다)이 있으면 이어서 쓴다: 지난 날짜 값은 history 로 넘기고(오늘 값처럼 보이지 않게), 그사이 생긴 최근 저장본의 동그라미와 합친다
+  const origNotes = normalizeNotes(readCached(`pdf_notes_${source.id}`));
+  // 폰에 적어 둔 값(고친 게 있을 때만 남는다)이 있으면 이어서 쓴다: 지난 날짜 값은 history 로 넘기고(오늘 값처럼 보이지 않게), 그사이 생긴 동그라미와 합친다
   const kept = templateNotes(normalizeNotes(readCached(`pdf_notes_${file.id}`)), today);
   const resuming = kept.pins.length > 0;
-  const build = (base) => (resuming ? mergeResumeNotes(kept, base, today) : base);   // 최근 저장본 템플릿이 바탕, 그 위에 내 미저장분
-  const notes = build(fresh);
+  const build = (orig, saved) => {
+    const base = templateBaseNotes(templateNotes(orig, today), templateNotes(saved, today), today);
+    return resuming ? mergeResumeNotes(kept, base, today) : base;   // 원본(또는 최근 저장본)이 바탕, 그 위에 내 미저장분
+  };
+  const notes = build(origNotes, latestNotes);
   // 서버 메모는 줄이 있을 때만(updated) 받아들인다: 메모 없이 올린 저장본이면 서버가 빈 메모를 돌려주는데, 그것으로 폰에 있던 동그라미를 지우지 않게.
-  // 이어쓰는 중에도 받는다(그사이 다른 사람이 저장한 지난 값·새 동그라미가 들어오게). 열고 나서 고친 게 있으면 applyServerNotes 가 덮지 않는다
-  const notesPromise = fetchDrawingNotes(latest.id)
-    .then((res) => (res?.updated && res.data ? { updated: res.updated, data: build(templateNotes(normalizeNotes(res.data), today)) } : null))
-    .catch((err) => { console.warn('최근 저장본 메모 조회 실패', err); return null; });
+  // 원본·최근 저장본을 같이 받고, 못 받은 쪽은 폰 보관분을 쓴다. 이어쓰는 중에도 받는다(다른 폰이 원본에 저장한 오늘 값·지난 값·새 동그라미가 들어오게).
+  // 열고 나서 고친 게 있으면 applyServerNotes 가 덮지 않는다
+  const got = (id) => fetchDrawingNotes(id)
+    .then((res) => (res?.updated && res.data ? res : null))
+    .catch((err) => { console.warn('계측용 메모 조회 실패', id, err); return null; });
+  const notesPromise = Promise.all([got(source.id), got(latest.id)]).then(([o, s]) => (o || s
+    ? { updated: (o || s).updated, data: build(o ? normalizeNotes(o.data) : origNotes, s ? normalizeNotes(s.data) : latestNotes) }
+    : null));
   await openPdfFieldbook(file, { source, notes, notesPromise });
   // 동그라미를 하나도 못 불러왔으면(다른 폰이 저장한 저장본인데 서버 메모를 못 받음) 닫는다: 빈 도면에 새로 찍어 저장하면 그것이 최근 저장본이 되어 옛 동그라미 사슬이 끊긴다
   if (drawingState.currentFile === file && !drawingState.notes.pins.length) {
@@ -3283,7 +3291,11 @@ async function doSaveDrawingNotes(showAlert) {
 
     store.set(`pdf_notes_${targetFile.id}`, JSON.stringify(notesAtBuild));
     syncPendingOutboxDrawings();
-    if (notesVersion === ver) drawingState.dirty = false;
+    if (notesVersion === ver) {
+      drawingState.dirty = false;
+      // 계측용(가상) 폰 보관분은 원본에 넘겼으니 치운다: 남겨 두면 다시 열 때 옛 오늘 값이 다른 폰이 고친 값을 덮고, 원본에서 지운 동그라미가 되살아난다
+      if (file.templateOf) store.remove(`pdf_notes_${file.id}`);
+    }
     tr?.step('save:done');
     tr?.end(result === 'queued' ? 'queued' : 'ok');
     if (btn) btn.textContent = result === 'queued' ? '폰보관✓' : '저장됨✓';
@@ -3470,6 +3482,25 @@ function mergeResumeNotes(kept, fresh, today) {
   return out;
 }
 
+// 순수 함수: 계측용 도면의 바탕 고르기(둘 다 templateNotes 를 거친 것). [저장]은 원본 메모에 쓰므로(32a4c1f) 원본 메모(orig)에 적힌 가장 늦은 측정일이
+// 최근 저장본(saved)과 같거나 늦으면 원본이 바탕, 아니면(저장본으로만 적다가 아직 원본에 저장한 적 없는 현장) 저장본이 바탕이다.
+// 다른 쪽은 같은 동그라미(id)의 지난 값만 보탠다. 다른 쪽에만 있는 동그라미는 넣지 않는다(원본에서 지운 동그라미를 옛 저장본이 되살리지 않게)
+function templateBaseNotes(orig, saved, today) {
+  const lastDate = (n) => (Array.isArray(n?.pins) ? n.pins : [])
+    .flatMap((p) => [p, ...(Array.isArray(p.history) ? p.history : [])])
+    .reduce((m, h) => (h && h.text && typeof h.date === 'string' && h.date > m ? h.date : m), '');
+  const useOrig = Array.isArray(orig?.pins) && orig.pins.length > 0 && lastDate(orig) >= lastDate(saved);
+  const [base, other] = useOrig ? [orig, saved] : [saved || { pins: [], strokes: {} }, orig];
+  // 같은 날짜 값이 양쪽에 다르게 있으면 바탕 것만 둔다(둘 다 남기면 다른 쪽 값이 뒤에 붙어 '전회'가 된다)
+  const baseDates = new Map((Array.isArray(base.pins) ? base.pins : []).filter((p) => p && p.id)
+    .map((p) => [p.id, new Set((Array.isArray(p.history) ? p.history : []).map((h) => h && h.date))]));
+  const otherPins = (Array.isArray(other?.pins) ? other.pins : []).filter((p) => p && p.id).map((p) => (Array.isArray(p.history)
+    ? { ...p, history: p.history.filter((h) => !baseDates.get(p.id)?.has(h && h.date)) } : p));
+  const merged = mergeResumeNotes({ ...other, pins: otherPins }, base, today);
+  const ids = new Set((Array.isArray(base.pins) ? base.pins : []).map((p) => p && p.id));
+  return { ...merged, pins: merged.pins.filter((p) => ids.has(p.id)) };
+}
+
 function unionPinHistory(a, b) {
   const seen = new Set();
   const out = [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]
@@ -3630,4 +3661,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { isMultiCell, valuesOnDrawing, rowCells, buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, PIN_TYPES, annotationBounds, placeOcrInCells, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState, pickEvictions, cacheBudgetOf, resolveNotesResponse, shouldUseTiles, planVisibleTiles };
+if (typeof module !== 'undefined') module.exports = { isMultiCell, valuesOnDrawing, rowCells, buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, templateBaseNotes, PIN_TYPES, annotationBounds, placeOcrInCells, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState, pickEvictions, cacheBudgetOf, resolveNotesResponse, shouldUseTiles, planVisibleTiles };
