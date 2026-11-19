@@ -566,8 +566,35 @@
     const r = textCall(1, [str(text), str(prev)]);
     return r && r.length ? { why: r[0], fixes: r.slice(1) } : null;
   }
+  // 2026-11-19 작업 1: 도면 메모 저장 전 동그라미 합치기(Rust merge.rs wasm_merge_notes). 합친 동그라미 배열, wasm 이 없거나 실패하면 null
+  function rustMergeNotesPins(minePins, theirPins, today) {
+    if (!hasFn('wasm_merge_notes')) return null;
+    const strs = [JSON.stringify(Array.isArray(minePins) ? minePins : []), JSON.stringify(Array.isArray(theirPins) ? theirPins : []), str(today)];
+    let cap = (strs[0].length + strs[1].length) * 2 + 4096;
+    for (let tries = 0; tries < 3; tries += 1, cap *= 2) {   // -2 = 칸이 모자람 → 두 배로 다시
+      const out = wasm.wasm_alloc(cap * 2);
+      if (!out) return null;
+      try {
+        const n = callTexts(strs, (p, units) => wasm.wasm_merge_notes(p, units, out, cap));
+        if (n === -2) continue;
+        if (n < 0) return null;
+        const u16 = new Uint16Array(wasm.memory.buffer.slice(out, out + n * 2));   // out 은 홀수 주소일 수 있다 → 복사본으로 읽는다
+        let s = '';
+        for (let i = 0; i < u16.length; i += 8192) s += String.fromCharCode.apply(null, u16.subarray(i, i + 8192));
+        const pins = JSON.parse(s);
+        return Array.isArray(pins) ? pins : null;
+      } catch (err) {
+        console.warn('wasm_merge_notes 실패', err);
+        return null;
+      } finally {
+        wasm.wasm_dealloc(out, cap * 2);
+      }
+    }
+    return null;
+  }
 
   const api = {
+    mergeNotesPins: rustMergeNotesPins,
     resumePlan: rustResumePlan,
     schedFollowToday: rustSchedFollowToday,
     dateIsAuto: rustDateIsAuto,

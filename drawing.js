@@ -3434,7 +3434,7 @@ async function fetchRival(callApi, site, fileName, excludeId, check = () => {}) 
   }
 }
 
-// 보관함(outbox.js)이 도면 업로드를 보내기 직전에 부른다: 같은 이름 저장본을 다른 폰이 먼저 올렸으면 그 오늘 값을 합치고 PDF 를 다시 만든 항목을 돌려준다.
+// 보관함(outbox.js)이 도면 업로드를 보내기 직전에 부른다: 같은 이름 저장본을 다른 폰이 먼저 올렸으면 그 값을 합치고(merge.rs) PDF 를 다시 만든 항목을 돌려준다.
 // 안 하면 replaceSameName 으로 먼저 적은 값이 사라진다. 저장 버튼이 이 왕복(1.5~3초)을 기다리지 않게 여기로 옮겼다.
 // 그쪽 메모를 못 받으면 던진다 → 보관함이 올리지 않고 나중에 다시 한다(덮어쓰지 않음)
 async function beforeOutboxSend(item) {
@@ -3483,10 +3483,13 @@ async function beforeOutboxSend(item) {
   return { ...item, payload: { ...item.payload, file: { ...sent, base64, notes } } };
 }
 
-// 순수 함수: 내 메모(mine)에 그쪽 메모(theirs)를 합친다. 내 동그라미는 그대로 두고, 그쪽에만 있는 동그라미는 그쪽이 오늘 값을 적은 것만 더한다
-// (둘 다 같은 저장본에서 출발했으므로 그쪽에만 남은 옛 동그라미는 내가 오늘 지운 것일 수 있다 — 되살리지 않는다. 한계: 그쪽이 오늘 찍고 값은 안 적은 동그라미는 안 들어온다).
-// 같은 동그라미(id)는 내게 오늘 값이 없고 그쪽에 오늘 값이 있을 때만 그쪽 값(text·date·history·author)을 받는다. 둘 다 오늘 값이면 내 것. 필기(strokes)는 내 것만
+// 내 메모(mine)에 그쪽 메모(theirs)를 합친다. 동그라미 합치기 규칙은 Rust(rust-core/src/merge.rs, 2026-11-19 도면 값 사라짐 고침):
+// 다른 폰의 지난 날 값·새 동그라미도 남긴다. 필기(strokes)·sourceId 등 동그라미 밖은 내 것
 function mergeNotesForSave(mine, theirs, today) {
+  const rc = rustCore();
+  const rustPins = rc?.mergeNotesPins ? rc.mergeNotesPins(mine.pins || [], Array.isArray(theirs?.pins) ? theirs.pins : [], today) : null;
+  if (rustPins) return { ...mine, pins: rustPins };
+  // TODO(wasm 없음): 사용자 결정 대기 — wasm 을 못 부르면 아래 옛 동작(그쪽 오늘 값만 받음) 그대로
   const theirPins = Array.isArray(theirs?.pins) ? theirs.pins.filter((p) => p && p.id) : [];
   const byId = new Map(theirPins.map((p) => [p.id, p]));
   const pins = (mine.pins || []).map((p) => {
