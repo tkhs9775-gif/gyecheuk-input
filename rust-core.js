@@ -562,6 +562,12 @@
     }
   }
   // 값 칸 오타 제안: null(고칠 것 없음·wasm 없음) 또는 { why, fixes }
+  // 실시간 줄을 몇 ms 뒤에 보낼지(Rust livepins.rs send_wait_ms). wasm 이 없으면 null(부르는 쪽이 예전 방식)
+  function rustLiveSendWaitMs(nowMs, lastChangeMs, firstPendingMs, leaving) {
+    if (!wasm || typeof wasm.wasm_live_send_wait_ms !== 'function') return null;
+    return wasm.wasm_live_send_wait_ms(nowMs, lastChangeMs, firstPendingMs, leaving ? 1 : 0);
+  }
+
   function rustValueFix(text, prev) {
     const r = textCall(1, [str(text), str(prev)]);
     return r && r.length ? { why: r[0], fixes: r.slice(1) } : null;
@@ -604,6 +610,7 @@
     drawingNoticeDue: rustDrawingNoticeDue,
     pinValueCells: rustPinValueCells,
     pinValuesOnDrawing: rustPinValuesOnDrawing,
+    liveSendWaitMs: rustLiveSendWaitMs,
     ensure: ensureRustWasm,
     ensureRustWasm,
     tryInstantiateSync,

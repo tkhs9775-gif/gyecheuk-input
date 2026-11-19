@@ -49,7 +49,6 @@ const PERMANENT_ERRORS = ['invalid', 'bad_code', 'forbidden', 'expired', 'not_fo
 function classifyFailure(err, tries) {
   if (err.network || err.code === 'locked' || err.code === CORE_UNAVAILABLE) return 'stop';
   if (err.fields || PERMANENT_ERRORS.includes(err.code)) return 'failed';
-  if (err.code === 'core_unavailable') return 'retry';   // 서버 Rust 코어가 아직 없음: 잃지 않게 횟수와 상관없이 보관한 채 다음 기회에 다시(실패로 굳히지 않는다)
   return tries + 1 >= MAX_SERVER_TRIES ? 'failed' : 'retry';
 }
 
