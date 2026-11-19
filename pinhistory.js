@@ -131,23 +131,41 @@ function templateNotes(notes, today) {
   return out;
 }
 
-// 셀 한 칸 글자 수 제한에 맞게 history를 줄인다(최근 것 남김).
+// 셀 한 칸 글자 수 제한에 맞게 history를 줄인다 → { notes, dropped }(뺀 지난 기록 수). 입력은 안 바꾼다.
+// 어떤 기록을 뺄지는 Rust trim.rs(가장 오래된 것부터)가 정한다. 여기는 그 목록대로 빼기만 한다
+function trimNotesForCellInfo(notes, maxLen = 45000) {
+  if (!notes || !Array.isArray(notes.pins)) return { notes, dropped: 0 };
+  const core = typeof globalThis !== 'undefined' ? globalThis.RustCore : null;
+  const plan = core && typeof core.trimPlan === 'function' ? core.trimPlan(JSON.stringify(notes), maxLen) : null;
+  if (!plan) return { notes: null, dropped: 0, unavailable: true };   // wasm 없음: 자르지도 보내지도 않는다(사용자 결정 2026-11-19)
+  if (!plan.length) return { notes, dropped: 0 };
+  const drop = new Set(plan.map(([pi, hi]) => `${pi}:${hi}`));
+  const pins = notes.pins.map((p, pi) => (p && Array.isArray(p.history)
+    ? { ...p, history: p.history.filter((_, hi) => !drop.has(`${pi}:${hi}`)) } : p));
+  return { notes: { ...notes, pins }, dropped: plan.length };
+}
+
+// 예전 호출처용: 줄인 메모만 돌려준다. wasm 이 없으면 null(부르는 쪽은 보내지 않는다)
 function trimNotesForCell(notes, maxLen = 45000) {
-  if (!notes || !Array.isArray(notes.pins)) return notes;
-  let out = notes;
-  for (const keep of [MAX_PIN_HISTORY, 10, 5, 0]) {
-    out = {
-      ...notes,
-      pins: notes.pins.map((p) => (Array.isArray(p.history) ? { ...p, history: keep ? p.history.slice(-keep) : [] } : p)),
-    };
-    if (JSON.stringify(out).length <= maxLen) return out;
-  }
-  return out;
+  return trimNotesForCellInfo(notes, maxLen).notes;
+}
+
+// wasm 이 없을 때 던지는 오류: 서버(Code.gs)가 같은 코드로 거절할 때와 같게 보관함(outbox.js)이 지우지 않고 보관한다
+function coreUnavailableError() {
+  const e = new Error('계산 모듈을 아직 못 불러왔습니다. 입력은 이 폰에 보관했으니 잠시 후 다시 시도합니다.');
+  e.code = 'core_unavailable';
+  return e;
+}
+// 보내기 직전용: 줄인 메모를 돌려주거나, wasm 이 없으면 core_unavailable 을 던진다
+function trimNotesOrHold(notes, maxLen = 45000) {
+  const r = trimNotesForCellInfo(notes, maxLen);
+  if (r.unavailable) throw coreUnavailableError();
+  return r.notes;
 }
 
 if (typeof module !== 'undefined') {
   module.exports = {
-    MAX_PIN_HISTORY, readingNumber, pushPinHistory, pinReadings, readingSummary, trimNotesForCell,
+    MAX_PIN_HISTORY, readingNumber, pushPinHistory, pinReadings, readingSummary, trimNotesForCell, trimNotesForCellInfo, trimNotesOrHold, coreUnavailableError,
     pinSignedDiff, readingTiles, templateNotes, familyPinHistory, mergePinPast,
   };
 }

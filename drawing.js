@@ -3206,7 +3206,8 @@ function scheduleLivePins() {
   if (!file || !user) return;
   const sourceId = (drawingState.sourceFile || file).id;
   const mine = (drawingState.notes.pins || []).filter((p) => p.author === user && String(p.text || '').trim());
-  const pins = typeof trimNotesForCell === 'function' ? trimNotesForCell({ pins: mine }).pins : mine;   // 시트 한 칸 한도 안으로
+  const pins = typeof trimNotesForCell === 'function' ? trimNotesForCell({ pins: mine })?.pins : mine;   // 시트 한 칸 한도 안으로
+  if (!pins) return;   // 계산 모듈(wasm) 없음: 실시간 줄은 보내지 않는다(값은 화면·폰 메모에 그대로, 다음 변경 때 다시)
   const key = `live:${sourceId}:${user}`;
   const body = JSON.stringify(pins);
   if (livePinsSent[key] === body || (livePinsSent[key] === undefined && !pins.length)) return;
@@ -3345,7 +3346,10 @@ async function doSaveDrawingNotes(showAlert) {
 
   try {
     const notesAtBuild = structuredClone(drawingState.notes);
-    const savedNotes = typeof trimNotesForCell === 'function' ? trimNotesForCell(notesAtBuild) : notesAtBuild;
+    const trimmed = typeof trimNotesForCellInfo === 'function' ? trimNotesForCellInfo(notesAtBuild) : { notes: notesAtBuild, dropped: 0 };
+    // 계산 모듈(wasm) 없음: 자르지 않은 채 보관함에 넣는다 → 보내기 직전(beforeOutboxSend)이 다시 막아 보관함에 남고, 모듈이 뜨면 그때 잘라 보낸다
+    const savedNotes = trimmed.unavailable ? notesAtBuild : trimmed.notes;
+    if (trimmed.dropped) alert(`지난 기록 ${trimmed.dropped}개가 칸 크기 때문에 빠졌습니다(가장 오래된 것부터 뺐습니다).`);
     const uid = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -3372,8 +3376,9 @@ async function doSaveDrawingNotes(showAlert) {
     }
     tr?.step('save:done');
     tr?.end(result === 'queued' ? 'queued' : 'ok');
-    if (btn) btn.textContent = result === 'queued' ? '폰보관✓' : '저장됨✓';
-    if (showAlert) {
+    if (btn) btn.textContent = result === 'queued' || trimmed.unavailable ? '폰보관✓' : '저장됨✓';
+    if (trimmed.unavailable) alert(`'${targetFile.name}' 메모를 이 폰 보관함에 두었습니다. 계산 모듈을 아직 못 불러와 서버에는 보내지 않았습니다. 잠시 후 다시 시도합니다.`);
+    else if (showAlert) {
       alert(result === 'queued'
         ? `'${targetFile.name}' 메모를 이 폰에 보관했습니다. 신호가 잡히면 자동으로 저장됩니다.`
         : `'${targetFile.name}' 도면에 동그라미 메모를 저장했습니다.`);
@@ -3477,25 +3482,29 @@ async function fetchRival(callApi, site, fileName, excludeId, check = () => {}) 
 async function beforeOutboxSend(item) {
   if (!rustCore()?.isWasmReady?.()) await Promise.resolve(rustCore()?.ensure?.()).catch(() => null);   // 합치기는 wasm 으로만 한다(못 띄우면 mergeNotesForSave 가 던진다)
   if (item?.kind === 'drawing_notes' && item.payload?.fileId && item.payload?.data) {
+    trimNotesOrHold(item.payload.data);   // 계산 모듈(wasm) 없으면 던진다(core_unavailable) → 서버에 묻지도 쓰지도 않고 보관함에 남는다
     const fileId = item.payload.fileId;
     const theirs = await fetchDrawingNotes(fileId);
     if (!theirs?.updated || !Array.isArray(theirs.data?.pins)) return item;
     const their = normalizeNotes(theirs.data);
     const today = todayKst();
     const merged = mergeNotesForSave(item.payload.data, their, today);
-    if (JSON.stringify(merged.pins) === JSON.stringify(item.payload.data.pins)) return item;
+    if (JSON.stringify(merged.pins) === JSON.stringify(item.payload.data.pins)) {
+      const same = trimNotesOrHold(item.payload.data);   // 한도 안이면 같은 객체 → 그대로
+      return same === item.payload.data ? item : { ...item, payload: { ...item.payload, data: same } };
+    }
     if ((drawingState.sourceFile || drawingState.currentFile)?.id === fileId) {
       drawingState.notes = mergeNotesForSave(drawingState.notes, their, today);
       persistNotesNow();
       renderPagePins();
       updatePageInfo();
     }
-    const data = typeof trimNotesForCell === 'function' ? trimNotesForCell(merged) : merged;
-    return { ...item, payload: { ...item.payload, data } };
+    return { ...item, payload: { ...item.payload, data: trimNotesOrHold(merged) } };
   }
   const r = item?.kind === 'drawing' ? item.meta?.rival : null;
   const sent = item?.payload?.file;
   if (!r || !sent?.notes) return item;
+  trimNotesOrHold(sent.notes);   // 계산 모듈(wasm) 없으면 던진다(core_unavailable) → 보관함에 남는다
   const { rival, theirs } = await fetchRival(api, item.meta.site, r.fileName, r.excludeId);
   if (!rival || !theirs?.updated || !Array.isArray(theirs.data?.pins)) return item;   // 메모 없이 올린 파일(PC 등)이면 합칠 것이 없다
   const their = normalizeNotes(theirs.data);
@@ -3517,8 +3526,7 @@ async function beforeOutboxSend(item) {
     console.warn('합친 메모를 PDF 에 굽지 못해 원본 그대로 올림(메모는 서버에 따로 남음)', err);
     base64 = uint8ToBase64(bytes);
   }
-  const notes = typeof trimNotesForCell === 'function' ? trimNotesForCell(merged) : merged;
-  return { ...item, payload: { ...item.payload, file: { ...sent, base64, notes } } };
+  return { ...item, payload: { ...item.payload, file: { ...sent, base64, notes: trimNotesOrHold(merged) } } };
 }
 
 // 계산 모듈(wasm)을 못 불렀을 때 던지는 오류. 보관함(outbox.js)은 이 코드면 입력을 지우지 않고 보관했다가 다시 보낸다(서버가 같은 코드로 거절할 때도 같다)
@@ -3736,4 +3744,4 @@ function initDrawingModule() {
   initInkCanvasEvents();
 }
 
-if (typeof module !== 'undefined') module.exports = { isMultiCell, valuesOnDrawing, rowCells, buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, templateBaseNotes, PIN_TYPES, annotationBounds, placeOcrInCells, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState, pickEvictions, cacheBudgetOf, resolveNotesResponse, shouldUseTiles, planVisibleTiles };
+if (typeof module !== 'undefined') module.exports = { beforeOutboxSend, isMultiCell, valuesOnDrawing, rowCells, buildSavedDrawingFileName, familyNameOf, classifyDrawing, groupDrawings, negateIfPlainNumber, toView, fromView, normalizeNotes, friendlyError, sourceFileOf, mergeNotesForSave, mergeResumeNotes, templateBaseNotes, PIN_TYPES, annotationBounds, placeOcrInCells, pinItems, strainCells, joinStrainCells, pressNoteKey, parseNote, liveNote, pdfPlacement, filterDrawingGroups, prefetchLimit, PREFETCH_COUNT, PREFETCH_MAX, fetchRival, prefetchOriginals, drawingState, pickEvictions, cacheBudgetOf, resolveNotesResponse, shouldUseTiles, planVisibleTiles };
