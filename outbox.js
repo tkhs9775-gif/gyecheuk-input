@@ -44,6 +44,7 @@ const PERMANENT_ERRORS = ['invalid', 'bad_code', 'forbidden', 'expired', 'not_fo
 
 // 보내기에 실패했을 때: 'stop' 지금은 멈추고 나중에 다시(신호 없음·잠김) / 'retry' 서버가 잠시 바쁜 것('server')이라 횟수를 올리고 다음 기회에 다시 / 'failed' 고칠 수 없으니 보관함에 실패로 표시
 function classifyFailure(err, tries) {
+  if (err.code === 'core_unavailable') return 'hold';   // 계산 모듈(wasm) 없음(폰·서버): 지우지도 횟수를 세지도 않고 보관, 다음 항목은 계속
   if (err.network || err.code === 'locked') return 'stop';
   if (err.fields || PERMANENT_ERRORS.includes(err.code)) return 'failed';
   return tries + 1 >= MAX_SERVER_TRIES ? 'failed' : 'retry';
@@ -115,7 +116,7 @@ async function submitOrQueue(req, background = false) {
       notifySent(item, data);
       return 'sent';
     } catch (err) {
-      if (!err.network) throw err;
+      if (!err.network && err.code !== 'core_unavailable') throw err;   // 계산 모듈 없음도 보관한다
     }
   }
   try {
@@ -163,6 +164,7 @@ async function doFlush() {
       if (err.isAuth) { signOut(); break; }
       const verdict = classifyFailure(err, item.tries);
       if (verdict === 'stop') break;
+      if (verdict === 'hold') continue;
       await outboxPut({ ...item, tries: item.tries + 1, state: verdict === 'failed' ? 'failed' : 'wait', error: errorText(err) })
         .catch((e) => console.warn('보관함 상태 저장 실패', e));
     }
