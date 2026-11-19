@@ -44,7 +44,7 @@ const PERMANENT_ERRORS = ['invalid', 'bad_code', 'forbidden', 'expired', 'not_fo
 
 // 보내기에 실패했을 때: 'stop' 지금은 멈추고 나중에 다시(신호 없음·잠김) / 'retry' 서버가 잠시 바쁜 것('server')이라 횟수를 올리고 다음 기회에 다시 / 'failed' 고칠 수 없으니 보관함에 실패로 표시
 function classifyFailure(err, tries) {
-  if (err.network || err.code === 'locked') return 'stop';
+  if (err.network || err.code === 'locked' || err.code === 'core_unavailable') return 'stop';   // core_unavailable: 서버가 Rust 를 못 띄움 → 지우지도 실패로 굳히지도 않고 다음에 다시
   if (err.fields || PERMANENT_ERRORS.includes(err.code)) return 'failed';
   return tries + 1 >= MAX_SERVER_TRIES ? 'failed' : 'retry';
 }

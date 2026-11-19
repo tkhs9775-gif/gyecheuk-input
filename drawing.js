@@ -2503,8 +2503,7 @@ function closePinMemoBox() {
   show($('pinMemoBox'), false);
   renderPagePins();
   if (!wasEditing) return;
-  persistNotesNow();   // 적던 값을 바로 폰에 쓰고(서버 보냄 예약도 여기서 — Rust 가 정한 때 묶어 보낸다)
-  if (livePinsWait(false) === null) flushLivePins();   // TODO(wasm 없음): 사용자 결정 대기 — 예전처럼 바로 보냄
+  persistNotesNow();   // 적던 값을 바로 폰에 쓰고(서버 보냄 예약도 여기서 — Rust 가 정한 때 묶어 보낸다. Rust 가 없으면 보관함에)
 }
 
 function updateActivePinText(newText, { keepCells = false } = {}) {
@@ -3189,7 +3188,7 @@ function persistNotesNow() {
 // 언제 보낼지는 Rust 가 정한다(livepins.rs send_wait_ms, 2026-11-19): 마지막으로 고친 뒤 3초 조용하면, 계속 고쳐도 첫 변경 10초 안에 보낸다.
 // 메모 상자를 닫는 것도 '고침'으로 친다(동그라미마다 바로 보내던 것이 직원 여럿일 때 서버 잠금 줄을 길게 만들었다). 도면을 닫거나 앱이 숨으면 바로 보낸다.
 // 보내지면 홈 최근 입력을 새로 불러 새로고침 없이 보이게 한다. 실패하면(신호 없음 등) 다음에 메모를 고치거나 닫을 때 다시 보낸다
-const LIVE_PINS_DELAY_MS = 800;   // TODO(wasm 없음): 사용자 결정 대기 — wasm 이 없을 때만 예전처럼 800ms 뒤·메모 상자 닫으면 바로
+// Rust(wasm)를 못 불렀거나 서버가 core_unavailable 로 거절하면 보내지 않고 폰 보관함에 둔다(2026-11-19 사용자 결정 '저장 멈추고 보관', 예전 방식으로 돌지 않음)
 const livePinsSent = {};   // 실시간 줄 키 → 마지막으로 보낸 내용(같으면 다시 안 보냄)
 let livePinsTimer = null;
 let livePinsPending = null;   // 아직 안 보낸 내용 { key, body, payload }
@@ -3212,11 +3211,29 @@ function scheduleLivePins() {
   livePinsPending = { key, body, payload: { fileId: key, site: drawingState.site, fileName: file.name, user, data: { live: true, sourceId, fileId: file.id, pins } } };
   livePinsFirstAt ||= Date.now();
   clearTimeout(livePinsTimer);
-  livePinsTimer = setTimeout(flushLivePins, livePinsWait(false) ?? LIVE_PINS_DELAY_MS);
+  const wait = livePinsWait(false);
+  if (wait === null) { keepLivePins(livePinsPending); livePinsPending = null; livePinsFirstAt = 0; return; }
+  livePinsTimer = setTimeout(flushLivePins, wait);
+}
+
+// 보관함(outbox.js)에 실시간 줄을 둔다. id 가 열쇠마다 하나라 같은 줄은 최신 내용 하나만 남는다(kind 'live_pins': 도면 메모 합치기를 타지 않게).
+// 보관함이 나중에 서버로 보낸다(서버도 Rust 가 없으면 core_unavailable → 보관함은 지우지 않고 멈춘다)
+const LIVE_HOLD_TEXT = '실시간 메모를 지금 보낼 수 없어 이 폰에 보관했습니다. 잠시 후 다시 시도합니다.';
+const liveOutboxId = (key) => `live_pins:${key}`;
+function keepLivePins(job) {
+  if (!job || typeof outboxPut !== 'function') return;
+  rustCore()?.ensure?.();   // 다음에는 Rust 로 판단하게 다시 띄워 본다
+  outboxPut({ id: liveOutboxId(job.key), action: 'drawing_notes_save', kind: 'live_pins', label: `실시간 메모 ${job.payload.fileName}`, payload: job.payload, createdAt: Date.now(), tries: 0, state: 'wait' })
+    .then(() => {
+      livePinsSent[job.key] = job.body;
+      if (typeof flash === 'function') flash(LIVE_HOLD_TEXT);
+      if (typeof renderOutbox === 'function') renderOutbox();
+    })
+    .catch((err) => console.warn('실시간 메모 보관 실패(다음에 다시)', err));
 }
 
 // 앱이 숨으면(홈 버튼·화면 끔·다른 앱) 기다리던 것을 바로 보낸다
-globalThis.document?.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && !livePinsWait(true)) flushLivePins(); });   // node 시험에는 document 가 없다
+globalThis.document?.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && livePinsWait(true) === 0) flushLivePins(); });   // node 시험에는 document 가 없다
 
 function flushLivePins() {
   clearTimeout(livePinsTimer);
@@ -3227,9 +3244,13 @@ function flushLivePins() {
   api('drawing_notes_save', job.payload)
     .then(() => {
       livePinsSent[job.key] = job.body;
+      if (typeof outboxDelete === 'function') outboxDelete(liveOutboxId(job.key)).then(() => renderOutbox?.(), () => {});   // 보관해 둔 옛 판이 나중에 새 값을 덮지 않게
       if (typeof loadRecent === 'function') loadRecent().catch(() => {});   // 홈 최근 입력에 바로 반영
     })
-    .catch((err) => console.warn('도면 메모 실시간 보내기 실패(다음에 다시)', err));
+    .catch((err) => {
+      if (err.code === 'core_unavailable') { keepLivePins(job); return; }   // 서버가 Rust 를 못 띄움: 지우지 않고 보관
+      console.warn('도면 메모 실시간 보내기 실패(다음에 다시)', err);
+    });
 }
 
 function saveDrawingNotesQuiet() {
