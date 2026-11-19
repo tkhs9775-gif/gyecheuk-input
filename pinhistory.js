@@ -131,33 +131,26 @@ function templateNotes(notes, today) {
   return out;
 }
 
-// 셀 한 칸 글자 수 제한에 맞게 history를 줄인다 → { notes, dropped }(뺀 지난 기록 수).
-// 모든 동그라미의 기록을 날짜 순으로 세워 가장 오래된 것(날짜 모름 '' 먼저)부터 빼므로 최근 기록이 남는다. 입력은 안 바꾼다
+// 셀 한 칸 글자 수 제한에 맞게 history를 줄인다 → { notes, dropped }(뺀 지난 기록 수). 입력은 안 바꾼다.
+// 어떤 기록을 뺄지는 Rust trim.rs(가장 오래된 것부터)가 정한다. 여기는 그 목록대로 빼기만 한다
 function trimNotesForCellInfo(notes, maxLen = 45000) {
   if (!notes || !Array.isArray(notes.pins)) return { notes, dropped: 0 };
-  let len = JSON.stringify(notes).length;
-  if (len <= maxLen) return { notes, dropped: 0 };
-  const entries = [];
-  notes.pins.forEach((p, pi) => {
-    if (p && Array.isArray(p.history)) p.history.forEach((h, hi) => entries.push({ pi, hi, date: String(h?.date || '') }));
-  });
-  entries.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.hi - b.hi || a.pi - b.pi));
-  const left = notes.pins.map((p) => (p && Array.isArray(p.history) ? p.history.length : 0));
-  const drop = notes.pins.map(() => new Set());
-  let dropped = 0;
-  for (const e of entries) {
-    if (len <= maxLen) break;
-    // JSON 배열에서 원소 하나를 빼면 그 글자 수 + 쉼표 1개(마지막 하나면 쉼표 없음)가 준다
-    len -= JSON.stringify(notes.pins[e.pi].history[e.hi]).length + (left[e.pi] > 1 ? 1 : 0);
-    left[e.pi] -= 1;
-    drop[e.pi].add(e.hi);
-    dropped += 1;
+  const core = typeof globalThis !== 'undefined' ? globalThis.RustCore : null;
+  const plan = core && typeof core.trimPlan === 'function' ? core.trimPlan(JSON.stringify(notes), maxLen) : null;
+  if (!plan) {
+    // TODO(wasm 없음): 사용자 결정 대기 — 지금은 예전 동작 그대로(20→10→5→0개로 깎고 알림 없음)
+    let out = notes;
+    for (const keep of [MAX_PIN_HISTORY, 10, 5, 0]) {
+      out = { ...notes, pins: notes.pins.map((p) => (Array.isArray(p.history) ? { ...p, history: keep ? p.history.slice(-keep) : [] } : p)) };
+      if (JSON.stringify(out).length <= maxLen) break;
+    }
+    return { notes: out, dropped: 0 };
   }
-  const out = {
-    ...notes,
-    pins: notes.pins.map((p, pi) => (drop[pi].size ? { ...p, history: p.history.filter((_, hi) => !drop[pi].has(hi)) } : p)),
-  };
-  return { notes: out, dropped };
+  if (!plan.length) return { notes, dropped: 0 };
+  const drop = new Set(plan.map(([pi, hi]) => `${pi}:${hi}`));
+  const pins = notes.pins.map((p, pi) => (p && Array.isArray(p.history)
+    ? { ...p, history: p.history.filter((_, hi) => !drop.has(`${pi}:${hi}`)) } : p));
+  return { notes: { ...notes, pins }, dropped: plan.length };
 }
 
 // 예전 호출처용: 줄인 메모만 돌려준다

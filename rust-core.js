@@ -567,7 +567,27 @@
     return r && r.length ? { why: r[0], fixes: r.slice(1) } : null;
   }
 
+  // 2026-11-19: 긴 메모를 칸 한도에 맞출 때 뺄 지난 기록(Rust trim.rs). [[동그라미 번호, history 번호], ...] 또는 null(wasm 없음·메모 모양 아님)
+  function rustTrimPlan(notesJson, maxLen) {
+    if (!hasFn('wasm_trim_plan')) return null;
+    const cap = notesJson.length;   // 기록 하나는 JSON 으로 2글자 이상이라 쌍 수는 글자 수보다 적다
+    const out = wasm.wasm_alloc(cap * 8);
+    if (!out) return null;
+    try {
+      const n = callTexts([notesJson], (p, units) => wasm.wasm_trim_plan(p, units, maxLen >>> 0, out, cap));
+      if (n < 0) return null;
+      const dv = new DataView(wasm.memory.buffer.slice(out, out + n * 8));
+      return Array.from({ length: n }, (_, i) => [dv.getUint32(i * 8, true), dv.getUint32(i * 8 + 4, true)]);
+    } catch (err) {
+      console.warn('wasm_trim_plan 실패', err);
+      return null;
+    } finally {
+      wasm.wasm_dealloc(out, cap * 8);
+    }
+  }
+
   const api = {
+    trimPlan: rustTrimPlan,
     resumePlan: rustResumePlan,
     schedFollowToday: rustSchedFollowToday,
     dateIsAuto: rustDateIsAuto,

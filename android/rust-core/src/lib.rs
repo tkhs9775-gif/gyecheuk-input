@@ -2,6 +2,7 @@ pub mod lock;
 pub mod readcache;
 pub mod resume;
 pub mod valuefix;
+pub mod trim;
 #[cfg(feature = "ai")]
 pub mod ai;
 #[cfg(feature = "ai")]
