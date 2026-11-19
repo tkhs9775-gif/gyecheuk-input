@@ -23,6 +23,11 @@ pub fn should_keep(file_id: &[u16], old_json: &[u16], new_json: &[u16]) -> bool 
     !starts_with_live(file_id) && old_json != new_json
 }
 
+/// Code.gs FORMULA_START(/^[=+\-@]/) 와 같은 글자
+fn is_formula_start(u: u16) -> bool {
+    matches!(u, 0x3D | 0x2B | 0x2D | 0x40)
+}
+
 /// 조각 끝 위치들(UTF-16 글자 수). 빈 JSON 도 조각 하나(끝 0)
 pub fn part_ends(json: &[u16], chunk: usize) -> Vec<usize> {
     let mut ends = Vec::new();
@@ -32,6 +37,14 @@ pub fn part_ends(json: &[u16], chunk: usize) -> Vec<usize> {
         // 높은 대리 글자에서 끊기면 짝과 같이 다음 조각으로
         if end < json.len() && (0xD800..0xDC00).contains(&json[end - 1]) {
             end -= 1;
+        }
+        // 다음 조각이 = + - @ 로 시작하면 Code.gs safe() 가 앞에 ' 를 붙여 이어 붙인 JSON 이 깨진다 → 경계를 앞으로 당긴다
+        // (2026-11-19 Gemini 지적 6). JSON 에서 이 네 글자가 길게 이어지는 일은 드물어 몇 글자 안에 멈춘다
+        while end < json.len() && end > at + 1 && is_formula_start(json[end]) {
+            end -= 1;
+            if end > at + 1 && (0xD800..0xDC00).contains(&json[end - 1]) {
+                end -= 1;
+            }
         }
         ends.push(end);
         at = end;
@@ -182,6 +195,22 @@ mod tests {
         let ends = part_ends(&s, 10);
         assert_eq!(ends, vec![9, 12]);
         assert!(String::from_utf16(&s[..ends[0]]).is_ok() && String::from_utf16(&s[ends[0]..]).is_ok());
+    }
+
+    #[test]
+    fn no_part_starts_with_a_formula_char() {
+        // Gemini 지적 6 재현: 10번째 자리 다음이 -12.5 → 예전엔 조각 2 가 '-' 로 시작해 safe() 가 ' 를 붙였다
+        let s = u(r#"{"a":[1,2,-12.5,+3,=x,@y]}"#);
+        for chunk in 2..s.len() {
+            let ends = part_ends(&s, chunk);
+            let mut at = 0;
+            for &e in &ends {
+                assert!(e > at, "빈 조각 chunk={chunk}");
+                assert!(at == 0 || !is_formula_start(s[at]), "chunk={chunk} 조각 시작 {}", s[at] as u8 as char);
+                at = e;
+            }
+            assert_eq!(at, s.len());
+        }
     }
 
     #[test]
