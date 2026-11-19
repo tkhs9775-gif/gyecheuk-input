@@ -353,6 +353,28 @@ fn ai_finish(task: &str, stop: &str, out: &str, meta: &Value) -> Option<Vec<Stri
     })
 }
 
+/// Claude 오류 → [앱 코드, http 상태]. status 빈 글자 = 연결 끊김·시간 초과
+/// 지출 한도(2026-11-19, platform.claude.com/docs/en/api/errors·rate-limits): 직접 건 월 한도 = 400 + 한도 문구,
+/// 등급 월 상한 = 429 + details.error_code enforced_spend_limit_reached(retry-after 없음), 결제 문제 = 402 billing_error.
+/// 400 한도 문구는 문서에 글자가 안 나와 86 세션이 전한 앞부분으로 본다 — 바뀌면 ai_bad_input 으로 떨어질 뿐(안전한 쪽)
+fn ai_error(status: &str, etype: &str, ecode: &str, message: &str) -> Vec<String> {
+    let spend = status == "402"
+        || etype == "billing_error"
+        || ecode == "enforced_spend_limit_reached"
+        || (status == "400" && message.starts_with("You have reached your specified"));
+    let (code, http) = if spend {
+        ("ai_spend_limit", "503")
+    } else {
+        match status {
+            "429" => ("ai_busy", "429"),
+            "401" | "403" => ("ai_not_configured", "503"),
+            "400" => ("ai_bad_input", "400"),
+            _ => ("ai_down", "502"), // 529 과부하·5xx·그 밖 4xx·연결 끊김·시간 초과
+        }
+    };
+    vec![code.into(), http.into()]
+}
+
 /// 글자열 묶음 하나로 부르는 입구. None = 모르는 op·인자 수가 틀림
 pub fn text_call(op: u32, args: &[String]) -> Option<Vec<String>> {
     match (op, args) {
@@ -367,6 +389,7 @@ pub fn text_call(op: u32, args: &[String]) -> Option<Vec<String>> {
         }
         (4, [used]) => Some(ai_quota(used)),
         (5, [task, stop, out, meta]) => ai_finish(task, stop, out, &json::parse(meta)?),
+        (6, [status, etype, ecode, message]) => Some(ai_error(status, etype, ecode, message)),
         _ => None,
     }
 }
@@ -675,5 +698,25 @@ mod tests {
         assert_eq!(unsafe { wasm_ai_b64_ok("é".as_ptr(), 2, 2) }, 0);
         assert_eq!(unsafe { wasm_ai_b64_ok(core::ptr::null(), 4, 4) }, 0);
         assert_eq!(wasm_ai_b64_max(), MAX_B64);
+    }
+
+    #[test]
+    fn error_codes_and_spend_limit() {
+        let e = |s: &str, t: &str, c: &str, m: &str| text_call(6, &[s.into(), t.into(), c.into(), m.into()]).unwrap();
+        let spend = vec!["ai_spend_limit".to_string(), "503".into()];
+        assert_eq!(e("400", "invalid_request_error", "", "You have reached your specified API usage limits. You will regain access on 2026-12-01."), spend);
+        assert_eq!(e("400", "invalid_request_error", "", "You have reached your specified workspace API usage limits."), spend);
+        assert_eq!(e("429", "rate_limit_error", "enforced_spend_limit_reached", "spend cap"), spend);
+        assert_eq!(e("402", "billing_error", "", "card declined"), spend);
+        // 한도가 아니면 옛 JS 분류 그대로
+        assert_eq!(e("429", "rate_limit_error", "", "Number of request tokens has exceeded your per-minute rate limit"), ["ai_busy", "429"]);
+        assert_eq!(e("400", "invalid_request_error", "", "messages: Input should be a valid list"), ["ai_bad_input", "400"]);
+        assert_eq!(e("400", "invalid_request_error", "", "x You have reached your specified API usage limits"), ["ai_bad_input", "400"], "앞부분만 본다");
+        assert_eq!(e("401", "authentication_error", "", ""), ["ai_not_configured", "503"]);
+        assert_eq!(e("403", "permission_error", "", ""), ["ai_not_configured", "503"]);
+        for s in ["529", "500", "404", ""] {
+            assert_eq!(e(s, "", "", ""), ["ai_down", "502"], "{s:?}");
+        }
+        assert_eq!(text_call(6, &["400".into()]), None, "인자 수가 틀림");
     }
 }
