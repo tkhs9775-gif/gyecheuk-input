@@ -1313,6 +1313,7 @@ async function hideViewer() {
   show($('pdfViewer'), false);
   closePinMemoBox();
   persistNotesNow();
+  flushLivePins();   // 도면을 떠나면 기다리던 실시간 줄을 바로 보낸다
   drawingState.pdfDoc?.destroy();
   drawingState.pdfDoc = null;
   drawingState.rawPdfBytes = null;
@@ -2502,8 +2503,8 @@ function closePinMemoBox() {
   show($('pinMemoBox'), false);
   renderPagePins();
   if (!wasEditing) return;
-  persistNotesNow();   // 적던 값을 바로 폰에 쓰고
-  flushLivePins();     // 서버에도 바로 보낸다(기다리지 않음)
+  persistNotesNow();   // 적던 값을 바로 폰에 쓰고(서버 보냄 예약도 여기서 — Rust 가 정한 때 묶어 보낸다)
+  if (livePinsWait(false) === null) flushLivePins();   // TODO(wasm 없음): 사용자 결정 대기 — 예전처럼 바로 보냄
 }
 
 function updateActivePinText(newText, { keepCells = false } = {}) {
@@ -3185,12 +3186,16 @@ function persistNotesNow() {
 
 // 내가 찍고 값을 적은 동그라미를 '다른이름 저장' 전에도 서버에 보내 둔다 → 홈 '최근 입력'에 바로 뜨고, 앱이 꺼져도 남는다.
 // 도면 파일이 아니라 측정자별 실시간 줄(live:<원본ID>:<측정자>)에 쓰므로 다른 사람이 여는 도면 메모는 바뀌지 않는다.
-// 글자를 치는 동안은 기다렸다가 손을 멈추면(LIVE_PINS_DELAY_MS) 보내고, 메모 상자를 닫거나 도면을 닫으면 바로 보낸다.
+// 언제 보낼지는 Rust 가 정한다(livepins.rs send_wait_ms, 2026-11-19): 마지막으로 고친 뒤 3초 조용하면, 계속 고쳐도 첫 변경 10초 안에 보낸다.
+// 메모 상자를 닫는 것도 '고침'으로 친다(동그라미마다 바로 보내던 것이 직원 여럿일 때 서버 잠금 줄을 길게 만들었다). 도면을 닫거나 앱이 숨으면 바로 보낸다.
 // 보내지면 홈 최근 입력을 새로 불러 새로고침 없이 보이게 한다. 실패하면(신호 없음 등) 다음에 메모를 고치거나 닫을 때 다시 보낸다
-const LIVE_PINS_DELAY_MS = 800;
+const LIVE_PINS_DELAY_MS = 800;   // TODO(wasm 없음): 사용자 결정 대기 — wasm 이 없을 때만 예전처럼 800ms 뒤·메모 상자 닫으면 바로
 const livePinsSent = {};   // 실시간 줄 키 → 마지막으로 보낸 내용(같으면 다시 안 보냄)
 let livePinsTimer = null;
 let livePinsPending = null;   // 아직 안 보낸 내용 { key, body, payload }
+let livePinsFirstAt = 0;      // 아직 안 보낸 첫 변경 시각
+// Rust 가 정한 대기 ms. wasm 이 없으면 null
+const livePinsWait = (leaving) => rustCore()?.liveSendWaitMs?.(Date.now(), Date.now(), livePinsFirstAt || Date.now(), leaving) ?? null;
 function scheduleLivePins() {
   const file = drawingState.currentFile;
   const user = $('user')?.value || '';
@@ -3203,16 +3208,22 @@ function scheduleLivePins() {
   if (livePinsSent[key] === body || (livePinsSent[key] === undefined && !pins.length)) return;
   // 지금 상태를 붙잡아 둔다: 도면을 닫거나 바꿔도 이 내용 그대로 보낸다
   // 계측용(가상) 도면이면 fileId 가 'tpl:…' 로 간다 → 홈 최근 입력을 누르면 openRecentDrawing 이 계측용 도면을 다시 연다
+  if (livePinsPending && livePinsPending.key !== key) flushLivePins();   // 다른 도면 것이 남아 있으면 먼저 보낸다(덮어쓰지 않게)
   livePinsPending = { key, body, payload: { fileId: key, site: drawingState.site, fileName: file.name, user, data: { live: true, sourceId, fileId: file.id, pins } } };
+  livePinsFirstAt ||= Date.now();
   clearTimeout(livePinsTimer);
-  livePinsTimer = setTimeout(flushLivePins, LIVE_PINS_DELAY_MS);
+  livePinsTimer = setTimeout(flushLivePins, livePinsWait(false) ?? LIVE_PINS_DELAY_MS);
 }
+
+// 앱이 숨으면(홈 버튼·화면 끔·다른 앱) 기다리던 것을 바로 보낸다
+globalThis.document?.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && !livePinsWait(true)) flushLivePins(); });   // node 시험에는 document 가 없다
 
 function flushLivePins() {
   clearTimeout(livePinsTimer);
   const job = livePinsPending;
   if (!job) return;
   livePinsPending = null;
+  livePinsFirstAt = 0;
   api('drawing_notes_save', job.payload)
     .then(() => {
       livePinsSent[job.key] = job.body;
