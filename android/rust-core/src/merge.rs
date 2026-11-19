@@ -122,19 +122,6 @@ fn history_of(p: &Value) -> &[Value] {
     p.get("history").and_then(Value::as_arr).unwrap_or(&[])
 }
 
-/// 값이 적힌 날짜들(지금 값 + history)
-fn value_dates(p: &Value) -> Vec<String> {
-    let mut out = Vec::new();
-    if truthy(p.get("text")) {
-        out.push(date_of(p));
-    }
-    for h in history_of(p) {
-        if matches!(h, Value::Obj(_)) && truthy(h.get("text")) {
-            out.push(date_of(h));
-        }
-    }
-    out
-}
 
 fn set(obj: &mut Value, key: &str, v: Value) {
     if let Value::Obj(kv) = obj {
@@ -205,17 +192,13 @@ fn merge_pin(mine: &Value, theirs: &Value) -> Value {
 }
 
 /// 순수 함수: 내 동그라미 배열에 그쪽 배열을 합친 새 배열. 배열이 아니면 빈 배열로 본다
-pub fn merge_pins(mine: &Value, theirs: &Value, today: &str) -> Vec<Value> {
+/// 2026-11-19 사용자 결정 '항상 살림': 그쪽에만 있는 동그라미는 날짜와 상관없이 모두 남긴다.
+/// 예전 규칙(내 마지막 지난 측정일 이전 것은 '내가 지운 것'으로 봄)은 신호 없이 잰 날 남이 새로 찍은 동그라미를 지웠다.
+/// 대가: 내가 지운 동그라미가 그쪽에 남아 있으면 다시 살아난다(값을 잃는 것보다 낫다). today 는 입구 모양을 지키려고 받기만 한다.
+pub fn merge_pins(mine: &Value, theirs: &Value, _today: &str) -> Vec<Value> {
     let mine_pins = mine.as_arr().unwrap_or(&[]);
     let their_pins: Vec<&Value> = theirs.as_arr().unwrap_or(&[]).iter().filter(|p| pin_id(p).is_some()).collect();
     let find_theirs = |id: &str| their_pins.iter().rev().find(|p| pin_id(p).as_deref() == Some(id)).copied();
-    // 내 메모를 받아 온 시점: 내 기록 중 오늘이 아닌 가장 늦은 날짜
-    let base = mine_pins
-        .iter()
-        .flat_map(value_dates)
-        .filter(|d| d != today)
-        .max()
-        .unwrap_or_default();
     let mut out: Vec<Value> = Vec::new();
     let mut have: Vec<String> = Vec::new();
     for p in mine_pins {
@@ -235,10 +218,8 @@ pub fn merge_pins(mine: &Value, theirs: &Value, today: &str) -> Vec<Value> {
         if have.contains(&id) {
             continue;
         }
-        let newer = value_dates(t).iter().any(|d| d.as_str() > base.as_str() || d == today);
-        if newer {
-            out.push(dup(t));
-        }
+        out.push(dup(find_theirs(&id).unwrap_or(t)));   // 같은 id 가 둘이면 뒤의 것(최신) 하나만
+        have.push(id);
     }
     out
 }
@@ -359,7 +340,8 @@ mod tests {
     }
 
     #[test]
-    fn deleted_pins_are_not_revived_but_newer_records_are_kept() {
+    fn theirs_only_pins_are_always_kept_whatever_the_date() {
+        // 2026-11-19 사용자 결정 '항상 살림': 내 마지막 측정일(11-17) 이전·같은 날·값 없는 것까지 그쪽에만 있으면 모두 남긴다
         let out = run(
             r#"[{"id":"a","text":"3","date":"2026-11-19","history":[{"date":"2026-11-17","text":"1"}]}]"#,
             r#"[{"id":"a","text":"1","date":"2026-11-17"},
@@ -369,7 +351,24 @@ mod tests {
                 {"id":"today","text":"1.00","date":"2026-11-19"},
                 {"id":"blank","text":"","date":"2026-11-19"}]"#,
         );
-        assert_eq!(ids(&out), ["a", "new", "today"]);
+        assert_eq!(ids(&out), ["a", "gone", "f", "new", "today", "blank"]);
+    }
+
+    #[test]
+    fn offline_same_day_pin_of_other_phone_is_not_lost() {
+        // Gemini 지적 2 재현: 내 폰이 11-18 신호 없이 W3 를 쟀고, 같은 날 남이 W5 를 새로 찍음 → 11-19 저장해도 W5 가 남는다
+        let out = run(
+            r#"[{"id":"w3","text":"-2","date":"2026-11-18"}]"#,
+            r#"[{"id":"w5","text":"-7","date":"2026-11-18"}]"#,
+        );
+        assert_eq!(ids(&out), ["w3", "w5"]);
+    }
+
+    #[test]
+    fn duplicate_ids_on_their_side_are_added_once_latest_wins() {
+        let out = run("[]", r#"[{"id":"d","text":"1","date":"2026-11-17"},{"id":"d","text":"2","date":"2026-11-18"}]"#);
+        assert_eq!(ids(&out), ["d"]);
+        assert_eq!(s(&out.as_arr().unwrap()[0], "text"), "2");
     }
 
     #[test]
