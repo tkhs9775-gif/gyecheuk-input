@@ -7,6 +7,9 @@ const OUTBOX_STORE = 'outbox';
 const FLUSH_EVERY_MS = 30 * 1000;
 const FLASH_MS = 4000;
 const MAX_SERVER_TRIES = 5;
+// 계산 모듈(Rust wasm)을 못 불러 저장을 멈춘 것(폰: drawing.js coreUnavailableError, 서버: Code.gs 거절 코드). 지우지 않고 보관했다가 다시 보낸다
+const CORE_UNAVAILABLE = 'core_unavailable';
+const CORE_UNAVAILABLE_TEXT = '계산 모듈을 아직 못 불러 저장을 멈추고 이 폰에 보관했습니다. 잠시 후 다시 시도합니다.';
 
 let dbPromise = null;
 let flushing = null;
@@ -44,7 +47,7 @@ const PERMANENT_ERRORS = ['invalid', 'bad_code', 'forbidden', 'expired', 'not_fo
 
 // 보내기에 실패했을 때: 'stop' 지금은 멈추고 나중에 다시(신호 없음·잠김) / 'retry' 서버가 잠시 바쁜 것('server')이라 횟수를 올리고 다음 기회에 다시 / 'failed' 고칠 수 없으니 보관함에 실패로 표시
 function classifyFailure(err, tries) {
-  if (err.network || err.code === 'locked') return 'stop';
+  if (err.network || err.code === 'locked' || err.code === CORE_UNAVAILABLE) return 'stop';
   if (err.fields || PERMANENT_ERRORS.includes(err.code)) return 'failed';
   return tries + 1 >= MAX_SERVER_TRIES ? 'failed' : 'retry';
 }
@@ -115,7 +118,8 @@ async function submitOrQueue(req, background = false) {
       notifySent(item, data);
       return 'sent';
     } catch (err) {
-      if (!err.network) throw err;
+      if (!err.network && err.code !== CORE_UNAVAILABLE) throw err;
+      if (err.code === CORE_UNAVAILABLE) flash(CORE_UNAVAILABLE_TEXT);
     }
   }
   try {
@@ -162,7 +166,10 @@ async function doFlush() {
     } catch (err) {
       if (err.isAuth) { signOut(); break; }
       const verdict = classifyFailure(err, item.tries);
-      if (verdict === 'stop') break;
+      if (verdict === 'stop') {
+        if (err.code === CORE_UNAVAILABLE) flash(CORE_UNAVAILABLE_TEXT);
+        break;
+      }
       await outboxPut({ ...item, tries: item.tries + 1, state: verdict === 'failed' ? 'failed' : 'wait', error: errorText(err) })
         .catch((e) => console.warn('보관함 상태 저장 실패', e));
     }
@@ -269,4 +276,4 @@ function initOutbox() {
   renderOutbox();
 }
 
-if (typeof module !== 'undefined') module.exports = { classifyFailure, netBarContent, outboxItemText, supersedes, MAX_SERVER_TRIES };
+if (typeof module !== 'undefined') module.exports = { CORE_UNAVAILABLE, classifyFailure, netBarContent, outboxItemText, supersedes, MAX_SERVER_TRIES };

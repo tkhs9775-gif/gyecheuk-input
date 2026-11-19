@@ -1361,7 +1361,12 @@ function applyServerNotes(file, noteRes) {
   const srv = normalizeNotes(noteRes.data);
   if (pendingOutboxIds.has(targetId)) {
     const today = typeof todayKst === 'function' ? todayKst() : '';
-    drawingState.notes = mergeNotesForSave(drawingState.notes, srv, today);
+    try {
+      drawingState.notes = mergeNotesForSave(drawingState.notes, srv, today);
+    } catch (err) {
+      if (err.code !== 'core_unavailable') throw err;
+      return;   // 합칠 수 없으면 서버 메모로 바꾸지 않는다(보관함의 내 값이 화면에 남게). 보관함이 보낼 때 다시 합친다
+    }
   } else {
     drawingState.notes = srv;
   }
@@ -3438,6 +3443,7 @@ async function fetchRival(callApi, site, fileName, excludeId, check = () => {}) 
 // 안 하면 replaceSameName 으로 먼저 적은 값이 사라진다. 저장 버튼이 이 왕복(1.5~3초)을 기다리지 않게 여기로 옮겼다.
 // 그쪽 메모를 못 받으면 던진다 → 보관함이 올리지 않고 나중에 다시 한다(덮어쓰지 않음)
 async function beforeOutboxSend(item) {
+  if (!rustCore()?.isWasmReady?.()) await Promise.resolve(rustCore()?.ensure?.()).catch(() => null);   // 합치기는 wasm 으로만 한다(못 띄우면 mergeNotesForSave 가 던진다)
   if (item?.kind === 'drawing_notes' && item.payload?.fileId && item.payload?.data) {
     const fileId = item.payload.fileId;
     const theirs = await fetchDrawingNotes(fileId);
@@ -3483,23 +3489,20 @@ async function beforeOutboxSend(item) {
   return { ...item, payload: { ...item.payload, file: { ...sent, base64, notes } } };
 }
 
+// 계산 모듈(wasm)을 못 불렀을 때 던지는 오류. 보관함(outbox.js)은 이 코드면 입력을 지우지 않고 보관했다가 다시 보낸다(서버가 같은 코드로 거절할 때도 같다)
+function coreUnavailableError() {
+  const e = new Error('계산 모듈을 아직 못 불러 저장을 멈추고 이 폰에 보관했습니다. 잠시 후 다시 시도합니다.');
+  e.code = 'core_unavailable';
+  return e;
+}
+
 // 내 메모(mine)에 그쪽 메모(theirs)를 합친다. 동그라미 합치기 규칙은 Rust(rust-core/src/merge.rs, 2026-11-19 도면 값 사라짐 고침):
 // 다른 폰의 지난 날 값·새 동그라미도 남긴다. 필기(strokes)·sourceId 등 동그라미 밖은 내 것
 function mergeNotesForSave(mine, theirs, today) {
   const rc = rustCore();
   const rustPins = rc?.mergeNotesPins ? rc.mergeNotesPins(mine.pins || [], Array.isArray(theirs?.pins) ? theirs.pins : [], today) : null;
-  if (rustPins) return { ...mine, pins: rustPins };
-  // TODO(wasm 없음): 사용자 결정 대기 — wasm 을 못 부르면 아래 옛 동작(그쪽 오늘 값만 받음) 그대로
-  const theirPins = Array.isArray(theirs?.pins) ? theirs.pins.filter((p) => p && p.id) : [];
-  const byId = new Map(theirPins.map((p) => [p.id, p]));
-  const pins = (mine.pins || []).map((p) => {
-    const t = byId.get(p.id);
-    const mineToday = !!p.text && p.date === today;
-    const theirsToday = !!t?.text && t.date === today;
-    return t && theirsToday && !mineToday ? { ...p, text: t.text, date: t.date, history: t.history || p.history, author: t.author || p.author } : p;
-  });
-  const have = new Set(pins.map((p) => p.id));
-  return { ...mine, pins: [...pins, ...theirPins.filter((p) => !have.has(p.id) && !!p.text && p.date === today)] };
+  if (!rustPins) throw coreUnavailableError();   // 사용자 결정(2026-11-19): wasm 을 못 부르면 합치지도 보내지도 않는다 → 보관함이 그대로 두고 나중에 다시
+  return { ...mine, pins: rustPins };
 }
 
 // 순수 함수: 이어쓰기 — 최근 저장본 템플릿(fresh)을 바탕으로 두고, 폰에 남아 있던 내 미저장분(kept)에서 오늘 값·지난 값 이력·내가 새로 찍은 동그라미만 얹는다.
