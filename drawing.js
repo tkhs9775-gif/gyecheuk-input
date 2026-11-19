@@ -3482,17 +3482,15 @@ async function fetchRival(callApi, site, fileName, excludeId, check = () => {}) 
 async function beforeOutboxSend(item) {
   if (!rustCore()?.isWasmReady?.()) await Promise.resolve(rustCore()?.ensure?.()).catch(() => null);   // 합치기는 wasm 으로만 한다(못 띄우면 mergeNotesForSave 가 던진다)
   if (item?.kind === 'drawing_notes' && item.payload?.fileId && item.payload?.data) {
-    trimNotesOrHold(item.payload.data);   // 계산 모듈(wasm) 없으면 던진다(core_unavailable) → 서버에 묻지도 쓰지도 않고 보관함에 남는다
+    const cutData = trimNotesOrHold(item.payload.data);   // 계산 모듈(wasm) 없으면 던진다(core_unavailable) → 서버에 묻지도 쓰지도 않고 보관함에 남는다
+    const cutItem = cutData === item.payload.data ? item : { ...item, payload: { ...item.payload, data: cutData } };   // 합칠 상대가 없어도 자른 판을 보낸다(wasm 이 늦게 떠 안 자른 채 보관된 경우)
     const fileId = item.payload.fileId;
     const theirs = await fetchDrawingNotes(fileId);
-    if (!theirs?.updated || !Array.isArray(theirs.data?.pins)) return item;
+    if (!theirs?.updated || !Array.isArray(theirs.data?.pins)) return cutItem;
     const their = normalizeNotes(theirs.data);
     const today = todayKst();
     const merged = mergeNotesForSave(item.payload.data, their, today);
-    if (JSON.stringify(merged.pins) === JSON.stringify(item.payload.data.pins)) {
-      const same = trimNotesOrHold(item.payload.data);   // 한도 안이면 같은 객체 → 그대로
-      return same === item.payload.data ? item : { ...item, payload: { ...item.payload, data: same } };
-    }
+    if (JSON.stringify(merged.pins) === JSON.stringify(item.payload.data.pins)) return cutItem;
     if ((drawingState.sourceFile || drawingState.currentFile)?.id === fileId) {
       drawingState.notes = mergeNotesForSave(drawingState.notes, their, today);
       persistNotesNow();
@@ -3503,13 +3501,15 @@ async function beforeOutboxSend(item) {
   }
   const r = item?.kind === 'drawing' ? item.meta?.rival : null;
   const sent = item?.payload?.file;
-  if (!r || !sent?.notes) return item;
-  trimNotesOrHold(sent.notes);   // 계산 모듈(wasm) 없으면 던진다(core_unavailable) → 보관함에 남는다
+  if (!sent?.notes) return item;
+  const cutNotes = trimNotesOrHold(sent.notes);   // 계산 모듈(wasm) 없으면 던진다(core_unavailable) → 보관함에 남는다
+  const cutItem = cutNotes === sent.notes ? item : { ...item, payload: { ...item.payload, file: { ...sent, notes: cutNotes } } };   // 합칠 상대가 없어도 자른 판을 보낸다
+  if (!r) return cutItem;
   const { rival, theirs } = await fetchRival(api, item.meta.site, r.fileName, r.excludeId);
-  if (!rival || !theirs?.updated || !Array.isArray(theirs.data?.pins)) return item;   // 메모 없이 올린 파일(PC 등)이면 합칠 것이 없다
+  if (!rival || !theirs?.updated || !Array.isArray(theirs.data?.pins)) return cutItem;   // 메모 없이 올린 파일(PC 등)이면 합칠 것이 없다
   const their = normalizeNotes(theirs.data);
   const merged = mergeNotesForSave(sent.notes, their, r.today);
-  if (JSON.stringify(merged.pins) === JSON.stringify(sent.notes.pins)) return item;   // 달라진 게 없으면 PDF 를 다시 만들 필요 없다
+  if (JSON.stringify(merged.pins) === JSON.stringify(sent.notes.pins)) return cutItem;   // 달라진 게 없으면 PDF 를 다시 만들 필요 없다
   // 그 도면이 아직 열려 있으면 화면에도 합친 값을 보여 준다(저장 대상은 아래 merged)
   if (drawingState.currentFile?.id === r.excludeId) {
     drawingState.notes = mergeNotesForSave(drawingState.notes, their, r.today);
