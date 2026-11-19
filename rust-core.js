@@ -566,11 +566,6 @@
     const r = textCall(1, [str(text), str(prev)]);
     return r && r.length ? { why: r[0], fixes: r.slice(1) } : null;
   }
-  // 특이사항 메모를 한 줄로 묶기(서버 /ai/memo 에 보낼 글). wasm 없으면 null
-  function rustMemoJoin(s) {
-    const r = textCall(2, [str(s)]);
-    return r ? r[0] : null;
-  }
 
   const api = {
     resumePlan: rustResumePlan,
@@ -579,7 +574,6 @@
     draftKeepsDate: rustDraftKeepsDate,
     deviceIdOk: rustDeviceIdOk,
     valueFix: rustValueFix,
-    memoJoin: rustMemoJoin,
     drawingNoticeDue: rustDrawingNoticeDue,
     pinValueCells: rustPinValueCells,
     pinValuesOnDrawing: rustPinValuesOnDrawing,
@@ -625,7 +619,6 @@
       rustDraftKeepsDate,
       rustDeviceIdOk,
       rustValueFix,
-      rustMemoJoin,
       rustB64ToBytes,
       rustBytesToB64,
       rustSniffImageMime,

@@ -1,29 +1,26 @@
 //! Claude 창구(worker /ai/*)의 검사·정리(2026-11-19, 옛 worker/src/ai.js 의 판단 부분을 옮김). worker 는 SDK 호출·KV 읽기쓰기만 한다.
-//! 화면(web)은 op 1(값 오타 제안)·op 2(메모 문장 한 줄로)를 쓴다. 판정·저장·삭제는 Claude 에게 맡기지 않는다.
+//! 화면(web)은 op 1(값 오타 제안)을 쓴다. 판정·저장·삭제는 Claude 에게 맡기지 않는다.
+//! (특이사항 → 보고서 문장(op 2·/ai/memo)은 2026-11-19 뺐다: 그 칸이 있는 측정 입력 화면을 앱에서 열 수 없다. 되살리려면 1.17 커밋 49306cd)
 //!
 //! op 3 [일, meta, b64ok, 지금ms] → ["ok", KV 키, 내용 종류(text|image|document), 글/파일 형식] 또는 [상태, 오류 JSON]
 //! op 4 [오늘 쓴 횟수]            → ["ok", 새 횟수] 또는 ["429", 오류 JSON]
 //! op 5 [일, stop_reason, 답 글, meta] → [상태, 앱에 돌려줄 JSON]
+//! op 6 [오류 status, type, error_code, message] → [앱 코드, http 상태]
 
 use crate::json::{self, Value};
 use crate::lock::{read_units, text, unpack};
-use crate::valuefix::{js_space, js_trim, suggest};
+use crate::valuefix::{js_trim, suggest};
 
 const MAX_B64: usize = 6_600_000; // 파일 약 4.9MB(이미지 한 장 5MB 한도 안). 앱이 미리 줄여 보낸다
 const DAILY_LIMIT: u32 = 60; // 기기별 하루 횟수. 전체 상한은 Anthropic 콘솔 월 한도
 const KST_MS: f64 = 9.0 * 3600.0 * 1000.0;
 const MAX_DATE_MS: f64 = 8.64e15;
 const MAX_SAFE_INT: f64 = 9_007_199_254_740_991.0;
-const MEMO_MAX: usize = 1000; // 메모·다듬은 문장 글자 수(UTF-16). 받기·한 줄로·답 검사 모두 같은 값(자르면 잘린 뒤 숫자는 검사를 못 받는다)
 const PDF: &str = "application/pdf";
 const IMAGE_TYPES: [&str; 3] = ["image/jpeg", "image/png", "image/webp"];
 const CARD_FIELDS: [&str; 6] = ["name", "title", "company", "mobile", "email", "memo"]; // web/contacts.js CONTACT_FIELDS 와 같은 이름
 
 type Clean = Result<Vec<(String, Value)>, Vec<String>>;
-
-fn len16(s: &str) -> usize {
-    s.encode_utf16().count()
-}
 
 /// JS slice(0, max)(UTF-16 글자 수). ponytail: 경계에 걸친 이모지는 통째로 뺀다(JS 는 반쪽을 남김)
 fn cut(s: &str, max: usize) -> &str {
@@ -106,86 +103,6 @@ fn fields<const N: usize>(pairs: [(&str, Value); N]) -> Vec<(String, Value)> {
 }
 
 // ---------------------------------------------------------------------------
-// 사실 비교: 숫자·날짜·계측기 번호(W1, H-3, SW2)를 나온 순서대로 모은다. 다듬은 문장도 이 목록·순서가 같아야 한다
-// (정렬하면 'W1 -3.38, W2 -1.20' 이 'W1 -1.20, W2 -3.38' 로 바뀌어도 통과한다). 옛 JS: /[A-Za-z]{1,4}-?\d+|(?<![\w.])-?\d+(?:\.\d+)?/g
-// ---------------------------------------------------------------------------
-
-fn digits_from(b: &[u8], i: usize) -> usize {
-    b.get(i..).map_or(0, |r| r.iter().take_while(|c| c.is_ascii_digit()).count())
-}
-
-fn digit_at(b: &[u8], i: usize) -> bool {
-    b.get(i).is_some_and(u8::is_ascii_digit)
-}
-
-/// j 에서 숫자 하나의 끝: `\d+(\.\d+)*` — 날짜 2026.11.19·번호 뒤 소수 W1.5 는 한 덩어리. lead_dot 이면 '.5' 도
-fn num_end(b: &[u8], mut j: usize, lead_dot: bool) -> Option<usize> {
-    let d = digits_from(b, j);
-    if d == 0 && !(lead_dot && b.get(j) == Some(&b'.') && digit_at(b, j + 1)) {
-        return None;
-    }
-    j += d;
-    while b.get(j) == Some(&b'.') && digit_at(b, j + 1) {
-        j += 1 + digits_from(b, j + 1);
-    }
-    Some(j)
-}
-
-/// i 에서 시작하는 사실의 끝. 2026-11-19 agy 검토: 옛 JS 를 그대로 옮긴 판은 날짜 끝자리('2026.11.19' 의 19)·
-/// 번호 뒤 소수('W1.5' 의 .5)·'.5'·5글자 번호 앞 글자('POINT1' 의 P)를 빼서, 모델이 바꿔도 통과했다
-fn fact_at(b: &[u8], i: usize) -> Option<usize> {
-    let letters = b[i..].iter().take_while(|c| c.is_ascii_alphabetic()).count();
-    if letters > 0 {
-        // 글자로 시작하면 숫자 쪽은 보지 않는다
-        let mut j = i + letters;
-        if b.get(j) == Some(&b'-') && digit_at(b, j + 1) {
-            j += 1;
-        }
-        return num_end(b, j, false);
-    }
-    if i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_' || b[i - 1] == b'.') {
-        return None;
-    }
-    let mut j = i;
-    if b[j] == b'-' && (digit_at(b, j + 1) || (b.get(j + 1) == Some(&b'.') && digit_at(b, j + 2))) {
-        j += 1;
-    }
-    num_end(b, j, true)
-}
-
-pub fn facts_of(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        match fact_at(b, i) {
-            Some(end) => {
-                out.push(s[i..end].to_ascii_uppercase());
-                i = end;
-            }
-            None => i += 1,
-        }
-    }
-    out.join("|")
-}
-
-/// 메모 다듬은 문장(줄마다 '- ')을 한 줄로: 앞 '- ' 빼고 ', ' 로 잇는다. MEMO_MAX 자까지
-fn memo_join(s: &str) -> String {
-    let lines: Vec<&str> = s
-        .split('\n')
-        .map(|l| {
-            let t = l.trim_start_matches(js_space);
-            match t.strip_prefix('-') {
-                Some(rest) if rest.starts_with(js_space) => js_trim(rest),
-                _ => js_trim(l),
-            }
-        })
-        .filter(|l| !l.is_empty())
-        .collect();
-    cut(&lines.join(", "), MEMO_MAX).to_string()
-}
-
-// ---------------------------------------------------------------------------
 // 보내기 전 검사(op 3)
 // ---------------------------------------------------------------------------
 
@@ -224,18 +141,12 @@ fn typo_input(meta: &Value) -> Option<(&'static str, String)> {
     Some(("text", Value::Arr(clean).to_json()))
 }
 
-fn memo_input(meta: &Value) -> Option<(&'static str, String)> {
-    let t = js_trim(meta.get("text")?.as_str()?);
-    (!t.is_empty() && len16(t) <= MEMO_MAX).then(|| ("text", format!("메모:\n{t}")))
-}
-
 fn ai_input(task: &str, meta: &Value, b64ok: bool, now: f64) -> Option<Vec<String>> {
     let Some(device) = device_of(meta) else { return Some(fail("400", "bad_device")) };
     let got = match task {
         "schedule" => file_input(meta, true, b64ok),
         "card" => file_input(meta, false, b64ok),
         "typo" => typo_input(meta),
-        "memo" => memo_input(meta),
         _ => return None,
     };
     let Some((kind, payload)) = got else { return Some(fail("400", "bad_input")) };
@@ -315,24 +226,11 @@ fn typo_clean(out: &Value, meta: &Value) -> Clean {
     Ok(fields([("items", Value::Arr(items))]))
 }
 
-fn memo_clean(out: &Value, meta: &Value) -> Clean {
-    // 자르지 않고 거절: 잘라서 비교하면 잘린 뒤쪽 숫자는 검사를 안 받는다(2026-11-19 agy 검토)
-    let sentence = out.get("sentence").and_then(Value::as_str).map_or("", js_trim);
-    if sentence.is_empty() || len16(sentence) > MEMO_MAX {
-        return Err(fail("502", "ai_bad_output"));
-    }
-    if facts_of(sentence) != facts_of(&str_of(meta.get("text"), MEMO_MAX)) {
-        return Err(fail("422", "ai_changed_facts"));
-    }
-    Ok(fields([("sentence", Value::Str(sentence.to_string()))]))
-}
-
 fn ai_finish(task: &str, stop: &str, out: &str, meta: &Value) -> Option<Vec<String>> {
     let clean: fn(&Value, &Value) -> Clean = match task {
         "schedule" => schedule_clean,
         "card" => card_clean,
         "typo" => typo_clean,
-        "memo" => memo_clean,
         _ => return None,
     };
     if stop == "refusal" {
@@ -379,7 +277,6 @@ fn ai_error(status: &str, etype: &str, ecode: &str, message: &str) -> Vec<String
 pub fn text_call(op: u32, args: &[String]) -> Option<Vec<String>> {
     match (op, args) {
         (1, [t, prev]) => Some(suggest(t, prev).map_or_else(Vec::new, |s| core::iter::once(s.why).chain(s.fixes).collect())),
-        (2, [s]) => Some(vec![memo_join(s)]),
         (3, [task, meta, b64ok, now]) => {
             let now = now.parse::<u64>().ok()? as f64; // JS Date.now() 는 정수 ms
             match json::parse(meta) {
@@ -477,33 +374,6 @@ mod tests {
     }
 
     #[test]
-    fn facts_match_old_js_regex() {
-        // 값은 node 에서 옛 FACT_RE 로 뽑은 것
-        for (s, want) in [
-            ("11-18 W1 -3.38, h2 12", "11|18|W1|-3.38|H2|12"),
-            ("- 11-18 W1 -3.38 확인, H2 12 임", "11|18|W1|-3.38|H2|12"),
-            ("ABCDE5 x", "ABCDE5"),
-            ("W1W2 12W3", "W1|W2|12|W3"),
-            ("H-3 SW-12 a-b", "H-3|SW-12"),
-            ("1.2.3 .5 _7 x.9", "1.2.3|.5"),
-            ("현장3 3.", "3|3"),
-            ("-0.5 --2 1-2-3", "-0.5|-2|1|2|3"),
-            ("ab12.5", "AB12.5"),
-            ("", ""),
-        ] {
-            assert_eq!(facts_of(s), want, "{s:?}");
-        }
-        assert_ne!(facts_of("W1 -3.38, W2 -1.20"), facts_of("W1 -1.20, W2 -3.38"), "순서가 바뀌면 다르다");
-        // 2026-11-19 agy 검토: 옛 JS 는 아래 쌍을 같다고 봤다(모델이 바꿔도 통과)
-        assert_eq!(facts_of("2026.11.19 W1-3.38 및 .5 침하"), "2026.11.19|W1|3.38|.5");
-        for (a, b) in [("2026.11.19", "2026.11.29"), ("값 .5", "값 .8"), ("값 -.5", "값 .5"), ("POINT1", "XOINT1"), ("H-3.38", "H-3.99"), ("W1.5", "W1.9")] {
-            assert_ne!(facts_of(a), facts_of(b), "{a:?} vs {b:?}");
-        }
-        // 같은 사실을 달리 쓴 것은 그대로 같다
-        assert_eq!(facts_of("2026-11-19 W1 -3.38"), facts_of("2026년 11월 19일 W1은 -3.38"));
-    }
-
-    #[test]
     fn day_like_date_parse() {
         let d = |s: &str| day(Some(&Value::Str(s.into())));
         for s in ["2026-11-09", "2026-02-30", "2026-02-31", "0000-01-01"] {
@@ -526,15 +396,6 @@ mod tests {
     }
 
     #[test]
-    fn memo_join_like_old_app_js() {
-        assert_eq!(memo_join("- 11-18 W1 -3.38 들뜸이 확인됨\n- 배수 불량임"), "11-18 W1 -3.38 들뜸이 확인됨, 배수 불량임");
-        assert_eq!(memo_join("  -x\n\n -  y \r\n-\tz"), "-x, y, z");
-        assert_eq!(memo_join("-"), "-");
-        assert_eq!(memo_join("- "), "");
-        assert_eq!(memo_join(&"가".repeat(1200)).chars().count(), 1000);
-    }
-
-    #[test]
     fn op1_is_valuefix_suggest() {
         let s = suggest("-3,34", "").unwrap();
         let want: Vec<String> = core::iter::once(s.why).chain(s.fixes).collect();
@@ -547,24 +408,18 @@ mod tests {
     #[test]
     fn input_checks_device_first() {
         for dev in ["x", "abcdefg", &"a".repeat(65), "dev abc-123", "dev-abc_123", "기기번호입니다요"] {
-            let meta = Value::obj([("device", Value::Str(dev.into())), ("text", Value::Str("W1".into()))]).to_json();
-            assert_eq!(input("memo", &meta, "0"), fail("400", "bad_device"), "{dev:?}");
+            let meta = Value::obj([("device", Value::Str(dev.into())), ("items", json::parse(r#"[{"id":"a","value":"1"}]"#).unwrap())]).to_json();
+            assert_eq!(input("typo", &meta, "0"), fail("400", "bad_device"), "{dev:?}");
         }
-        assert_eq!(input("memo", r#"{"device":12345678,"text":"W1"}"#, "0"), fail("400", "bad_device"));
-        assert_eq!(input("memo", r#"{"device":"x","text":""}"#, "0"), fail("400", "bad_device"), "기기 먼저");
-        assert_eq!(input("memo", "{", "0"), fail("400", "bad_input"));
+        assert_eq!(input("typo", r#"{"device":12345678,"items":[{"id":"a","value":"1"}]}"#, "0"), fail("400", "bad_device"));
+        assert_eq!(input("typo", r#"{"device":"x","items":[]}"#, "0"), fail("400", "bad_device"), "기기 먼저");
+        assert_eq!(input("typo", "{", "0"), fail("400", "bad_input"));
         assert_eq!(call(3, &["chat", &format!(r#"{{"device":"{D}"}}"#), "0", NOW]), None);
-        assert_eq!(call(3, &["memo", "{}", "0", "abc"]), None);
-    }
-
-    #[test]
-    fn memo_input() {
-        let m = |t: &str| input("memo", &Value::obj([("device", Value::Str(D.into())), ("text", Value::Str(t.into()))]).to_json(), "0");
-        assert_eq!(m("  W1 -3.38 \n"), vec!["ok".into(), key(), "text".into(), "메모:\nW1 -3.38".to_string()]);
-        assert_eq!(m(&"x".repeat(1001)), fail("400", "bad_input"));
-        assert_eq!(m(&format!(" {} ", "x".repeat(1000)))[0], "ok");
-        assert_eq!(m(" \n "), fail("400", "bad_input"));
-        assert_eq!(input("memo", &format!(r#"{{"device":"{D}"}}"#), "0"), fail("400", "bad_input"));
+        assert_eq!(call(3, &["typo", "{}", "0", "abc"]), None);
+        // 특이사항(memo)은 뺐다(2026-11-19): 모르는 일로 본다
+        assert_eq!(call(3, &["memo", &format!(r#"{{"device":"{D}","text":"W1"}}"#), "0", NOW]), None);
+        assert_eq!(call(5, &["memo", "end_turn", r#"{"sentence":"W1"}"#, "{}"]), None);
+        assert_eq!(call(2, &["- a"]), None);
     }
 
     #[test]
@@ -658,31 +513,18 @@ mod tests {
     }
 
     #[test]
-    fn finish_memo_keeps_facts() {
-        let meta = Value::obj([("device", Value::Str(D.into())), ("text", Value::Str("W1 -3.38 들뜸".into()))]).to_json();
-        assert_eq!(
-            finish("memo", "end_turn", r#"{"sentence":" - W1 -3.38 들뜸이 확인됨 "}"#, &meta),
-            ok(r#"{"ok":true,"sentence":"- W1 -3.38 들뜸이 확인됨"}"#)
-        );
-        assert_eq!(finish("memo", "end_turn", r#"{"sentence":"- W1 -3.83 들뜸이 확인됨"}"#, &meta), fail("422", "ai_changed_facts"));
-        assert_eq!(finish("memo", "end_turn", r#"{"sentence":"  "}"#, &meta), fail("502", "ai_bad_output"));
-        let long = format!(r#"{{"sentence":"- W1 -3.38 {}"}}"#, "가".repeat(1000));
-        assert_eq!(finish("memo", "end_turn", &long, &meta), fail("502", "ai_bad_output"), "길면 자르지 않고 거절");
-    }
-
-    #[test]
     fn wasm_text_call_round_trip() {
-        let input = bytes(&pack(&["- a\n- b".to_string()]));
+        let input = bytes(&pack(&["59".to_string()]));
         let units = input.len() / 2;
         let mut out = vec![0u8; 64];
-        let n = unsafe { wasm_text_call(2, input.as_ptr(), units, out.as_mut_ptr(), 32) };
-        assert_eq!(n, 6);
-        let got: Vec<u16> = out[..12].as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect();
-        assert_eq!(unpack(&got).into_iter().map(|u| text(u).unwrap()).collect::<Vec<_>>(), ["a, b"]);
-        assert_eq!(unsafe { wasm_text_call(2, input.as_ptr(), units, out.as_mut_ptr(), 5) }, -2);
+        let n = unsafe { wasm_text_call(4, input.as_ptr(), units, out.as_mut_ptr(), 32) };
+        assert_eq!(n, 8);
+        let got: Vec<u16> = out[..16].as_chunks::<2>().0.iter().map(|b| u16::from_le_bytes(*b)).collect();
+        assert_eq!(unpack(&got).into_iter().map(|u| text(u).unwrap()).collect::<Vec<_>>(), ["ok", "60"]);
+        assert_eq!(unsafe { wasm_text_call(4, input.as_ptr(), units, out.as_mut_ptr(), 5) }, -2);
         assert_eq!(unsafe { wasm_text_call(9, input.as_ptr(), units, out.as_mut_ptr(), 32) }, -1);
         let lone = bytes(&[1, 0, 0xD800]);
-        assert_eq!(unsafe { wasm_text_call(2, lone.as_ptr(), 3, out.as_mut_ptr(), 32) }, -1);
+        assert_eq!(unsafe { wasm_text_call(4, lone.as_ptr(), 3, out.as_mut_ptr(), 32) }, -1);
         let empty = bytes(&pack(&[String::new(), String::new()]));
         assert_eq!(unsafe { wasm_text_call(1, empty.as_ptr(), empty.len() / 2, out.as_mut_ptr(), 32) }, 0);
     }
