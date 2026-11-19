@@ -3308,7 +3308,9 @@ async function doSaveDrawingNotes(showAlert) {
 
   try {
     const notesAtBuild = structuredClone(drawingState.notes);
-    const savedNotes = typeof trimNotesForCell === 'function' ? trimNotesForCell(notesAtBuild) : notesAtBuild;
+    const trimmed = typeof trimNotesForCellInfo === 'function' ? trimNotesForCellInfo(notesAtBuild) : { notes: notesAtBuild, dropped: 0 };
+    const savedNotes = trimmed.notes;
+    if (trimmed.dropped) alert(`지난 기록 ${trimmed.dropped}개가 칸 크기 때문에 빠졌습니다(가장 오래된 것부터 뺐습니다).`);
     const uid = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
