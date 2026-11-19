@@ -8,6 +8,11 @@ description = "JNI & WebAssembly Rust core library for gyecheuk-cloud"
 name = "gyecheuk_core"
 crate-type = ["cdylib", "rlib"]
 
+# ai = Claude 창구 검사(ai.rs·json.rs). Code.gs 는 잠금·복귀만 써서 --no-default-features 작은 판을 넣는다(embed-wasm.js)
+[features]
+default = ["ai"]
+ai = []
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 jni = "0.21"
 serde = { version = "1", features = ["derive"] }

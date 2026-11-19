@@ -501,20 +501,43 @@ async function schedRenderPage(page) {
   return c;
 }
 
+const SCHED_AI_MAX = 4_900_000;   // worker 가 받는 파일 크기(base64 660만 자) 안
+// 사진·스캔 PDF 는 먼저 AI(worker /ai/schedule, 2026-11-19)에게 읽힌다. 못 읽으면 { why } → 원래 OCR 로 읽는다
+// 글자층 있는 PDF 는 AI 를 부르지 않는다(무료로 정확히 읽힌다)
+async function schedAskAi(blob, type) {
+  if (typeof postAi !== 'function') return { why: '' };
+  if (!blob || blob.size > SCHED_AI_MAX) return { why: '파일이 커서' };
+  busyText('AI 가 계획서 읽는 중...');
+  const out = await postAi('/ai/schedule', { file: { type, data: await readFileAsBase64(blob) } });
+  if (!out.ok) return { why: aiErrorText(out.error) };
+  if (!out.rows?.length) return { why: 'AI 가 일정 줄을 찾지 못함' };
+  const period = out.period || null;
+  return { result: { period, weekStart: period ? SchedParse.mondayOf(period.start) : null, rows: out.rows, notes: out.notes || [],
+    warnings: ['AI 가 읽었습니다. 넣기 전에 줄마다 확인해 주세요.'] } };
+}
+
 // 여러 쪽이면 쪽마다 읽어 합친다. 주 시작은 기간을 찾은 첫 쪽 기준
 async function schedReadFile(file) {
   const isPdf = /\.pdf$/i.test(file.name) || file.type === 'application/pdf';
   const results = [];
+  let aiWhy = '';
   if (isPdf) {
     const lib = await ensurePdfJs();
     const doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
     const pages = Math.min(doc.numPages, SCHED_MAX_PAGES);
+    let askedAi = false;
     for (let p = 1; p <= pages; p += 1) {
       busyText(`계획서 읽는 중 (${p}/${pages}쪽)`);
       const page = await doc.getPage(p);
       const items = await schedPdfTextItems(page, lib);
       let r = items.length >= SCHED_MIN_TEXT_ITEMS ? SchedParse.parseWeeklyPlan(items) : null;
-      if (!r || !r.rows.length) {   // 스캔한 PDF(글자층 없음)는 그림으로 OCR
+      if ((!r || !r.rows.length) && !askedAi) {   // 스캔한 PDF: 파일째 AI 에게 한 번만 묻는다
+        askedAi = true;
+        const ai = await schedAskAi(file, 'application/pdf');
+        if (ai.result) { doc.destroy?.(); return ai.result; }
+        aiWhy = ai.why;
+      }
+      if (!r || !r.rows.length) {   // AI 도 못 읽으면 그림으로 OCR
         const ocr = await ocrCanvas(await schedRenderPage(page), `${p}/${pages}쪽`);
         r = SchedParse.parseWeeklyPlan(ocr.items, { inkAt: ocr.inkAt, vlines: ocr.vlines });
       }
@@ -523,16 +546,22 @@ async function schedReadFile(file) {
     doc.destroy?.();
   } else {
     busyText('사진 준비 중...');
-    const ocr = await ocrCanvas(await ocrImageCanvas(file), '사진');
+    const canvas = await ocrImageCanvas(file);
+    const ai = await schedAskAi(await toJpeg(canvas, 0.85), 'image/jpeg');   // 사진은 줄여서 보낸다(원본은 커서 worker 한도를 넘는다)
+    if (ai.result) return ai.result;
+    aiWhy = ai.why;
+    const ocr = await ocrCanvas(canvas, '사진');
     results.push(SchedParse.parseWeeklyPlan(ocr.items, { inkAt: ocr.inkAt, vlines: ocr.vlines }));
   }
   const withPeriod = results.find((r) => r.period);
+  const warnings = [...new Set(results.flatMap((r) => r.warnings))].filter((w) => !(withPeriod && /기간/.test(w)));
+  if (aiWhy) warnings.unshift(`AI 를 쓰지 못해(${aiWhy}) 글자 인식으로 읽었습니다.`);
   return {
     period: withPeriod?.period ?? null,
     weekStart: withPeriod?.weekStart ?? null,
     rows: results.flatMap((r) => r.rows),
     notes: results.flatMap((r) => r.notes),
-    warnings: [...new Set(results.flatMap((r) => r.warnings))].filter((w) => !(withPeriod && /기간/.test(w))),
+    warnings,
   };
 }
 

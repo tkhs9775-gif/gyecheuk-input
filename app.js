@@ -140,6 +140,20 @@ async function postWorker(path, payload = {}, signal) {
   return data;
 }
 
+// Claude 창구(worker /ai/*, 2026-11-19). 키는 worker 에만 있다. 늘 { ok, ... } 를 돌려준다(실패도 { ok:false, error } — 화면이 aiErrorText 로 사람 말로 바꿔 보인다)
+const AI_WAIT_MS = 120000;   // worker 가 Anthropic 을 90초 기다리고 한 번 더 해 볼 수 있다. 이보다 늦으면 포기(계획서는 OCR 로 넘어간다)
+const AI_ERRORS = { ai_limit: '오늘 AI 물어보기 횟수를 다 썼습니다', ai_spend_limit: '이번 달 AI 사용 한도를 다 썼습니다. 관리자에게 알려 주세요', ai_not_configured: 'AI 가 아직 준비되지 않았습니다', offline: '인터넷이 연결되지 않았습니다', timeout: 'AI 응답이 너무 늦었습니다', ai_changed_facts: 'AI 가 숫자·번호를 바꿔 써서 버렸습니다. 메모를 그대로 쓰세요' };
+const aiErrorText = (code) => AI_ERRORS[code] || 'AI 에 묻지 못했습니다';
+async function postAi(path, payload) {
+  if (typeof PUSH_URL === 'undefined' || !PUSH_URL) return { ok: false, error: 'no_server' };
+  let res;
+  try {
+    res = await fetch(PUSH_URL + path, { method: 'POST', body: JSON.stringify({ code: state.code, device: deviceId(), ...payload }), signal: AbortSignal.timeout?.(AI_WAIT_MS) });
+  } catch (err) { return { ok: false, error: err?.name === 'TimeoutError' ? 'timeout' : 'offline' }; }
+  const data = await res.json().catch(() => null);
+  return data && typeof data === 'object' ? data : { ok: false, error: `http_${res.status}` };
+}
+
 // 중계 서버 바이너리 엔드포인트(/thumbs GKT1 묶음, /photo_view JPEG, /pdf PDF 바이트).
 // 서버가 바이너리(octet-stream·image/*·application/pdf)로 주면 Uint8Array 를 그대로 돌려주고,
 // 구버전 Worker 나 모의 시험(JSON)이 응답하면 자동으로 JSON 으로 풀어 호환성을 지킨다.
@@ -788,6 +802,41 @@ function clearEntryFields() {
   pickers.gps.clear();
   pickers.qgis.clear();
   updateValueInfo();
+  memoAiReset();
+}
+
+// 특이사항 → 보고서 문장(worker /ai/memo, 2026-11-19). 숫자·번호가 바뀌면 worker 가 버린다. 메모는 [이 문장으로 바꾸기]를 눌러야만 바뀐다
+const MEMO_AI_LABEL = '✍ 보고서 문장으로 다듬기';
+function memoAiReset() {
+  const btn = $('memoAiBtn');
+  show(btn, !!$('memo').value.trim() && RustCore.isWasmReady());   // 답 정리가 Rust(ai.rs memo_join) — wasm 이 없으면 AI 버튼만 숨긴다
+  btn.disabled = false;
+  btn.textContent = MEMO_AI_LABEL;
+  show($('memoAiOut'), false);
+  $('memoAiOut').replaceChildren();
+}
+async function memoAiAsk() {
+  const text = $('memo').value.trim();
+  const btn = $('memoAiBtn');
+  btn.disabled = true;
+  btn.textContent = '다듬는 중…';
+  const out = await postAi('/ai/memo', { text });
+  if ($('memo').value.trim() !== text) return;   // 기다리는 동안 메모를 고쳤다(input 이 이미 버튼을 되돌렸다)
+  btn.disabled = false;
+  btn.textContent = MEMO_AI_LABEL;
+  const span = (cls, s) => Object.assign(document.createElement('span'), { className: cls, textContent: s });
+  const box = $('memoAiOut');
+  show(box, true);
+  if (!out.ok) { box.replaceChildren(span('why', aiErrorText(out.error))); return; }
+  // 메모 칸은 한 줄이라 개조식 줄('- …')을 쉼표로 잇는다(Rust ai.rs memo_join). '-3.38' 같은 빼기 부호는 띄어쓰기가 없어 남는다
+  const sentence = RustCore.memoJoin(out.sentence);
+  if (!sentence) { box.replaceChildren(span('why', 'AI 가 쓸 만한 문장을 주지 않았습니다')); return; }
+  const use = Object.assign(document.createElement('button'), { type: 'button', className: 'btn small', textContent: '이 문장으로 바꾸기' });
+  use.addEventListener('click', () => {
+    $('memo').value = sentence;
+    $('memo').dispatchEvent(new Event('input', { bubbles: true }));   // 임시저장·버튼 되돌리기
+  });
+  box.replaceChildren(span('why', 'AI 제안 (숫자·번호는 메모 그대로인지 서버가 확인함)'), span('text', sentence), use);
 }
 
 // ---------- draft (this phone only) ----------
@@ -833,6 +882,7 @@ function restoreDraft() {
   $('value').value = draft.value ?? '';
   MULTI_IDS.forEach((id, i) => { $(id).value = draft.values?.[i] ?? ''; });
   $('memo').value = draft.memo ?? '';
+  memoAiReset();
   if (RustCore.draftKeepsDate(!!draft.date, !!draft.dateAuto)) $('date').value = draft.date;   // 사람이 고른 날짜만 되살린다(표시가 없는 옛 저장본은 전처럼, 판단은 Rust resume.rs)
   updateValueInfo();
   return true;
@@ -1364,6 +1414,8 @@ MULTI_IDS.forEach((id, i) => {
   });
 });
 $('draft').addEventListener('click', saveDraft);
+$('memo').addEventListener('input', memoAiReset);
+$('memoAiBtn').addEventListener('click', memoAiAsk);
 $('input').addEventListener('input', autosaveDraft);
 $('input').addEventListener('change', autosaveDraft);
 

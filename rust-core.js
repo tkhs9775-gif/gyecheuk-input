@@ -534,12 +534,52 @@
     return viaWasm('wasm_lock_device_ok', () => callTexts([id], (p, n) => wasm.wasm_lock_device_ok(p, n)) === 1, () => /^[A-Za-z0-9-]{8,64}$/.test(id));
   }
 
+  // 2026-11-19: 값 오타 제안·특이사항 메모 묶기(Rust ai.rs text_call). JS 대체 없음 — wasm 이 없으면 null → 화면은 제안·AI 버튼을 안 띄운다
+  function textCall(op, strs) {
+    if (!hasFn('wasm_text_call')) return null;
+    const cap = strs.reduce((n, s) => n + 2 + s.length, 0) * 2 + 4096;
+    const out = wasm.wasm_alloc(cap * 2);
+    if (!out) return null;
+    try {
+      const n = callTexts(strs, (p, units) => wasm.wasm_text_call(op, p, units, out, cap));
+      if (n < 0) return null;
+      // out 은 홀수 주소일 수 있다 → 복사본으로 읽는다
+      const dv = new DataView(wasm.memory.buffer.slice(out, out + n * 2));
+      const res = [];
+      for (let o = 0; o < n * 2;) {
+        const len = dv.getUint16(o, true) | (dv.getUint16(o + 2, true) << 16);
+        o += 4;
+        let s = '';
+        for (let i = 0; i < len; i += 1, o += 2) s += String.fromCharCode(dv.getUint16(o, true));
+        res.push(s);
+      }
+      return res;
+    } catch (err) {
+      console.warn(`wasm_text_call ${op} 실패`, err);
+      return null;
+    } finally {
+      wasm.wasm_dealloc(out, cap * 2);
+    }
+  }
+  // 값 칸 오타 제안: null(고칠 것 없음·wasm 없음) 또는 { why, fixes }
+  function rustValueFix(text, prev) {
+    const r = textCall(1, [str(text), str(prev)]);
+    return r && r.length ? { why: r[0], fixes: r.slice(1) } : null;
+  }
+  // 특이사항 메모를 한 줄로 묶기(서버 /ai/memo 에 보낼 글). wasm 없으면 null
+  function rustMemoJoin(s) {
+    const r = textCall(2, [str(s)]);
+    return r ? r[0] : null;
+  }
+
   const api = {
     resumePlan: rustResumePlan,
     schedFollowToday: rustSchedFollowToday,
     dateIsAuto: rustDateIsAuto,
     draftKeepsDate: rustDraftKeepsDate,
     deviceIdOk: rustDeviceIdOk,
+    valueFix: rustValueFix,
+    memoJoin: rustMemoJoin,
     drawingNoticeDue: rustDrawingNoticeDue,
     pinValueCells: rustPinValueCells,
     pinValuesOnDrawing: rustPinValuesOnDrawing,
@@ -584,6 +624,8 @@
       rustDateIsAuto,
       rustDraftKeepsDate,
       rustDeviceIdOk,
+      rustValueFix,
+      rustMemoJoin,
       rustB64ToBytes,
       rustBytesToB64,
       rustSniffImageMime,

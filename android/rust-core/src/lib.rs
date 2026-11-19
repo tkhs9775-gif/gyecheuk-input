@@ -1,6 +1,11 @@
 pub mod lock;
 pub mod readcache;
 pub mod resume;
+pub mod valuefix;
+#[cfg(feature = "ai")]
+pub mod ai;
+#[cfg(feature = "ai")]
+pub mod json;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pushopen;
 

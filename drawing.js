@@ -1349,7 +1349,7 @@ async function loadFamilySources(file, seq) {
   if (seq !== openSeq) return;
   drawingState.familySources = out.filter(Boolean);
   const pin = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
-  if (pin) renderPinReadings(pin);   // 메모 상자를 열어 둔 채 기다렸으면 목록을 바로 채운다
+  if (pin) renderPinFix(pin, renderPinReadings(pin));   // 메모 상자를 열어 둔 채 기다렸으면 목록을 바로 채운다
 }
 
 // 서버 메모가 늦게 도착해도, 그 사이 다른 도면으로 바뀌었거나 사용자가 이미 고친 게 있으면 덮어쓰지 않는다
@@ -2250,7 +2250,7 @@ function openPinMemoBox(pinId) {
   $('pinMemoKeyboard').value = pin.text || '';
   // 지난 측정일의 값이 들어 있으면 칸을 누를 때 전체 선택: 지우지 않고 바로 새 값을 친다(옛 값은 전회로 남는다)
   $('pinMemoKeyboard').dataset.stale = pin.text && pin.date !== todayKst() ? '1' : '';
-  renderPinReadings(pin);
+  renderPinFix(pin, renderPinReadings(pin));
   renderPinGroupUi(pin);
   show($('pinMemoBox'), true);
   renderPagePins();
@@ -2407,7 +2407,7 @@ function renderPinReadings(pin) {
   if (isMultiCell(pin.type)) { t.delta = null; t.cumulative = null; }   // 값이 3칸이라 첫 숫자만 비교하면 틀린 변화가 나온다
   $('pinMemoKeyboard').placeholder = t.prev && !t.current ? '오늘 값을 입력하세요' : KEYBOARD_PLACEHOLDER;
   show(box, !!t.prev);
-  if (!t.prev) { box.replaceChildren(); return; }
+  if (!t.prev) { box.replaceChildren(); return t; }
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -2439,6 +2439,44 @@ function renderPinReadings(pin) {
     list.append(li);
   });
   box.append(head, list);
+  return t;   // renderPinFix 가 같은 오늘·전회 값을 쓴다
+}
+
+// 값 오타 제안(Rust valuefix.rs → RustCore.valueFix, 2026-11-19; wasm 이 안 뜨면 제안 없음): 오늘 친 값이 쉼표·한글 자판·값 두 개·전회와 10배 차이면 '바꾸기' 버튼을 띄운다. 값은 사람이 눌러야만 바뀐다.
+// 규칙으로 못 고치면 'AI에게 묻기'(worker /ai/typo, 기기당 하루 60번). 받은 제안도 버튼으로만 보인다
+function renderPinFix(pin, t) {
+  const box = $('pinFix');
+  if (!box) return;
+  const value = t?.current || '';
+  const prev = t?.prev?.text || '';
+  const res = value ? rustCore()?.valueFix(value, prev) ?? null : null;
+  show(box, !!res);
+  if (!res) { box.replaceChildren(); return; }
+  const button = (text, onClick) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn small';
+    b.textContent = text;
+    b.addEventListener('click', onClick);
+    return b;
+  };
+  const fixBtn = (fix, note = '') => button(`→ ${negateIfPlainNumber(pin.type, fix)} 로 바꾸기${note}`, () => updateActivePinText(fix));
+  const why = document.createElement('span');
+  why.className = 'why';
+  why.textContent = `⚠ ${res.why}${res.fixes.length ? '' : ' — 값을 다시 확인하세요'}`;
+  box.replaceChildren(why, ...res.fixes.slice(0, 3).map((f) => fixBtn(f)));
+  if (res.fixes.length || isMultiCell(pin.type) || typeof postAi !== 'function') return;
+  const ask = button('🤖 AI에게 묻기', async () => {
+    ask.disabled = true;
+    ask.textContent = '묻는 중…';
+    const out = await postAi('/ai/typo', { items: [{ id: 'p', value, prev, unit: pinTypeName(pin.type) }] });
+    const now = drawingState.notes.pins.find((p) => p.id === drawingState.activePinId);
+    if (!now || now.id !== pin.id || now.text !== value) return;   // 기다리는 동안 값을 고쳤거나 상자를 닫았다
+    const item = out.ok ? out.items?.find((i) => i.id === 'p') : null;
+    if (item?.suggestion && negateIfPlainNumber(pin.type, item.suggestion) !== value) { ask.replaceWith(fixBtn(item.suggestion, ' (AI)')); return; }
+    ask.textContent = out.ok ? 'AI 도 고칠 값을 찾지 못했습니다' : aiErrorText(out.error);
+  });
+  box.append(ask);
 }
 const weekdayOf = (date) => {
   const [y, m, d] = String(date).split('-').map(Number);
@@ -2479,7 +2517,7 @@ function updateActivePinText(newText, { keepCells = false } = {}) {
   $('pinMemoKeyboard').value = newText;
   $('pinMemoKeyboard').dataset.stale = '';
   if (isMultiCell(pin.type) && !keepCells) strainCells(newText).forEach((c, i) => { $('pinCells').children[i].value = c; });   // 손글씨 판독 등 칸 밖에서 들어온 값
-  renderPinReadings(next);
+  renderPinFix(next, renderPinReadings(next));
   refreshLevelButtons(next);
   renderPagePins();
   saveDrawingNotesQuiet();

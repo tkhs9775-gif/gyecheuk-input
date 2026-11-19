@@ -1,6 +1,6 @@
 // 현장 담당자 명함(2026-11-11): 도면 탭에서 현장 폴더를 열면 위에 그 현장 담당자 명함 사진이 보인다.
 // 명함 앱처럼: 촬영(또는 사진 고르기) → 스캔 화면(card-crop.js: 테두리 맞추기 → 반듯하게 펴기 → 빛 반사·그늘 지우기) → 저장.
-// 글자 읽기(OCR)는 쓰지 않는다(반사 재질에서 틀려서). 이름·전화는 적고 싶을 때만 직접 적는다.
+// 폰 안 글자 읽기(OCR)는 쓰지 않는다(반사 재질에서 틀려서). 보정 뒤 AI(worker /ai/card)가 빈 칸만 채우고, 직원이 보고 저장한다(2026-11-19).
 // 서버: Code.gs contact_list/save/delete/photo — 시트 '명함' + Drive 명함/<현장>/
 // app.js·drawing.js 다음에 읽힌다: $, api, state, store, flash, errorText, signOut, withBusy, show 를 쓴다.
 
@@ -188,6 +188,23 @@ async function contactScan(file) {
   contactSetPhoto(`data:image/jpeg;base64,${res.base64}`);
   $('contactNote').textContent = `보정한 명함 사진입니다(${Math.round(res.blob.size / 1024)}KB). 저장을 누르면 이 현장에 올라갑니다.`;
   $('contactError').textContent = '';
+  contactAiFill(contactState.photo);
+}
+
+// 글자 채우기(2026-11-19): 보정한 사진을 AI(worker /ai/card)에게 읽혀 빈 칸만 채운다. 저장은 직원이 보고 누른다
+// 기다리는 동안 다시 찍거나 창을 닫으면 답을 버린다. 그새 직원이 적은 칸은 건드리지 않는다
+async function contactAiFill(photo) {
+  const empty = () => Object.entries(CONTACT_FIELDS).filter(([, id]) => !$(id).value.trim());
+  if (typeof postAi !== 'function' || !empty().length) return;
+  const note = $('contactNote').textContent;
+  $('contactNote').textContent = `${note} AI 가 명함 글자를 읽는 중...`;
+  const out = await postAi('/ai/card', { file: { type: 'image/jpeg', data: photo.base64 } });
+  if (contactState.photo !== photo || !$('contactDialog').open) return;
+  if (!out.ok) { $('contactNote').textContent = `${note} 글자는 직접 적어 주세요(${aiErrorText(out.error)}).`; return; }
+  let n = 0;
+  for (const [k, id] of empty()) if (out[k]) { $(id).value = out[k]; n += 1; }
+  if (n) $('contactMore').open = true;
+  $('contactNote').textContent = n ? `${note} AI 가 ${n}칸을 채웠습니다. 틀린 글자가 없는지 보고 저장을 누르세요.` : `${note} AI 가 읽을 글자를 찾지 못했습니다.`;
 }
 
 async function contactPicked(input) {
