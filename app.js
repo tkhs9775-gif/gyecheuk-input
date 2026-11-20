@@ -62,6 +62,10 @@ const SERVER_ERRORS = {
   core_unavailable: '서버 준비가 덜 됐습니다. 입력은 이 폰에 보관했고 잠시 후 다시 보냅니다.',
   upload_expired: '올리기가 오래 멈춰 처음부터 다시 올려야 합니다. 다시 눌러 주세요.',
   bad_action: '앱과 서버 버전이 맞지 않습니다. 정보 탭에서 새로고침해 주세요.',
+  confirm: '현장 이름이 맞지 않습니다. 그대로 입력해 주세요.',
+  site_closed: '종료된 현장이라 저장하지 않았습니다. 현장 관리에서 다시 진행하면 입력할 수 있습니다.',
+  closed_exists: '종료 현장에 같은 이름이 있습니다. 현장 관리의 종료 현장에서 다시 진행해 주세요.',
+  move_failed: 'Drive 폴더를 옮기지 못해 그대로 두었습니다. 잠시 후 다시 해 주세요.',
   drive_blocked: 'Drive가 이 파일의 내려받기를 막았습니다(유해 가능 판정 등). Drive 웹에서 파일을 열어 경고 내용을 확인해 주세요.',
 };
 
@@ -106,7 +110,7 @@ const networkError = (message) => Object.assign(new Error(message), { network: t
 // 자주 여는 목록은 중계 서버(worker)가 기억했다 바로 준다. 느리거나(WORKER_WAIT_MS) 안 되면 예전처럼 구글 서버에 직접 묻는다. 쓰기는 늘 구글 서버로 직접
 const CACHED_READS = new Set(['config', 'drawing_list', 'cad_list', 'photo_albums', 'photo_page']);   // worker/src/cache.js RULES 와 같다
 const SLOW_CACHED_READS = new Set(['photo_albums', 'photo_page', 'drawing_list', 'cad_list']);   // 냉각 상태 Apps Script 첫 응답이 완료될 때까지 충분히 기다려 중복 직접 호출을 피한다
-const FORGET_ALL = new Set(['add_site', 'remove_site', 'add_user', 'remove_user', 'add_instrument']);
+const FORGET_ALL = new Set(['add_site', 'remove_site', 'close_site', 'reopen_site', 'add_user', 'remove_user', 'add_instrument']);
 const FORGET_SITE = new Set(['drawing_upload', 'drawing_rename']);
 const WORKER_WAIT_MS = 2500;
 const WORKER_SLOW_WAIT_MS = 22000;
@@ -876,8 +880,8 @@ function renderPeople() {
 }
 
 // The add_* replies carry the refreshed lists.
-function applyConfig({ sites, names, types, instruments, valueCounts }) {
-  state.config = { ...state.config, sites, names, types, instruments, valueCounts };
+function applyConfig({ sites, closedSites, names, types, instruments, valueCounts }) {
+  state.config = { ...state.config, sites, closedSites: closedSites || [], names, types, instruments, valueCounts };
   store.set('cfg', JSON.stringify(state.config));
 }
 
@@ -910,10 +914,81 @@ function renderManage() {
       del.textContent = '삭제';
       del.setAttribute('aria-label', `${name} 삭제`);
       del.addEventListener('click', () => managePeople(kind, 'remove', name));
-      li.append(text, del);
+      li.append(text);
+      if (kind === 'site') li.append(siteButton('종료', `${name} 종료`, () => openCloseSite(name)));
+      li.append(del);
       return li;
     }));
   }
+  renderClosedSites();
+}
+
+const siteButton = (label, aria, onClick) => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'act';
+  b.textContent = label;
+  b.setAttribute('aria-label', aria);
+  b.addEventListener('click', onClick);
+  return b;
+};
+
+// ⚙ 관리창 아래 '종료 현장' 묶음: 다시 진행 버튼
+function renderClosedSites() {
+  const closed = state.config.closedSites || [];
+  $('closedSiteSum').textContent = `종료 현장 (${closed.length})`;
+  $('closedSiteList').replaceChildren(...(closed.length ? closed : ['']).map((name) => {
+    const li = document.createElement('li');
+    if (!name) { li.className = 'empty'; li.textContent = '종료한 현장이 없습니다.'; return li; }
+    const text = document.createElement('span');
+    text.textContent = name;
+    li.append(text, siteButton('다시 진행', `${name} 다시 진행`, () => reopenSite(name)));
+    return li;
+  }));
+}
+
+// 현장 종료: 이름을 그대로 따라 써야 종료 버튼이 켜진다(판단은 Rust sites.rs, 서버도 다시 본다). wasm 이 없으면 켜지지 않는다
+let closingSite = '';
+function openCloseSite(name) {
+  closingSite = name;
+  $('closeSiteName').textContent = name;
+  $('closeSiteTyped').value = '';
+  $('closeSiteError').textContent = window.RustCore?.isWasmReady?.() ? '' : '계산 모듈을 불러오는 중입니다. 잠시 후 다시 열어 주세요.';
+  $('closeSiteGo').disabled = true;
+  $('closeSiteDialog').returnValue = '';
+  $('closeSiteDialog').showModal();
+}
+$('closeSiteTyped').addEventListener('input', () => {
+  $('closeSiteGo').disabled = window.RustCore?.siteConfirm?.(closingSite, $('closeSiteTyped').value) !== true;
+});
+$('closeSiteDialog').addEventListener('close', async () => {
+  const dlg = $('closeSiteDialog');
+  const choice = dlg.returnValue;
+  dlg.returnValue = '';
+  if (choice !== 'close') return;
+  await changeSiteState('close_site', { name: closingSite, confirm: $('closeSiteTyped').value });
+});
+
+async function reopenSite(name) {
+  if (!confirm(`'${name}' 현장을 다시 진행할까요?
+Drive 폴더를 종료 폴더에서 원래 자리로 옮기고, 다시 입력할 수 있게 됩니다.`)) return;
+  await changeSiteState('reopen_site', { name });
+}
+
+async function changeSiteState(action, payload) {
+  $('manageError').textContent = '';
+  return withBusy($('manageDialog'), async () => {
+    try {
+      applyConfig(await api(action, { ...payload, user: $('user').value }));
+    } catch (err) {
+      if (err.isAuth) { signOut(); return false; }
+      $('manageError').textContent = errorText(err);
+      return false;
+    }
+    changeSite(state.site);   // 종료한 현장을 고르고 있었으면 첫 진행 현장으로 바로잡힌다
+    renderManage();
+    return true;
+  });
 }
 
 // Removing only takes the name off the list: saved records, photos and instruments stay in the sheet.

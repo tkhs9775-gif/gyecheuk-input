@@ -617,6 +617,23 @@ a.apk-link { display: grid; place-items: center; }
 .dlg .section { margin: 12px 4px 6px; }
 .mlist li { padding: 2px 6px 2px 16px; margin-bottom: 4px; }
 .mlist .del { min-height: 44px; padding: 0 14px; border: 0; border-radius: 20px; background: transparent; color: var(--err); font-weight: 700; }
+.mlist .act { min-height: 44px; padding: 0 12px; border: 0; border-radius: 20px; background: transparent; color: var(--accent); font-weight: 700; }
+/* 2026-11-20 현장 진행·종료 두 갈래 */
+.closed-box { margin: 10px 0 4px; }
+.closed-box > summary, .site-group > summary { min-height: 44px; display: flex; align-items: center; gap: .5ch; padding: 0 6px; font-weight: 700; cursor: pointer; }
+.site-group { margin: 0 0 8px; }
+.closed-box > summary, .site-group > summary { list-style: none; }
+.closed-box > summary::-webkit-details-marker, .site-group > summary::-webkit-details-marker { display: none; }
+.closed-box > summary::before, .site-group > summary::before { content: "▾"; display: inline-block; rotate: -90deg; }
+.closed-box[open] > summary::before, .site-group[open] > summary::before { rotate: 0deg; }
+@media (prefers-reduced-motion: no-preference) { .closed-box > summary::before, .site-group > summary::before { transition: rotate .2s; } }
+#closeSiteForm .row { gap: 10px; }
+#closeSiteForm .row .btn { flex: 1; }
+.group-label { min-height: 36px; display: flex; align-items: center; margin: 4px 0 6px; padding: 0 6px; font-weight: 700; }
+.site-group > ul { list-style: none; margin: 0; padding: 0; }
+.closed-tag { margin-left: 6px; padding: 1px 8px; border-radius: 10px; background: var(--line); color: var(--muted, inherit); font-size: 12px; font-weight: 700; }
+dialog:modal { overscroll-behavior: contain; }
+dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
 .addrow { margin: 4px 0 8px; }
 .addrow input { flex: 1; min-width: 0; }
 .addrow .btn { flex: none; padding: 0 22px; }

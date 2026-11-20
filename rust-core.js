@@ -534,6 +534,18 @@
     return viaWasm('wasm_lock_device_ok', () => callTexts([id], (p, n) => wasm.wasm_lock_device_ok(p, n)) === 1, () => /^[A-Za-z0-9-]{8,64}$/.test(id));
   }
 
+  // 2026-11-20: 현장 종료 확인 — 따라 쓴 글자가 현장 이름과 같은지(Rust sites.rs confirm_ok, 서버도 같은 함수로 다시 본다).
+  // JS 대체 없음: wasm 이 없으면 null → 화면은 종료 버튼을 켜지 않는다
+  function rustSiteConfirm(site, typed) {
+    if (!hasFn('wasm_site_confirm')) return null;
+    try {
+      return callTexts([String(site ?? ''), String(typed ?? '')], (p, n) => wasm.wasm_site_confirm(p, n)) === 1;
+    } catch (err) {
+      console.warn('wasm_site_confirm 실패', err);
+      return null;
+    }
+  }
+
   // 2026-11-19: 값 오타 제안·특이사항 메모 묶기(Rust ai.rs text_call). JS 대체 없음 — wasm 이 없으면 null → 화면은 제안·AI 버튼을 안 띄운다
   function textCall(op, strs) {
     if (!hasFn('wasm_text_call')) return null;
@@ -626,6 +638,7 @@
     dateIsAuto: rustDateIsAuto,
     draftKeepsDate: rustDraftKeepsDate,
     deviceIdOk: rustDeviceIdOk,
+    siteConfirm: rustSiteConfirm,
     valueFix: rustValueFix,
     drawingNoticeDue: rustDrawingNoticeDue,
     pinValueCells: rustPinValueCells,

@@ -43,7 +43,7 @@ const outboxGet = (id) => runStore('readonly', (s) => s.get(id));
 const outboxAll = async () => (await runStore('readonly', (s) => s.getAll())).sort((a, b) => a.createdAt - b.createdAt);
 
 // 서버가 입력 자체를 거부한 것: 다시 보내도 결과가 같으므로 바로 실패로 표시한다
-const PERMANENT_ERRORS = ['invalid', 'bad_code', 'forbidden', 'expired', 'not_found', 'duplicate', 'bad_action'];
+const PERMANENT_ERRORS = ['invalid', 'bad_code', 'forbidden', 'expired', 'not_found', 'duplicate', 'bad_action', 'site_closed'];   // site_closed: 종료 현장(보관함에 '실패'로 남는다)
 
 // 보내기에 실패했을 때: 'hold' 계산 모듈 없음(지우지 않고 다음 항목 계속) / 'stop' 지금은 멈추고 나중에 다시(신호 없음·잠김) / 'retry' 서버가 잠시 바쁜 것('server')이라 횟수를 올리고 다음 기회에 다시 / 'failed' 고칠 수 없으니 보관함에 실패로 표시
 function classifyFailure(err, tries) {

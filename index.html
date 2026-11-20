@@ -9,9 +9,9 @@
 <link rel="icon" href="data:,">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css?v=119">
-<link rel="stylesheet" href="theme.css?v=119">
-<link rel="stylesheet" href="brand.css?v=119">
+<link rel="stylesheet" href="style.css?v=120">
+<link rel="stylesheet" href="theme.css?v=120">
+<link rel="stylesheet" href="brand.css?v=120">
 <script>
 // 블랙 테마는 화면이 그려지기 전에 정해야 흰 화면이 번쩍이지 않는다: Pro 앱이거나 정보 탭에서 고른 값(theme)이 dark 면 <html data-theme="dark"> (theme.css 가 그 아래에서만 색을 바꾼다)
 (function () {
@@ -243,6 +243,11 @@
     </form>
     <button id="siteScan" type="button" class="btn outline small">Drive 폴더에서 현장 가져오기</button>
     <ul id="siteFound" class="list mlist"></ul>
+    <details id="closedSiteBox" class="closed-box">
+      <summary id="closedSiteSum">종료 현장 (0)</summary>
+      <p class="muted">종료한 현장은 도면·사진·기록을 볼 수만 있습니다. 다시 진행하면 원래대로 입력할 수 있습니다.</p>
+      <ul id="closedSiteList" class="list mlist"></ul>
+    </details>
 
     <h3 class="section">측정자</h3>
     <input id="userSearch" class="list-search" type="search" placeholder="측정자 검색" aria-label="측정자 검색" autocomplete="off" enterkeyhint="search">
@@ -255,6 +260,20 @@
     <p id="manageError" class="dlg-err" role="alert"></p>
     <button id="manageClose" type="button" class="btn outline wide">닫기</button>
   </div>
+</dialog>
+
+<dialog id="closeSiteDialog" aria-labelledby="closeSiteTitle">
+  <form id="closeSiteForm" method="dialog" class="dlg" novalidate>
+    <h2 id="closeSiteTitle" class="dlg-title">현장 종료</h2>
+    <p>'<b id="closeSiteName"></b>' 현장을 종료합니다. Drive 폴더(사진·도면·측량·CAD)는 각 폴더의 <b>종료</b> 폴더로 옮겨지고, 이 현장에는 더 입력할 수 없습니다. 지워지는 것은 없습니다.</p>
+    <label for="closeSiteTyped">확인을 위해 현장 이름을 그대로 입력하세요</label>
+    <input id="closeSiteTyped" type="text" maxlength="100" autocomplete="off" aria-describedby="closeSiteError">
+    <p id="closeSiteError" class="dlg-err" role="alert"></p>
+    <div class="row">
+      <button type="submit" value="cancel" class="btn outline" autofocus>취소</button>
+      <button id="closeSiteGo" type="submit" value="close" class="btn danger" disabled>종료</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="editDialog" aria-labelledby="editTitle">
@@ -860,32 +879,32 @@
   </a>
 </nav>
 
-<script src="config.js?v=119"></script>
-<script src="rust-core.js?v=119"></script>
-<script src="errlog.js?v=119"></script>
-<script src="weather.js?v=119"></script>
-<script src="entries.js?v=119"></script>
-<script src="push.js?v=119"></script>
-<script src="outbox.js?v=119"></script>
-<script src="phonecopy.js?v=119"></script>
-<script src="pinhistory.js?v=119"></script>
-<script src="perf.js?v=119"></script>
-<script src="search.js?v=119"></script>
-<script src="busy.js?v=119"></script>
-<script src="sitesort.js?v=119"></script>
-<script src="drawing.js?v=119"></script>
-<script src="cad-engine.js?v=119"></script>
-<script src="cad.js?v=119"></script>
-<script src="cadfiles.js?v=119"></script>
-<script src="gps.js?v=119"></script>
-<script src="gallery.js?v=119"></script>
-<script src="camera.js?v=119"></script>
-<script src="app.js?v=119"></script>
-<script src="ocr-kit.js?v=119"></script>
-<script src="schedule-parse.js?v=119"></script>
-<script src="schedule.js?v=119"></script>
-<script src="card-enhance.js?v=119"></script>
-<script src="card-crop.js?v=119"></script>
-<script src="contacts.js?v=119"></script>
+<script src="config.js?v=120"></script>
+<script src="rust-core.js?v=120"></script>
+<script src="errlog.js?v=120"></script>
+<script src="weather.js?v=120"></script>
+<script src="entries.js?v=120"></script>
+<script src="push.js?v=120"></script>
+<script src="outbox.js?v=120"></script>
+<script src="phonecopy.js?v=120"></script>
+<script src="pinhistory.js?v=120"></script>
+<script src="perf.js?v=120"></script>
+<script src="search.js?v=120"></script>
+<script src="busy.js?v=120"></script>
+<script src="sitesort.js?v=120"></script>
+<script src="drawing.js?v=120"></script>
+<script src="cad-engine.js?v=120"></script>
+<script src="cad.js?v=120"></script>
+<script src="cadfiles.js?v=120"></script>
+<script src="gps.js?v=120"></script>
+<script src="gallery.js?v=120"></script>
+<script src="camera.js?v=120"></script>
+<script src="app.js?v=120"></script>
+<script src="ocr-kit.js?v=120"></script>
+<script src="schedule-parse.js?v=120"></script>
+<script src="schedule.js?v=120"></script>
+<script src="card-enhance.js?v=120"></script>
+<script src="card-crop.js?v=120"></script>
+<script src="contacts.js?v=120"></script>
 </body>
 </html>

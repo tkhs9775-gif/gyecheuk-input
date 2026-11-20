@@ -607,6 +607,10 @@ async function openRecentDrawing(r) {
 // 연 기록이 없는 현장은 폰에 보관된 도면 목록의 최근 파일 날짜로(v81 이전에 열어 본 현장도 바로 최근 순에 반영). 탭 들어올 때만 다시 읽는다
 let drawingSiteHint;
 
+// 2026-11-20: 종료한 현장(서버 설정 closedSites)은 도면을 열람만. 서버도 같은 현장 저장을 거절한다(site_closed)
+const isClosedSite = (site) => (state.config.closedSites || []).includes(site);
+const CLOSED_SITE_TEXT = '종료된 현장이라 보기만 됩니다. 현장 관리(⚙)에서 다시 진행하면 저장할 수 있습니다.';
+
 function loadDrawingTab() {
   drawingSiteHint = SiteSort.cached((s) => SiteSort.newest(readCached(`drawings_${s}`), readCached(`drawing_folders_${s}`)));
   if (!warmPdfWorker()) ensurePdfJs().catch(() => {}); // 도면 탭 진입 즉시 백그라운드 워커 예열(워커 불가 시 메인 스레드 폴백)
@@ -621,6 +625,14 @@ function renderDrawingSites() {
   const ul = $('drawingSiteList');
   if (!$('drawingSiteSort')) ul.before(Object.assign(SiteSort.control('drawing', renderDrawingSites), { id: 'drawingSiteSort' }));
   const sites = SiteSort.sorted('drawing', state.config.sites || [], drawingSiteHint);
+  // 맨 위 두 갈래: '진행 중 (N)' 제목 + 목록, 그 아래 접힌 '종료 (N)' 묶음
+  let label = $('drawingActiveLabel');
+  if (!label) {
+    label = Object.assign(document.createElement('p'), { id: 'drawingActiveLabel', className: 'group-label' });
+    ul.before(label);
+  }
+  label.textContent = `📂 진행 중 (${sites.length})`;
+  renderClosedDrawingSites(ul);
   if (sites.length === 0) {
     const li = document.createElement('li');
     li.className = 'empty';
@@ -628,26 +640,42 @@ function renderDrawingSites() {
     ul.replaceChildren(li);
     return;
   }
-  ul.replaceChildren(...sites.map((site) => {
-    const li = document.createElement('li');
-    li.className = 'tap';
-    li.tabIndex = 0;
-    li.setAttribute('role', 'button');
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    const b = document.createElement('b');
-    b.textContent = `📁 ${site}`;
-    const sub = document.createElement('small');
-    sub.textContent = '터치하여 도면(PDF) 폴더 열기';
-    meta.append(b, sub);
-    const arrow = document.createElement('div');
-    arrow.className = 'val';
-    arrow.textContent = '›';
-    li.append(meta, arrow);
-    li.addEventListener('click', () => openSiteDrawingFolder(site));
-    li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openSiteDrawingFolder(site); });
-    return li;
-  }));
+  ul.replaceChildren(...sites.map((site) => drawingSiteItem(site, '터치하여 도면(PDF) 폴더 열기')));
+}
+
+// 진행 중 목록 아래 '종료 (N)' 접힌 묶음. 없으면 숨긴다
+function renderClosedDrawingSites(ul) {
+  let box = $('drawingClosedSites');
+  if (!box) {
+    box = Object.assign(document.createElement('details'), { id: 'drawingClosedSites', className: 'site-group' });
+    box.append(document.createElement('summary'), Object.assign(document.createElement('ul'), { className: ul.className }));
+    ul.after(box);
+  }
+  const closed = [...(state.config.closedSites || [])].sort((a, b) => a.localeCompare(b, 'ko'));
+  show(box, closed.length > 0);
+  box.querySelector('summary').textContent = `📁 종료 (${closed.length})`;
+  box.querySelector('ul').replaceChildren(...closed.map((site) => drawingSiteItem(site, '종료 · 보기만')));
+}
+
+function drawingSiteItem(site, subText) {
+  const li = document.createElement('li');
+  li.className = 'tap';
+  li.tabIndex = 0;
+  li.setAttribute('role', 'button');
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  const b = document.createElement('b');
+  b.textContent = `📁 ${site}`;
+  const sub = document.createElement('small');
+  sub.textContent = subText;
+  meta.append(b, sub);
+  const arrow = document.createElement('div');
+  arrow.className = 'val';
+  arrow.textContent = '›';
+  li.append(meta, arrow);
+  li.addEventListener('click', () => openSiteDrawingFolder(site));
+  li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openSiteDrawingFolder(site); });
+  return li;
 }
 
 // ---------- 2단계: 현장 터치 시 도면 목록 — 원본 / 저장본 / 계측기별 세 묶음 ----------
@@ -740,7 +768,7 @@ async function openSiteDrawingFolder(site) {
   drawingState.groupOpen = new Map();
   drawingState.query = '';   // 다른 현장의 검색어가 남아 빈 목록으로 보이지 않게
   $('drawingFileSearch').value = '';
-  $('drawingSiteTitle').textContent = `${site} 도면`;
+  $('drawingSiteTitle').textContent = isClosedSite(site) ? `${site} 도면 (종료 · 보기만)` : `${site} 도면`;
   show($('drawingSitesView'), false);
   show($('drawingFilesView'), true);
   window.contactsOpenSite?.(site);   // 폴더 위 현장 담당자 명함(contacts.js)
@@ -1102,6 +1130,7 @@ async function imageToPdfBase64(file) {
 
 async function uploadDrawingPdf(file) {
   if (!file) return;
+  if (isClosedSite(drawingState.site)) { alert(CLOSED_SITE_TEXT); return; }
   const isImage = IMAGE_DRAWING_RE.test(file.name);
   if (!isImage && !file.name.toLowerCase().endsWith('.pdf')) { alert('PDF·JPG 파일만 도면으로 올릴 수 있습니다.'); return; }
   if (file.size === 0) { alert('비어 있는 파일입니다. 다른 파일을 골라 주세요.'); return; }
@@ -3201,6 +3230,7 @@ let livePinsFirstAt = 0;      // 아직 안 보낸 첫 변경 시각
 // Rust 가 정한 대기 ms. wasm 이 없으면 null
 const livePinsWait = (leaving) => rustCore()?.liveSendWaitMs?.(Date.now(), Date.now(), livePinsFirstAt || Date.now(), leaving) ?? null;
 function scheduleLivePins() {
+  if (isClosedSite(drawingState.site)) return;   // 종료 현장: 실시간 줄을 보내지 않는다
   const file = drawingState.currentFile;
   const user = $('user')?.value || '';
   if (!file || !user) return;
@@ -3333,6 +3363,7 @@ async function pdfToJpegs(base64) {
 async function doSaveDrawingNotes(showAlert) {
   const file = drawingState.currentFile;
   if (!file) return;
+  if (isClosedSite(drawingState.site)) { alert(CLOSED_SITE_TEXT); return; }
   const targetFile = drawingState.sourceFile || file;
   const ver = notesVersion;
   const btn = $('pdfSaveNotes');

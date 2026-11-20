@@ -216,7 +216,7 @@ function invalidateGalleryCache(site = '') {
   else gIdbDel(G_IDB_LISTS, null);
 }
 
-const albumsSig = (list) => (list || []).map((a) => `${a.site}|${a.count}|${a.latest}|${a.coverId}`).join('\n');
+const albumsSig = (list) => (list || []).map((a) => `${a.site}|${a.count}|${a.latest}|${a.coverId}${a.closed ? '|closed' : ''}`).join('\n');
 const pageSig = (files, total) => `${total}:${(files || []).map((f) => `${f.id}|${f.updated}`).join('\n')}`;
 const compactAlbums = (list) => (list || []).map(({ site, count, latest, coverId }) => ({ site, count, latest, coverId }));
 const compactFiles = (list) => (list || []).map(({ id, name, updated }) => ({ id, name, updated }));
@@ -546,7 +546,9 @@ function showAlbums() {
 
 function renderAlbums(albums, thumbMap = {}, knownEmptySet = null) {
   const coverEls = new Map();
-  $('galleryAlbums').replaceChildren(...albums.map((a) => {
+  // 진행 중 앨범 먼저, 종료한 현장(서버 closed 표시)은 뒤에 '종료' 표를 달아 모은다. 같은 묶음 안 순서는 그대로
+  const ordered = [...albums.filter((a) => !a.closed), ...albums.filter((a) => a.closed)];
+  $('galleryAlbums').replaceChildren(...ordered.map((a) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'g-album';
@@ -561,6 +563,7 @@ function renderAlbums(albums, thumbMap = {}, knownEmptySet = null) {
     const name = document.createElement('div');
     name.className = 'name';
     name.textContent = a.site;
+    if (a.closed) name.append(Object.assign(document.createElement('span'), { className: 'closed-tag', textContent: '종료' }));
     const count = document.createElement('div');
     count.className = 'count';
     count.textContent = `${a.count.toLocaleString('ko-KR')}장 · ${String(a.latest).slice(5, 10).replace('-', '/')}`;
