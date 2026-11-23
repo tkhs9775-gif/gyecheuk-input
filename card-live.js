@@ -1,5 +1,5 @@
 // 명함 실시간 카메라(명함 앱처럼): 카메라 화면에서 명함 테두리를 실시간으로 따라 잡고, 모양이 맞고 가만히 있으면 자동으로 찍는다.
-// 찍을 때는 센서 최대 해상도 사진(ImageCapture.takePhoto)을 쓰고, 못 쓰면 영상 한 장면을 쓴다. 결과 File 은 cardScan(card-crop.js)이 받아 모서리 맞추기·보정을 한다.
+// 찍을 때는 지금 보이는 영상 화면(최대 4K)을 그대로 딴다. 결과 File 에는 잡아 둔 명함 사각형(file.cardQuad)이 붙어, cardScan(card-crop.js)이 그것을 처음 모서리로 쓴다.
 // 사용: const file = await cardLiveCamera()  →  JPEG File, 취소면 null, 카메라를 못 열면 거부(부른 쪽이 예전 방식으로 대신 연다)
 // 순수 함수(cardLiveCheck·cardLiveSteady)는 시험용으로 CardLive 에 내보낸다. 모서리 찾기(detectQuad)는 직선(Hough) 방식이다.
 (function (root) {
@@ -218,25 +218,13 @@
     }
   }
 
-  async function grabStill(video, track) {
-    if (typeof ImageCapture === 'function') {
-      try {
-        const cap = new ImageCapture(track);
-        const caps = await cap.getPhotoCapabilities?.().catch(() => null);
-        const opt = {};
-        if (caps?.imageWidth?.max && caps?.imageHeight?.max) {
-          // 센서 최대(수천만 화소)는 폰 웹뷰에서 찍는 데도, 이어서 여는 데도 오래 걸리고 메모리를 많이 쓴다 → 긴 변 4096px(약 12MP)까지. 명함 글씨엔 충분하다
-          const k = Math.min(1, STILL_MAX / Math.max(caps.imageWidth.max, caps.imageHeight.max));
-          opt.imageWidth = Math.round(caps.imageWidth.max * k); opt.imageHeight = Math.round(caps.imageHeight.max * k);
-        }
-        if (caps?.fillLightMode?.includes?.('off')) opt.fillLightMode = 'off';   // 켜지면 명함이 번쩍여 글씨가 날아간다
-        const blob = await cap.takePhoto(opt);
-        if (blob?.size > 20000) return blob;
-      } catch { /* 영상 장면으로 대신 */ }
-    }
+  // 찍는 사진은 '지금 보이는 영상 화면' 그대로 딴다. 폰 카메라의 촬영(takePhoto)은 미리보기와 화각이 달라서 실시간으로 잡은 명함 사각형이 사진에서 어긋난다
+  // (2026-11-23 폰 사용자 지적: 초록 사각형은 맞았는데 다음 화면에 다른 사각형이 떴다). 영상 해상도는 getUserMedia 에서 4K 까지 요청한다
+  async function grabStill(video) {
+    const k = Math.min(1, STILL_MAX / Math.max(video.videoWidth, video.videoHeight));
     const c = document.createElement('canvas');
-    c.width = video.videoWidth; c.height = video.videoHeight;
-    c.getContext('2d').drawImage(video, 0, 0);
+    c.width = Math.round(video.videoWidth * k); c.height = Math.round(video.videoHeight * k);
+    c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
     const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.95));
     c.width = 0;
     return blob;
@@ -247,7 +235,7 @@
     if (!root.CardEnhance) throw new Error('card-enhance missing');
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } },
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
     });
     const track = stream.getVideoTracks()[0];
     if (!styled) { const s = el('style'); s.textContent = css; document.head.append(s); styled = true; }
@@ -282,6 +270,7 @@
       let shooting = false;
       let shown = null;      // 화면에 그리는(부드럽게 따라가는) 모서리
       let last = null;       // 앞 분석의 모서리
+      let latest = null;     // 가장 최근에 찾은 모서리(찍을 때 다음 화면으로 넘긴다)
       let steadySince = 0;
       const work = document.createElement('canvas');
       const g = work.getContext('2d', { willReadFrequently: true });
@@ -313,9 +302,11 @@
         msg.textContent = '찍는 중... 움직이지 마세요'; msg.className = 'cl-msg ok';
         flash.classList.add('on'); setTimeout(() => flash.classList.remove('on'), 60);
         try {
-          const blob = await grabStill(video, track);
+          const blob = await grabStill(video);
           if (!blob) throw new Error('empty');
-          leave(new File([blob], 'card.jpg', { type: blob.type || 'image/jpeg' }));
+          const file = new File([blob], 'card.jpg', { type: blob.type || 'image/jpeg' });
+          if (latest) file.cardQuad = JSON.parse(JSON.stringify(latest));   // 같은 영상 화면에서 잡은 사각형을 다음 화면(card-crop.js)이 그대로 쓴다
+          leave(file);
         } catch (err) {
           console.warn('명함 촬영 실패', err);
           shooting = false;
@@ -338,6 +329,7 @@
         let quad = null;
         try { quad = detectQuad({ width: img.width, height: img.height, data: img.data }); } catch { quad = null; }
         const chk = cardLiveCheck(quad, video.videoWidth, video.videoHeight);
+        latest = quad;
         ease(quad);
         poly.setAttribute('points', shown ? KEYS.map((key) => `${shown[key].x},${shown[key].y}`).join(' ') : '');
         poly.setAttribute('class', chk.ok ? 'ok' : '');
