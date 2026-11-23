@@ -523,21 +523,43 @@ function b64ToUint8(base64) {
 const prefetchInFlight = new Map();
 const downloadPdf = (fileId) => api('drive_download', { fileId }, { timeoutMs: DOWNLOAD_TIMEOUT_MS });
 
-async function downloadPdfBytes(fileId) {
-  if (typeof postWorkerBinary === 'function') {
-    try {
-      const w = await postWorkerBinary('/pdf', { fileId });
-      if (w?.binary && w.bytes?.byteLength > 4) {
-        const okPdf = typeof rustLooksLikePdf === 'function' ? rustLooksLikePdf(w.bytes) : (w.bytes[0] === 0x25 && w.bytes[1] === 0x50);
-        if (okPdf) return w.bytes;
-      } else if (w && !w.binary && typeof w.data?.base64 === 'string' && w.data.base64) {
-        return b64ToUint8(w.data.base64);
-      }
-    } catch { /* GAS 폴백 */ }
-  }
+// 중계 서버(/pdf)로 받기. 못 받으면 null(미배포·형식 이상·오류 모두 GAS 로 넘어간다)
+async function downloadPdfViaWorker(fileId) {
+  if (typeof postWorkerBinary !== 'function') return null;
+  try {
+    const w = await postWorkerBinary('/pdf', { fileId });
+    if (w?.binary && w.bytes?.byteLength > 4) {
+      const okPdf = typeof rustLooksLikePdf === 'function' ? rustLooksLikePdf(w.bytes) : (w.bytes[0] === 0x25 && w.bytes[1] === 0x50);
+      return okPdf ? w.bytes : null;
+    }
+    if (w && !w.binary && typeof w.data?.base64 === 'string' && w.data.base64) return b64ToUint8(w.data.base64);
+  } catch { /* GAS 폴백 */ }
+  return null;
+}
+
+async function downloadPdfViaGas(fileId) {
   const dl = await downloadPdf(fileId);
   if (typeof dl?.base64 !== 'string' || !dl.base64) throw new Error('서버에서 도면 내용을 받지 못했습니다.');
   return b64ToUint8(dl.base64);
+}
+
+// 2026-11-23: 중계 서버가 느리면(다른 폰이 방금 저장해 보관분이 비었을 때 등) 알림으로 연 도면이 17~23초째 흰 화면이었다 → 응답이 오기 전에 GAS 도 같이 받아 먼저 오는 쪽을 쓴다
+const PDF_WORKER_WAIT_MS = 6000;
+function downloadPdfBytes(fileId) {
+  return new Promise((resolve, reject) => {
+    let gas = null;
+    let timer = null;
+    const toGas = () => {
+      if (gas) return;
+      clearTimeout(timer);
+      gas = downloadPdfViaGas(fileId);
+      gas.then(resolve, reject);
+    };
+    timer = setTimeout(toGas, PDF_WORKER_WAIT_MS);
+    downloadPdfViaWorker(fileId).then((bytes) => {
+      if (bytes) { clearTimeout(timer); resolve(bytes); } else toGas();
+    });
+  });
 }
 
 // 사용자가 직접 연 도면을 받는 동안에는 대기 중인 미리 받기를 시작하지 않는다(이미 받는 중인 것은 끝까지 받는다).
