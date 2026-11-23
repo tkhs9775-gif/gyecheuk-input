@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 키움 알림 카드(접힌 모습). 글자색은 안드로이드 알림 글자 모양을 따라 밝은/어두운 화면 모두 읽힌다.
-     1.34: 카드 위로 사선 빛이 3.6초마다 지나가고(n_sheen_*), 귀퉁이 점 뒤로 물결이 퍼진다(n_pulse_*). 빨강/파랑은 PushService 가 보이기를 바꾼다 -->
+     줄 칸(n_flip)은 ViewFlipper: 알림 내용 줄(n_line)과 안내 줄(n_line2)이 1.8초마다 위로 밀리며 번갈아 나온다(anim/notif_flip_*). 빨강/파랑은 PushService 가 바꾼다 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="wrap_content">
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -19,35 +19,25 @@
                     android:layout_marginStart="6dp" android:textAppearance="@android:style/TextAppearance.Material.Notification.Info"
                     android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
             </LinearLayout>
-            <TextView android:id="@+id/n_line" android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginTop="3dp" android:textAppearance="@android:style/TextAppearance.Material.Notification.Title"
-                android:textSize="14sp" android:textStyle="bold"
-                android:maxLines="1" android:ellipsize="end" />
+            <ViewFlipper android:id="@+id/n_flip" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="3dp" android:autoStart="true" android:flipInterval="1800"
+                android:inAnimation="@anim/notif_flip_in" android:outAnimation="@anim/notif_flip_out">
+                <TextView android:id="@+id/n_line" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textAppearance="@android:style/TextAppearance.Material.Notification.Title"
+                    android:textSize="14sp" android:textStyle="bold"
+                    android:maxLines="1" android:ellipsize="end" />
+                <TextView android:id="@+id/n_line2" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:textAppearance="@android:style/TextAppearance.Material.Notification.Title"
+                    android:textSize="14sp" android:textStyle="bold"
+                    android:maxLines="1" android:ellipsize="end" />
+            </ViewFlipper>
         </LinearLayout>
         <FrameLayout android:layout_width="40dp" android:layout_height="40dp">
             <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:layout_margin="3dp"
                 android:background="@drawable/notif_tile" android:padding="5dp" android:src="@drawable/notif_k"
                 android:scaleType="fitCenter" android:contentDescription="키움이엔씨" />
-            <FrameLayout android:layout_width="19dp" android:layout_height="19dp" android:layout_gravity="top|end">
-                <ProgressBar android:id="@+id/n_pulse_blue" android:layout_width="match_parent" android:layout_height="match_parent"
-                    android:indeterminate="true" android:indeterminateOnly="false" android:indeterminateTint="#FFFFFFFF" android:indeterminateTintMode="multiply" android:indeterminateDrawable="@drawable/notif_pulse_blue"
-                    android:minWidth="0dp" android:minHeight="0dp" android:maxWidth="4000dp" android:maxHeight="4000dp"
-                    android:visibility="visible" android:importantForAccessibility="no" />
-                <ProgressBar android:id="@+id/n_pulse_red" android:layout_width="match_parent" android:layout_height="match_parent"
-                    android:indeterminate="true" android:indeterminateOnly="false" android:indeterminateTint="#FFFFFFFF" android:indeterminateTintMode="multiply" android:indeterminateDrawable="@drawable/notif_pulse_red"
-                    android:minWidth="0dp" android:minHeight="0dp" android:maxWidth="4000dp" android:maxHeight="4000dp"
-                    android:visibility="gone" android:importantForAccessibility="no" />
-                <ImageView android:id="@+id/n_badge" android:layout_width="13dp" android:layout_height="13dp"
-                    android:layout_gravity="center" android:src="@drawable/notif_dot" android:importantForAccessibility="no" />
-            </FrameLayout>
+            <ImageView android:id="@+id/n_badge" android:layout_width="13dp" android:layout_height="13dp"
+                android:layout_gravity="top|end" android:src="@drawable/notif_dot" android:importantForAccessibility="no" />
         </FrameLayout>
     </LinearLayout>
-    <ProgressBar android:id="@+id/n_sheen_blue" android:layout_width="match_parent" android:layout_height="match_parent"
-        android:indeterminate="true" android:indeterminateOnly="false" android:indeterminateTint="#FFFFFFFF" android:indeterminateTintMode="multiply" android:indeterminateDrawable="@drawable/notif_sheen_blue"
-        android:minWidth="0dp" android:minHeight="0dp" android:maxWidth="4000dp" android:maxHeight="4000dp"
-        android:visibility="visible" android:importantForAccessibility="no" />
-    <ProgressBar android:id="@+id/n_sheen_red" android:layout_width="match_parent" android:layout_height="match_parent"
-        android:indeterminate="true" android:indeterminateOnly="false" android:indeterminateTint="#FFFFFFFF" android:indeterminateTintMode="multiply" android:indeterminateDrawable="@drawable/notif_sheen_red"
-        android:minWidth="0dp" android:minHeight="0dp" android:maxWidth="4000dp" android:maxHeight="4000dp"
-        android:visibility="gone" android:importantForAccessibility="no" />
 </FrameLayout>

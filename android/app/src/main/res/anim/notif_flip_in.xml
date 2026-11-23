@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 알림 카드 줄 전환(들어오는 줄): 아래에서 위로 올라오며 나타난다 0.4초 -->
+<set xmlns:android="http://schemas.android.com/apk/res/android" android:interpolator="@android:interpolator/decelerate_quad">
+    <translate android:fromYDelta="100%" android:toYDelta="0" android:duration="400" />
+    <alpha android:fromAlpha="0" android:toAlpha="1" android:duration="400" />
+</set>

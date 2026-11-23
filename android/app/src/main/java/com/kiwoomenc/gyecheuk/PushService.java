@@ -17,7 +17,7 @@ import java.util.Map;
 // 서버가 보낸 푸시(제목·문구·종류·날짜)를 받아 회사 앱다운 알림으로 띄운다. 앱이 꺼져 있어도 이 서비스가 깨어나 처리한다.
 // 모양(1.32): 상태줄·머리줄 = 키움 K 로고, 본문 = 키움 카드(왼쪽 색 줄 · 종류 꼬리표 + 날짜 · 굵은 한 줄 · 오른쪽 K 타일,
 // 메모는 빨간 보석, 펼치면 "눌러서 확인 ›"). 메모·이상보고 = 빨강, 그 밖 = 회사 파랑.
-// 1.34: 카드 위로 3.6초마다 사선 빛이 한 번 쓸고 지나가고, 귀퉁이 점 뒤로 1.8초마다 물결이 퍼진다(알림창이 열려 있는 동안). 같은 종류는 한 묶음. 누르면 앱이 열리면서 그 날짜 창으로 간다(MainActivity EXTRA_OPEN).
+// 1.34(버전 그대로 교체): 접힌 카드의 줄 칸이 1.8초마다 내용 줄과 안내 줄을 위로 밀며 번갈아 보여 준다(알림창이 열려 있는 동안, ViewFlipper). 같은 종류는 한 묶음. 누르면 앱이 열리면서 그 날짜 창으로 간다(MainActivity EXTRA_OPEN).
 public class PushService extends FirebaseMessagingService {
 
     static final String PREFS = "push";
@@ -137,11 +137,10 @@ public class PushService extends FirebaseMessagingService {
         v.setTextViewText(R.id.n_date, sub);
         v.setTextViewText(R.id.n_line, line);
         v.setImageViewResource(R.id.n_badge, alert ? R.drawable.notif_gem : R.drawable.notif_dot);
-        // 1.34 움직임: 사선 빛(n_sheen_*)과 점 뒤 물결(n_pulse_*). 알림 틀(RemoteViews)은 그림을 바꿀 수 없어 색마다 하나씩 두고 보이기만 바꾼다
-        v.setViewVisibility(R.id.n_sheen_blue, alert ? android.view.View.GONE : android.view.View.VISIBLE);
-        v.setViewVisibility(R.id.n_sheen_red, alert ? android.view.View.VISIBLE : android.view.View.GONE);
-        v.setViewVisibility(R.id.n_pulse_blue, alert ? android.view.View.GONE : android.view.View.VISIBLE);
-        v.setViewVisibility(R.id.n_pulse_red, alert ? android.view.View.VISIBLE : android.view.View.GONE);
+        // 접힌 모습만: 내용 줄(n_line)과 안내 줄(n_line2)이 ViewFlipper(n_flip)에서 1.8초마다 번갈아 나온다
+        if (layout == R.layout.notif_card) {
+            v.setTextViewText(R.id.n_line2, meta.isEmpty() ? "눌러서 확인해 주세요" : meta);
+        }
         if (layout == R.layout.notif_card_big) {
             v.setTextViewText(R.id.n_meta, meta);
             v.setInt(R.id.n_cta, "setBackgroundResource", alert ? R.drawable.notif_cta_red : R.drawable.notif_cta_blue);
