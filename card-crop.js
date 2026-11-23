@@ -193,7 +193,7 @@
         // 실시간 카메라(card-live.js)가 같은 영상 화면에서 잡아 둔 사각형이 있으면 그대로 쓴다(사진에서 다시 찾으면 다른 사각형이 뜬다)
         const hint = file && file.cardQuad;
         const hintOk = hint && ['tl', 'tr', 'br', 'bl'].every((k) => hint[k] && hint[k].x >= 0 && hint[k].x <= 1 && hint[k].y >= 0 && hint[k].y <= 1);
-        state.quad = (hintOk && JSON.parse(JSON.stringify(hint))) || (root.CardLive?.detectQuad &&root.CardLive.detectQuad(CardEnhance.downscale(full, 256))) || CardEnhance.detectCardQuad(full) || JSON.parse(JSON.stringify(CardEnhance.DEFAULT_QUAD));
+        state.quad = (hintOk && JSON.parse(JSON.stringify(hint))) || (root.CardDetect?.detectQuad && root.CardDetect.detectQuad(CardEnhance.downscale(full, 256))) || CardEnhance.detectCardQuad(full) || JSON.parse(JSON.stringify(CardEnhance.DEFAULT_QUAD));
         state.src.className = 'cs-photo';
         svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('class', 'cs-svg');
