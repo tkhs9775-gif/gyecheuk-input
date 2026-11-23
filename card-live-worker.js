@@ -3,9 +3,21 @@
 const V = new URL(self.location.href).searchParams.get('v') || '';
 importScripts(`card-detect.js${V ? `?v=${V}` : ''}`);
 
+let oc = null;
 self.onmessage = (e) => {
-  const { id, width, height, buf } = e.data;
+  const { id, width, height, buf, bitmap } = e.data;
   let quad = null;
-  try { quad = self.CardDetect.detectQuad({ width, height, data: new Uint8ClampedArray(buf) }); } catch { quad = null; }
+  try {
+    let img;
+    if (bitmap) {
+      if (typeof OffscreenCanvas !== 'function') { bitmap.close?.(); self.postMessage({ id, unsupported: true }); return; }
+      if (!oc || oc.width !== bitmap.width || oc.height !== bitmap.height) oc = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const g = oc.getContext('2d', { willReadFrequently: true });
+      g.drawImage(bitmap, 0, 0);
+      img = g.getImageData(0, 0, oc.width, oc.height);
+      bitmap.close?.();
+    } else img = { width, height, data: new Uint8ClampedArray(buf) };
+    quad = self.CardDetect.detectQuad({ width: img.width, height: img.height, data: img.data });
+  } catch { quad = null; }
   self.postMessage({ id, quad });
 };

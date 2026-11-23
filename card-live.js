@@ -117,7 +117,7 @@
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('camera unsupported');
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 60 } },
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 60 } },
     });
     const track = stream.getVideoTracks()[0];
     if (!styled) { const s = el('style'); s.textContent = css; document.head.append(s); styled = true; }
@@ -247,14 +247,22 @@
       }
 
       // 영상 한 장면을 줄여서 작업 스레드에 보낸다(작업 스레드가 쉬는 동안에만). 작업 스레드를 못 쓰면 이 화면에서 계산하되 간격을 둔다(끊김 방지)
+      let bitmapMode = typeof createImageBitmap === 'function' && typeof OffscreenCanvas === 'function';   // 장면 줄이기·읽기까지 작업 스레드에서(화면 스레드는 그리기만)
       function pump(now) {
         if (done || shooting || busy || video.readyState < 2 || !video.videoWidth) return;
         if (!worker && now - lastMainDetect < MAIN_DETECT_MS) return;
         const k = LIVE_SIDE / Math.max(video.videoWidth, video.videoHeight);
-        work.width = Math.max(32, Math.round(video.videoWidth * k));
-        work.height = Math.max(32, Math.round(video.videoHeight * k));
-        g.drawImage(video, 0, 0, work.width, work.height);
-        const img = g.getImageData(0, 0, work.width, work.height);
+        const w = Math.max(32, Math.round(video.videoWidth * k)); const h = Math.max(32, Math.round(video.videoHeight * k));
+        if (worker && bitmapMode) {
+          busy = true; reqId += 1; const id = reqId;
+          createImageBitmap(video, { resizeWidth: w, resizeHeight: h, resizeQuality: 'low' })
+            .then((bmp) => { if (done || !worker) { bmp.close?.(); busy = false; return; } worker.postMessage({ id, bitmap: bmp }, [bmp]); })
+            .catch(() => { bitmapMode = false; busy = false; });
+          return;
+        }
+        work.width = w; work.height = h;
+        g.drawImage(video, 0, 0, w, h);
+        const img = g.getImageData(0, 0, w, h);
         if (worker) {
           busy = true; reqId += 1;
           worker.postMessage({ id: reqId, width: img.width, height: img.height, buf: img.data.buffer }, [img.data.buffer]);
@@ -266,7 +274,11 @@
         }
       }
       if (worker) {
-        worker.onmessage = (e) => { busy = false; onResult(e.data.quad || null); };
+        worker.onmessage = (e) => {
+          busy = false;
+          if (e.data.unsupported) { bitmapMode = false; return; }   // 이 폰의 작업 스레드가 OffscreenCanvas 를 못 쓰면 예전 방식(화면 스레드가 읽어서 보냄)
+          onResult(e.data.quad || null);
+        };
         worker.onerror = () => { worker?.terminate(); worker = null; busy = false; };   // 작업 스레드가 안 돌면 이 화면에서 계산으로 바꾼다
       }
 
