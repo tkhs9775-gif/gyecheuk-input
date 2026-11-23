@@ -188,7 +188,9 @@
         state.src = await loadCanvas(file);
         await pause();
         const img = state.src.getContext('2d').getImageData(0, 0, state.src.width, state.src.height);
-        state.quad = CardEnhance.detectCardQuad({ width: img.width, height: img.height, data: img.data }) || JSON.parse(JSON.stringify(CardEnhance.DEFAULT_QUAD));
+        // 직선 방식(card-live.js, 흰 책상·무늬 배경에 강함)을 먼저, 없거나 못 찾으면 예전 색 덩어리 방식, 그래도 없으면 전체
+        const full = { width: img.width, height: img.height, data: img.data };
+        state.quad = (root.CardLive?.detectQuad && root.CardLive.detectQuad(CardEnhance.downscale(full, 256))) || CardEnhance.detectCardQuad(full) || JSON.parse(JSON.stringify(CardEnhance.DEFAULT_QUAD));
         state.src.className = 'cs-photo';
         svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('class', 'cs-svg');
