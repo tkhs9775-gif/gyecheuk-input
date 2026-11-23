@@ -1139,7 +1139,13 @@ const APK_URLS = {
 function apkVersion() {
   try { return Number(window.AndroidApp?.version?.()) || 0; } catch { return 0; }
 }
-const apkOutdated = () => !!window.AndroidGallery && apkVersion() < LATEST_APK;
+// 같은 판 번호 안의 빌드 번호. 빌드 번호를 알려 주는 기능이 없는 앱은 0(첫 1.34 포함)
+function apkBuild() {
+  try { return Number(window.AndroidApp?.build?.()) || 0; } catch { return 0; }
+}
+const apkSameVersion = () => apkVersion() === LATEST_APK;
+// 판 번호가 낮거나, 최신 판 번호인데 빌드 번호가 낮으면 옛 앱
+const apkOutdated = () => !!window.AndroidGallery && (apkVersion() < LATEST_APK || (apkSameVersion() && apkBuild() < LATEST_APK_BUILD));
 
 function renderInfo() {
   const v = apkVersion();
@@ -1163,7 +1169,9 @@ function renderApkNotice() {
   show(box, apkOutdated());
   if (!apkOutdated()) return;
   const text = document.createElement('p');
-  text.textContent = `새 앱(1.${LATEST_APK})이 나왔습니다. 설치하면 도면 저장 겹침 방지·신호 없는 곳 열기 등이 좋아집니다. 기존 입력은 그대로 남습니다.`;
+  text.textContent = apkSameVersion()
+    ? `알림 모양이 바뀐 새 앱(1.${LATEST_APK})이 나왔습니다. 번호는 같으니 아래 버튼으로 내려받아 덮어 설치해 주세요. 기존 입력은 그대로 남습니다.`
+    : `새 앱(1.${LATEST_APK})이 나왔습니다. 설치하면 도면 저장 겹침 방지·신호 없는 곳 열기 등이 좋아집니다. 기존 입력은 그대로 남습니다.`;
   if (!apkVersion()) {
     const how = document.createElement('small');
     how.textContent = '관리자에게 받은 설치 파일(APK)을 눌러 덮어 설치하세요.';

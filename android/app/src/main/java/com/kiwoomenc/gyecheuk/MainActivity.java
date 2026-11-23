@@ -738,6 +738,12 @@ public class MainActivity extends Activity {
             return BuildConfig.VERSION_CODE;
         }
 
+        // 같은 판 번호 안의 빌드 번호(web/config.js LATEST_APK_BUILD 와 같이 올린다). 1: 첫 1.34, 2: 알림 두 줄 전환
+        @JavascriptInterface
+        public int build() {
+            return 2;
+        }
+
         @JavascriptInterface
         public String rustPing() {
             if (!RustCore.isLoaded()) {
