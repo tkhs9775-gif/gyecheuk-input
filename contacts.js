@@ -156,6 +156,28 @@ function contactSetPhoto(url) {
   $('contactCamBtn').textContent = url ? '📷 다시 찍기' : '📷 명함 촬영';
 }
 
+// 명함 사진 바로 아래에 읽은 이름·직함·회사·연락처를 글자로 보인다(칸 값이 바뀔 때마다 다시 그린다). 전화번호는 누르면 전화
+function contactRenderRead() {
+  const box = $('contactRead');
+  const v = (k) => $(CONTACT_FIELDS[k]).value.trim();
+  const name = v('name'); const title = v('title'); const company = v('company'); const mobile = v('mobile'); const email = v('email');
+  if (!name && !title && !company && !mobile && !email) { show(box, false); box.replaceChildren(); return; }
+  const rows = [];
+  const line = (cls, text) => { const d = document.createElement('div'); d.className = cls; d.textContent = text; return d; };
+  if (name || title) rows.push(line('cr-name', [name, title].filter(Boolean).join(' · ')));
+  if (company) rows.push(line('cr-sub', company));
+  if (mobile) {
+    const a = document.createElement('a');
+    a.href = `tel:${mobile.replace(/[^0-9+]/g, '')}`;
+    a.textContent = `📞 ${mobile}`;
+    rows.push(a);
+  }
+  if (email) rows.push(line('cr-sub', email));
+  box.replaceChildren(...rows);
+  show(box, true);
+}
+for (const id of Object.values(CONTACT_FIELDS)) $(id).addEventListener('input', contactRenderRead);
+
 function contactOpen(c) {
   contactState.editing = c || null;
   contactState.photo = null;
@@ -167,6 +189,7 @@ function contactOpen(c) {
   $('contactError').textContent = '';
   $('contactNote').textContent = '';
   contactSetPhoto('');
+  contactRenderRead();
   show($('contactDelete'), !!c);
   $('contactDialog').showModal();
   if (c?.photoId) contactPhotoUrl(c).then((url) => { if (contactState.editing === c && !contactState.photo) contactSetPhoto(url); }).catch(() => {});
@@ -204,6 +227,7 @@ async function contactAiFill(photo) {
   let n = 0;
   for (const [k, id] of empty()) if (out[k]) { $(id).value = out[k]; n += 1; }
   if (n) $('contactMore').open = true;
+  contactRenderRead();
   $('contactNote').textContent = n ? `${note} AI 가 ${n}칸을 채웠습니다. 틀린 글자가 없는지 보고 저장을 누르세요.` : `${note} AI 가 읽을 글자를 찾지 못했습니다.`;
 }
 
@@ -267,6 +291,17 @@ $('contactCamBtn').addEventListener('click', async () => {
     if (window.AndroidGallery) $('contactNote').textContent = '명함을 한 장 찍은 뒤 휴대폰 뒤로가기를 누르세요.';
     $('contactCam').click();
   };
+  // 실시간 명함 카메라(card-live.js): 테두리를 실시간으로 잡고 자동으로 찍는다. 못 열면 아래 예전 방식으로
+  if (typeof cardLiveCamera === 'function' && navigator.mediaDevices?.getUserMedia && !(typeof nativeCamOnly !== 'undefined' && nativeCamOnly)) {
+    if (contactCamOpen) return;
+    contactCamOpen = true;
+    $('contactDialog').close();
+    let live = null;
+    let opened = true;
+    try { live = await cardLiveCamera(); } catch (err) { opened = false; console.warn('실시간 명함 카메라를 못 열어 예전 방식으로 엽니다', err); } finally { contactCamOpen = false; }
+    if (opened) { if (live) contactScan(live); else $('contactDialog').showModal(); return; }
+    $('contactDialog').showModal();
+  }
   if (typeof openInAppCamera !== 'function' || typeof camSupported !== 'function' || !camSupported() || (typeof nativeCamOnly !== 'undefined' && nativeCamOnly)) { native(); return; }
   if (contactCamOpen) return;
   contactCamOpen = true;

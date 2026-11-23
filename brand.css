@@ -322,6 +322,11 @@ html[data-theme="dark"] .card-photo-box { background: #0E1420; }
 .card-shot-btns .btn { flex: 1; min-height: 48px; font-size: 15px; }
 .card-ocr-note { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
 .card-ocr-note:empty { display: none; }
+/* 명함 사진 바로 아래: 읽은 이름·직함·연락처를 글자로(전화번호는 누르면 전화) */
+.card-read { margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: var(--chip, #EEF3FA); line-height: 1.55; }
+.card-read .cr-name { font-size: 18px; font-weight: 800; color: var(--text); }
+.card-read .cr-sub { font-size: 14px; color: var(--muted); }
+.card-read a { display: inline-block; margin-top: 2px; font-size: 17px; font-weight: 800; color: var(--accent, #2D68FA); text-decoration: none; }
 .card-more { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
 .card-more summary { min-height: 44px; display: flex; align-items: center; flex-wrap: wrap; gap: 0 6px; font-size: 15px; font-weight: 700; color: var(--text); cursor: pointer; }
 .card-more summary small { font-size: 12px; font-weight: 500; color: var(--muted); }

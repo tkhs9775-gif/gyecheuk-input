@@ -2,7 +2,7 @@
 // 휴대폰(web/contacts.js)·PC(pc-app/ui/contacts-pc.js)가 같이 쓴다(pc-app/ui/card-crop.js 는 복사본). 화면 부품·모양은 이 파일이 직접 만든다.
 // 사용: const r = await cardScan(fileOrBlob)  →  { blob, base64, width, height } 또는 취소면 null
 (function (root) {
-  const WORK_MAX = 2000;              // 원본을 이 크기로 줄여 다룬다(폰 메모리·속도)
+  const WORK_MAX = 2800;              // 원본을 이 크기로 줄여 다룬다(폰 메모리·속도). 실시간 카메라가 고해상도로 찍으므로 2000 → 2800(글씨가 또렷해야 OCR 이 정확하다)
   const OUT_MAX = 1600;               // 결과 명함 긴 변(글씨가 또렷할 만큼)
   const OUT_MAX_BYTES = 450 * 1024;   // 서버 사진 한도(base64 70만 자) 안
   const HANDLE = 22;                  // 모서리 손잡이 크기(px, 손가락)
