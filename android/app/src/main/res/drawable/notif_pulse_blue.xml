@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 알림 타일 귀퉁이 점(보석) 뒤에서 퍼지는 물결(1.34): 1.8초마다 점 크기에서 커지며 사라진다. 붙이는 법은 notif_sheen 과 같다 -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+            <group android:name="ring" android:pivotX="12" android:pivotY="12" android:scaleX="0.55" android:scaleY="0.55">
+                <path android:name="disc" android:fillColor="#357FC9" android:fillAlpha="0" android:pathData="M12,1 A11,11 0 1,1 11.99,1 Z" />
+            </group>
+        </vector>
+    </aapt:attr>
+    <target android:name="ring">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator android:propertyName="scaleX" android:duration="1800" android:repeatCount="infinite" android:valueFrom="0.55" android:valueTo="1" android:valueType="floatType" android:interpolator="@android:interpolator/decelerate_cubic" />
+                <objectAnimator android:propertyName="scaleY" android:duration="1800" android:repeatCount="infinite" android:valueFrom="0.55" android:valueTo="1" android:valueType="floatType" android:interpolator="@android:interpolator/decelerate_cubic" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="disc">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="fillAlpha" android:duration="1800" android:repeatCount="infinite" android:valueFrom="0.55" android:valueTo="0" android:valueType="floatType" android:interpolator="@android:interpolator/decelerate_quad" />
+        </aapt:attr>
+    </target>
+</animated-vector>

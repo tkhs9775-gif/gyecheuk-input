@@ -630,7 +630,31 @@
     }
   }
 
+  // 2026-11-23: 앱을 켤 때 물어볼 현장(Rust gpssite.rs pick). here = 지금 위치 주소 칸들, sites = [{ name, lat, lng }](좌표 모르면 null).
+  // { mode: 0 묻지 않음 | 1 한 곳 확인 | 2 같은 동 목록, idx: 현장 번호(가까운 순) }. JS 대체 없음: wasm 이 없으면 null → 묻지 않는다
+  function rustGpsPick(lat, lng, here, sites) {
+    if (!hasFn('wasm_gps_pick')) return null;
+    const h = (Array.isArray(here) ? here : []).map(str);
+    const strs = [...h];
+    for (const s of Array.isArray(sites) ? sites : []) strs.push(str(s?.name), s?.lat == null ? '' : String(s.lat), s?.lng == null ? '' : String(s.lng));
+    const cap = (strs.length - h.length) / 3 + 1;
+    const out = wasm.wasm_alloc(cap * 4);
+    if (!out) return null;
+    try {
+      const n = callTexts(strs, (p, units) => wasm.wasm_gps_pick(p, units, h.length, Number(lat), Number(lng), out, cap));
+      if (n < 1) return null;
+      const dv = new DataView(wasm.memory.buffer.slice(out, out + n * 4));
+      return { mode: dv.getUint32(0, true), idx: Array.from({ length: n - 1 }, (_, i) => dv.getUint32((i + 1) * 4, true)) };
+    } catch (err) {
+      console.warn('wasm_gps_pick 실패', err);
+      return null;
+    } finally {
+      wasm.wasm_dealloc(out, cap * 4);
+    }
+  }
+
   const api = {
+    gpsPick: rustGpsPick,
     mergeNotesPins: rustMergeNotesPins,
     trimPlan: rustTrimPlan,
     resumePlan: rustResumePlan,

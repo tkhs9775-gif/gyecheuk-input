@@ -176,6 +176,7 @@ async function doFlush() {
   if (sent > 0) {
     flash(`✓ 입력 ${sent}건을 서버에 올렸습니다`);
     reloadLists();
+    window.reportDevice?.();   // 전송대기 건수가 줄었다 → PC 정보 탭에 알린다(보낸 게 있을 때만: 접속 코드가 맞다는 뜻)
   }
   await renderOutbox();
   return sent;

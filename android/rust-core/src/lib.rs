@@ -13,6 +13,7 @@ pub mod merge;
 pub mod history;
 pub mod livepins;
 pub mod sites;
+pub mod gpssite;
 
 const WIN_RESERVED_NAMES: &[&str] = &[
     "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",

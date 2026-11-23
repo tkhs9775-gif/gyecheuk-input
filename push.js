@@ -140,13 +140,37 @@ async function pushOpenTarget(o) {
   if (o.kind === 'photo') { if (typeof openAlbum === 'function') openAlbum(n.site); return; }
   if (typeof openRecentDrawing === 'function') openRecentDrawing({ site: n.site, fileId: o.kind === 'drawing' ? n.fileId || '' : '' });
 }
-// 앱이 꺼져 있던 때는 첫 화면이 다 뜬 뒤(schedule.js), 켜져 있을 때 누르면 안드로이드가 onPushOpen 을 부른다
+// 1.21: 알림을 누르면 가는 과정(홈 → 탭 → 목록 → 도면)이 보이지 않게, 지금 화면을 멈춰 둔 채 목적지까지 다 옮긴 뒤 한 번에 바꾼다.
+// View Transitions(크롬 111~ 웹뷰): 콜백이 끝날 때까지 화면 그리기를 멈추고, 끝나면 0.14초 만에 새 화면으로 바뀐다. 없는 웹뷰는 예전처럼 바로 옮긴다.
+// 크롬은 4초가 넘으면 전환을 버리므로 PUSH_JUMP_MAX_MS 에서 끊는다(그 뒤 남은 일은 화면에 보이며 이어진다). 도면은 먼저 그려 둔 그림이 뜰 틈(SETTLE)을 준다
+const PUSH_JUMP_MAX_MS = 2500;
+const PUSH_JUMP_SETTLE_MS = 150;
+function pushJump(run) {
+  if (typeof window !== 'undefined') window.pushOpened = true;   // 켤 때 GPS 현장 묻기(gps.js)를 건너뛴다
+  const work = () => Promise.race([
+    Promise.resolve().then(run).then(() => new Promise((r) => setTimeout(r, PUSH_JUMP_SETTLE_MS))).catch(() => {}),
+    new Promise((r) => setTimeout(r, PUSH_JUMP_MAX_MS)),
+  ]);
+  const doc = typeof document !== 'undefined' ? document : null;
+  if (!doc?.startViewTransition) return work();
+  doc.documentElement.classList.add('push-jump');
+  try {
+    const t = doc.startViewTransition(work);
+    t.ready.catch(() => {});   // 알림을 연달아 누르면 앞 전환은 건너뛴다(옮기는 일은 그대로 한다) — 그 거절을 조용히
+    t.finished.catch(() => {}).finally(() => doc.documentElement.classList.remove('push-jump'));
+    return t.updateCallbackDone.catch(() => {});
+  } catch {
+    doc.documentElement.classList.remove('push-jump');
+    return work();
+  }
+}
+// 앱이 꺼져 있던 때는 첫 화면을 그린 직후(schedule.js schedOnOpen, 스플래시가 덮고 있을 때), 켜져 있을 때 누르면 안드로이드가 onPushOpen 을 부른다
 function takePushOpen() {
   let o = null;
   try { o = JSON.parse(window.AndroidPush?.takeOpen?.() || 'null'); } catch { o = null; }
   if (!o) return;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(o.date || '') && typeof schedOpenDay === 'function') { pushLeaveViewer().then(() => schedOpenDay(o.date)); }
-  else if (PUSH_OPEN_HASH[o.kind]) pushOpenTarget(o).catch(() => {});
+  if (/^\d{4}-\d{2}-\d{2}$/.test(o.date || '') && typeof schedOpenDay === 'function') pushJump(() => pushLeaveViewer().then(() => schedOpenDay(o.date)));
+  else if (PUSH_OPEN_HASH[o.kind]) pushJump(() => pushOpenTarget(o));
 }
 if (typeof window !== 'undefined') window.onPushOpen = () => takePushOpen();
 

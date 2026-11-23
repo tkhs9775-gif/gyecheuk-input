@@ -1202,16 +1202,21 @@ async function deviceModel() {
 
 const deviceAppName = () => (window.AndroidGallery ? `안드로이드 앱${apkVersion() ? ` 1.${apkVersion()}` : ''}${isProApp() ? ' Pro' : ''}` : '브라우저');
 
+// 2026-11-23: 보관함(outbox) 전송대기 건수도 함께 보낸다 → PC 정보 탭에서 기기별로 본다.
+// 앱을 열 때와, 보관함이 실제로 몇 건 보낸 뒤(outbox.js doFlush — 접속 코드가 맞다는 뜻이라 틀린 코드로 잠김을 부르지 않는다)에 보낸다
 async function reportDevice() {
   try {
     const user = store.get('user') || '';
-    const key = `${BUILD}|${deviceAppName()}|${user}`;
+    let pending = null;
+    try { pending = (await outboxAll()).length; } catch { /* IndexedDB 없음: 건수 없이 보낸다 */ }
+    const key = `${BUILD}|${deviceAppName()}|${user}|${pending}`;
     const last = readCached('devicePing') || {};
     if (last.key === key && Date.now() - (last.at || 0) < DEVICE_PING_MS) return;
-    await api('device_ping', { device: { id: deviceId(), user, web: VERSION_LABEL, app: deviceAppName(), model: await deviceModel() } });
+    await api('device_ping', { device: { id: deviceId(), user, web: VERSION_LABEL, app: deviceAppName(), model: await deviceModel(), pending } });
     store.set('devicePing', JSON.stringify({ key, at: Date.now() }));
   } catch { /* 옛 서버(bad_action)·신호 없음: 다음에 앱을 열 때 다시 보낸다 */ }
 }
+window.reportDevice = reportDevice;
 
 async function renderDevices() {
   const box = $('deviceList');
@@ -1219,7 +1224,7 @@ async function renderDevices() {
   try {
     const { devices = [] } = await api('device_list');
     box.textContent = devices.length
-      ? devices.map((d) => `${d.web === VERSION_LABEL ? '✅' : '⚠️'} ${d.user || '(측정자 없음)'} · ${d.web} · ${d.app} · ${d.model} · ${d.at.slice(5)}`).join('\n')
+      ? devices.map((d) => `${d.web === VERSION_LABEL ? '✅' : '⚠️'} ${d.user || '(측정자 없음)'} · ${d.web} · ${d.app} · ${d.model}${d.pending ? ` · 📤 대기 ${d.pending}건` : ''} · ${d.at.slice(5)}`).join('\n')
       : '아직 기록이 없습니다. 직원들이 앱을 한 번씩 열면 쌓입니다.';
   } catch (err) {
     box.textContent = err.code === 'bad_action' ? '서버(Code.gs)를 새 버전으로 배포하면 보입니다.' : '불러오지 못했습니다. 신호를 확인하세요.';
@@ -1308,6 +1313,7 @@ async function start(fresh = false) {
     await hideSplash();
     renderOutbox();
     refreshInBackground();
+    if (typeof askSiteByGps === 'function') askSiteByGps();   // 1.21: GPS 로 가까운 현장 묻기(gps.js, 앱에서 켤 때 한 번)
     return;
   }
   showSplashLoading();
@@ -1335,6 +1341,7 @@ async function start(fresh = false) {
   await hideSplash();
   renderOutbox();
   flushOutbox();
+  if (typeof askSiteByGps === 'function') askSiteByGps();
 }
 
 async function refreshInBackground() {

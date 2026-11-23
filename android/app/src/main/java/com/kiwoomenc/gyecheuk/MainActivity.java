@@ -102,6 +102,10 @@ public class MainActivity extends Activity {
             }
         });
         webView = createWebView();
+        // 1.34: 알림으로 켤 때 흰 화면이 번쩍이지 않게 창·화면 바탕을 첫 화면(스플래시) 색과 맞춘다(Pro = 블랙 테마)
+        int bg = BuildConfig.IS_PRO ? android.graphics.Color.parseColor("#0A0D14") : android.graphics.Color.WHITE;
+        getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(bg));
+        webView.setBackgroundColor(bg);
         setContentView(webView);
 
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -137,8 +141,9 @@ public class MainActivity extends Activity {
         view.addJavascriptInterface(new GalleryBridge(), "AndroidGallery");
         view.addJavascriptInterface(new PushBridge(), "AndroidPush");
         view.addJavascriptInterface(new AppBridge(), "AndroidApp");
+        // 1.34: 앱을 켤 때 GPS 로 가까운 현장을 묻는 기능은 직원용·Pro 모두 쓴다(도면 위 내 위치는 여전히 Pro 만 — 화면이 AndroidPro 로 가린다)
+        s.setGeolocationEnabled(true);
         if (BuildConfig.IS_PRO) {
-            s.setGeolocationEnabled(true);
             view.addJavascriptInterface(new ProBridge(), "AndroidPro");
         }
         // 내려받기 링크(새 APK 등)는 휴대폰 브라우저가 받게 한다. 웹뷰는 스스로 파일을 내려받지 못한다
@@ -207,10 +212,10 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            // Pro 앱의 우리 화면(GitHub Pages 또는 앱 안 사본)에만 위치를 준다. 휴대폰 위치 권한이 없으면 먼저 묻는다
+            // 우리 화면(GitHub Pages 또는 앱 안 사본)에만 위치를 준다(1.34 부터 직원용도). 휴대폰 위치 권한이 없으면 먼저 묻는다
             @Override
             public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
-                boolean ours = BuildConfig.IS_PRO && origin != null && (LIVE_URL.startsWith(origin) || origin.startsWith("file"));
+                boolean ours = origin != null && (LIVE_URL.startsWith(origin) || origin.startsWith("file"));
                 if (!ours) {
                     callback.invoke(origin, false, false);
                     return;

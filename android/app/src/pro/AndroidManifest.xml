@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Pro 앱만 위치(GPS)를 쓴다: 도면 위 내 위치 표시. 직원용 manifest에는 없다 -->
+<!-- Pro 앱 위치(GPS): 도면 위 내 위치 표시. 1.34 부터 직원용 manifest(main)에도 같은 권한이 있다(앱을 켤 때 가까운 현장 묻기) -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

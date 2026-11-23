@@ -906,3 +906,14 @@ body.cad-open { overflow: hidden; }
 .pin-group-view .pdf-pin-tag.grp b, .pin-group-view .pdf-pin-tag.grp.strain b { width: 84px; }
 /* 도면에 값을 펼치지 않는 동그라미(하중계): 값이 있으면 오른쪽 위에 초록 점 */
 .pdf-pin.has-values::after { content: ''; position: absolute; top: -2px; right: -2px; width: 9px; height: 9px; border-radius: 50%; background: #22C55E; border: 1.5px solid #FFF; }
+/* 1.21 앱을 켤 때 가까운 현장 묻기(gps.js) */
+.site-ask-kicker { margin: 0 0 4px; font-size: 13px; font-weight: 700; color: var(--accent); }
+.site-ask-choices { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 14px; }
+.site-ask-choices:empty { display: none; }
+.site-ask-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 13px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--card); text-align: left; white-space: normal; cursor: pointer; }
+.site-ask-choice b { font-size: 17px; }
+.site-ask-choice small { font-size: 13px; color: var(--muted); }
+.site-ask-choice:active { background: var(--chip); border-color: var(--accent); }
+/* 1.21 알림을 눌러 옮길 때(push.js pushJump): 화면 사이 미끄럼 움직임을 끄고, 새 화면으로 0.14초 만에 바뀐다 */
+html.push-jump :is(#home, #input, #shot, #gallery, #drawing, #cad, #info, #pdfViewer, dialog), html.push-jump :is(#home, #input, #shot, #gallery, #drawing, #cad, #info, #pdfViewer, dialog) * { animation: none !important; transition: none !important; }
+html.push-jump::view-transition-old(root), html.push-jump::view-transition-new(root) { animation-duration: .14s; }

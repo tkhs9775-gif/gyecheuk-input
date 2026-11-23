@@ -292,4 +292,101 @@ function initGps() {
   window.addEventListener('popstate', () => { if (!history.state?.gpsMap) closeMapNow(); });
 }
 
+// ---------- 3) 앱을 켤 때 가까운 현장 묻기 (1.21, 직원용·Pro 공통) ----------
+// 현장을 저절로 바꾸지 않는다: GPS → 지금 위치의 동 이름(OpenStreetMap 역지오코딩) → Rust(gpssite.rs)가 물어볼 현장을 고른다
+// → 한 곳이면 "여기 현장이 맞습니까?", 같은 동에 여러 곳이면 그 동 목록 → 고른 현장을 적용 → "도면 / 사진 / CAD" 중 고른 곳으로 간다.
+// 위치는 동을 알 만큼만(소수 셋째 자리 ≈ 100m) 바깥에 보낸다. 앱(APK)에서만, 켤 때 한 번만 묻는다(알림을 눌러 켰거나 이미 다른 화면이면 묻지 않음)
+const SITE_ASK_GPS = { enableHighAccuracy: false, maximumAge: 5 * 60 * 1000, timeout: 12000 };
+const SITE_ASK_GEOCODE_MAX = 8;    // 한 번 켤 때 새로 찾을 동 중심 수(Nominatim 이용 규칙: 1초에 1번)
+const SITE_ASK_GAP_MS = 1100;
+const siteAsk = { asked: false };
+
+const siteAskPosition = () => new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, SITE_ASK_GPS));
+const cachedGeo = (keyword) => { try { return keyword ? JSON.parse(store.get(`geo:${keyword}`) || 'null') : null; } catch { return null; } };
+
+// 지금 위치 주소의 칸들(동·구·시 …). 동이 아닌 칸은 Rust 가 거른다
+async function siteAskHere(lat, lng) {
+  const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(3)}&lon=${lng.toFixed(3)}&format=json&zoom=16&addressdetails=1&accept-language=ko`;
+  try { return Object.values((await fetchJson(url, '위치 찾기'))?.address || {}).map(String); } catch { return []; }
+}
+
+// 좌표를 모르는 현장 동을 몇 개 찾아 폰에 보관한다(날씨 기능과 같은 보관 칸 geo:<동>). 새로 찾은 게 있으면 true
+async function siteAskFillGeo(sites) {
+  const missing = [...new Set(sites.map(placeKeyword).filter((k) => k && !cachedGeo(k)))].slice(0, SITE_ASK_GEOCODE_MAX);
+  let found = false;
+  for (const [i, k] of missing.entries()) {
+    if (i) await new Promise((r) => setTimeout(r, SITE_ASK_GAP_MS));
+    try { found = !!(await geocode(k)) || found; } catch { /* 신호 약함: 다음에 켤 때 */ }
+  }
+  return found;
+}
+
+// 다른 화면으로 이미 갔거나 창이 떠 있으면 묻지 않는다
+const siteAskIdle = () => (!location.hash || location.hash === '#home') && !document.querySelector('dialog[open]')
+  && $('pdfViewer').classList.contains('hidden') && !window.pushOpened;
+
+async function askSiteByGps() {
+  if (siteAsk.asked || !window.AndroidGallery || !navigator.geolocation) return;
+  siteAsk.asked = true;
+  const sites = state.config.sites || [];
+  if (!sites.length) return;
+  await window.RustCore?.ensure?.();
+  if (!window.RustCore?.gpsPick) return;
+  let pos;
+  try { pos = await siteAskPosition(); } catch { return; }   // 권한 없음·GPS 꺼짐·옛 APK: 조용히 넘어간다
+  const { latitude: lat, longitude: lng } = pos.coords;
+  const here = await siteAskHere(lat, lng);
+  const list = () => sites.map((name) => { const g = cachedGeo(placeKeyword(name)); return { name, lat: g?.lat ?? null, lng: g?.lon ?? null }; });
+  let r = RustCore.gpsPick(lat, lng, here, list());
+  if (r && r.mode === 0 && await siteAskFillGeo(sites)) r = RustCore.gpsPick(lat, lng, here, list());
+  if (!r || !r.mode || !r.idx.length || !siteAskIdle()) return;
+  siteAskShow(r.idx.map((i) => sites[i]));
+}
+
+function siteAskButtons(items) {
+  $('siteAskChoices').replaceChildren(...items.map(([label, sub, fn]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'site-ask-choice';
+    const t = document.createElement('b');
+    t.textContent = label;
+    b.append(t);
+    if (sub) { const s = document.createElement('small'); s.textContent = sub; b.append(s); }
+    b.addEventListener('click', fn);
+    return b;
+  }));
+}
+
+// 1단계: 한 곳이면 확인, 여러 곳이면 목록
+function siteAskShow(candidates) {
+  const dlg = $('siteAskDialog');
+  const one = candidates.length === 1;
+  const place = placeKeyword(candidates[0]);
+  $('siteAskKicker').textContent = '📍 지금 위치';
+  $('siteAskTitle').textContent = one ? '여기 현장이 맞습니까?' : `${place || '이 근처'} 현장을 골라 주세요`;
+  $('siteAskSub').textContent = one ? candidates[0] : `${place ? `${place}에` : '근처에'} 현장이 ${candidates.length}곳 있습니다`;
+  siteAskButtons(one ? [] : candidates.map((s) => [s, s === state.site ? '지금 고른 현장' : '', () => siteAskApply(s)]));
+  show($('siteAskYes'), one);
+  $('siteAskYes').onclick = () => siteAskApply(candidates[0]);
+  $('siteAskNo').textContent = one ? '아니요' : '닫기';
+  $('siteAskNo').onclick = () => dlg.close();
+  if (!dlg.open) dlg.showModal();
+}
+
+// 2단계: 현장을 적용하고 어디로 갈지 묻는다. 도면은 그 현장 도면 목록으로 바로 간다
+function siteAskApply(site) {
+  if (site !== state.site) changeSite(site);
+  $('siteAskKicker').textContent = `✓ ${site}`;
+  $('siteAskTitle').textContent = '어디로 갈까요?';
+  $('siteAskSub').textContent = '';
+  const go = (fn) => () => { $('siteAskDialog').close(); fn(); };
+  siteAskButtons([
+    ['📐 도면', '이 현장 도면 목록', go(() => openRecentDrawing({ site }))],
+    ['📷 사진', '사진 찍기·올리기', go(() => { location.hash = '#shot'; })],
+    ['🗂 CAD', '이 현장 CAD 파일', go(() => pushGoHash('#cad').then(() => openCadSite(site)))],
+  ]);
+  show($('siteAskYes'), false);
+  $('siteAskNo').textContent = '홈에 머물기';
+}
+
 if (typeof module !== 'undefined') module.exports = { toLocalMeters, gpsToPage, gpsDistanceM, fixText };

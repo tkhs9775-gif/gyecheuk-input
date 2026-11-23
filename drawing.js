@@ -590,7 +590,12 @@ async function openRecentDrawing(r) {
     await moved;   // route()가 도면 탭을 먼저 그린 뒤에 연다
   }
   if (!r.site) return;
-  await openSiteDrawingFolder(r.site);
+  // 1.21: 폰에 보관된 목록에 그 도면이 있으면 서버 목록(1.5~3초)을 기다리지 않고 바로 연다(알림·최근 기록에서 열 때 목록 화면이 잠깐 보이던 것).
+  // 없으면 예전처럼 서버 목록을 받은 뒤 찾는다. 서버 목록은 뒤에서 계속 받아 목록을 고친다
+  const listed = openSiteDrawingFolder(r.site);
+  const fid = String(r.fileId || '');
+  const inCache = fid && !fid.startsWith(TEMPLATE_PREFIX) && allDrawingFiles().some((f) => f.id === fid);   // 계측용 도면은 묶음을 봐야 해서 예전처럼 기다린다
+  if (!inCache) await listed;
   // 계측용(가상) 도면에서 적은 값이면 그 묶음의 계측용 도면을 다시 연다(그 뒤 저장본이 생겼으면 최근 것 기준으로)
   if (String(r.fileId || '').startsWith(TEMPLATE_PREFIX)) {
     const prefix = templateId(r.site, '');

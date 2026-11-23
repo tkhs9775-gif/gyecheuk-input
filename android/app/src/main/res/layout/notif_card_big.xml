@@ -1,41 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 키움 알림 카드(펼친 모습). 글자색은 안드로이드 알림 글자 모양을 따라 밝은/어두운 화면 모두 읽힌다 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="wrap_content"
-    android:orientation="horizontal" android:gravity="center_vertical">
-    <ImageView android:id="@+id/n_bar" android:layout_width="3dp" android:layout_height="64dp"
-        android:background="@drawable/notif_bar_blue" android:importantForAccessibility="no" />
-    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-        android:layout_marginStart="10dp" android:layout_marginEnd="8dp" android:orientation="vertical">
-        <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:orientation="horizontal" android:gravity="center_vertical">
-            <TextView android:id="@+id/n_chip" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:background="@drawable/notif_chip_blue" android:paddingStart="8dp" android:paddingEnd="8dp"
-                android:paddingTop="1dp" android:paddingBottom="1dp" android:textSize="11sp" android:textStyle="bold"
-                android:textColor="#357FC9" android:maxLines="1" />
-            <TextView android:id="@+id/n_date" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginStart="6dp" android:textAppearance="@android:style/TextAppearance.Material.Notification.Info"
-                android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+<!-- 키움 알림 카드(펼친 모습). 글자색은 안드로이드 알림 글자 모양을 따라 밝은/어두운 화면 모두 읽힌다.
+     1.34: 카드 위로 사선 빛이 3.6초마다 지나가고(n_sheen_*), 귀퉁이 점 뒤로 물결이 퍼진다(n_pulse_*). 빨강/파랑은 PushService 가 보이기를 바꾼다 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical">
+        <ImageView android:id="@+id/n_bar" android:layout_width="3dp" android:layout_height="64dp"
+            android:background="@drawable/notif_bar_blue" android:importantForAccessibility="no" />
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:layout_marginStart="10dp" android:layout_marginEnd="8dp" android:orientation="vertical">
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <TextView android:id="@+id/n_chip" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:background="@drawable/notif_chip_blue" android:paddingStart="8dp" android:paddingEnd="8dp"
+                    android:paddingTop="1dp" android:paddingBottom="1dp" android:textSize="11sp" android:textStyle="bold"
+                    android:textColor="#357FC9" android:maxLines="1" />
+                <TextView android:id="@+id/n_date" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp" android:textAppearance="@android:style/TextAppearance.Material.Notification.Info"
+                    android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+            </LinearLayout>
+            <TextView android:id="@+id/n_line" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="3dp" android:textAppearance="@android:style/TextAppearance.Material.Notification.Title"
+                android:textSize="15sp" android:textStyle="bold"
+                android:maxLines="3" android:ellipsize="end" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:orientation="horizontal" android:gravity="center_vertical">
+                <TextView android:id="@+id/n_meta" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:textAppearance="@android:style/TextAppearance.Material.Notification.Info" android:maxLines="2" />
+                <TextView android:id="@+id/n_cta" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp" android:background="@drawable/notif_cta_blue" android:paddingStart="12dp"
+                    android:paddingEnd="12dp" android:paddingTop="5dp" android:paddingBottom="5dp" android:text="눌러서 확인 ›"
+                    android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" />
+            </LinearLayout>
         </LinearLayout>
-        <TextView android:id="@+id/n_line" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="3dp" android:textAppearance="@android:style/TextAppearance.Material.Notification.Title"
-            android:textSize="15sp" android:textStyle="bold"
-            android:maxLines="3" android:ellipsize="end" />
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp" android:orientation="horizontal" android:gravity="center_vertical">
-            <TextView android:id="@+id/n_meta" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                android:textAppearance="@android:style/TextAppearance.Material.Notification.Info" android:maxLines="2" />
-            <TextView android:id="@+id/n_cta" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:layout_marginStart="8dp" android:background="@drawable/notif_cta_blue" android:paddingStart="12dp"
-                android:paddingEnd="12dp" android:paddingTop="5dp" android:paddingBottom="5dp" android:text="눌러서 확인 ›"
-                android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" />
-        </LinearLayout>
+        <FrameLayout android:layout_width="46dp" android:layout_height="46dp">
+            <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:layout_margin="3dp"
+                android:background="@drawable/notif_tile" android:padding="5dp" android:src="@drawable/notif_k"
+                android:scaleType="fitCenter" android:contentDescription="키움이엔씨" />
+            <FrameLayout android:layout_width="19dp" android:layout_height="19dp" android:layout_gravity="top|end">
+                <ProgressBar android:id="@+id/n_pulse_blue" android:layout_width="match_parent" android:layout_height="match_parent"
+                    android:indeterminate="true" android:indeterminateOnly="false" android:indeterminateTint="#FFFFFFFF" android:indeterminateTintMode="multiply" android:indeterminateDrawable="@drawable/notif_pulse_blue"
+                    android:minWidth="0dp" android:minHeight="0dp" android:maxWidth="4000dp" android:maxHeight="4000dp"
+                    android:visibility="visible" android:importantForAccessibility="no" />
+                <ProgressBar android:id="@+id/n_pulse_red" android:layout_width="match_parent" android:layout_height="match_parent"
+                    android:indeterminate="true" android:indeterminateOnly="false" android:indeterminateTint="#FFFFFFFF" android:indeterminateTintMode="multiply" android:indeterminateDrawable="@drawable/notif_pulse_red"
+                    android:minWidth="0dp" android:minHeight="0dp" android:maxWidth="4000dp" android:maxHeight="4000dp"
+                    android:visibility="gone" android:importantForAccessibility="no" />
+                <ImageView android:id="@+id/n_badge" android:layout_width="13dp" android:layout_height="13dp"
+                    android:layout_gravity="center" android:src="@drawable/notif_dot" android:importantForAccessibility="no" />
+            </FrameLayout>
+        </FrameLayout>
     </LinearLayout>
-    <FrameLayout android:layout_width="46dp" android:layout_height="46dp">
-        <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:layout_margin="3dp"
-            android:background="@drawable/notif_tile" android:padding="5dp" android:src="@drawable/notif_k"
-            android:scaleType="fitCenter" android:contentDescription="키움이엔씨" />
-        <ImageView android:id="@+id/n_badge" android:layout_width="13dp" android:layout_height="13dp"
-            android:layout_gravity="top|end" android:src="@drawable/notif_dot" android:importantForAccessibility="no" />
-    </FrameLayout>
-</LinearLayout>
+    <ProgressBar android:id="@+id/n_sheen_blue" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:indeterminate="true" android:indeterminateOnly="false" android:indeterminateTint="#FFFFFFFF" android:indeterminateTintMode="multiply" android:indeterminateDrawable="@drawable/notif_sheen_blue"
+        android:minWidth="0dp" android:minHeight="0dp" android:maxWidth="4000dp" android:maxHeight="4000dp"
+        android:visibility="visible" android:importantForAccessibility="no" />
+    <ProgressBar android:id="@+id/n_sheen_red" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:indeterminate="true" android:indeterminateOnly="false" android:indeterminateTint="#FFFFFFFF" android:indeterminateTintMode="multiply" android:indeterminateDrawable="@drawable/notif_sheen_red"
+        android:minWidth="0dp" android:minHeight="0dp" android:maxWidth="4000dp" android:maxHeight="4000dp"
+        android:visibility="gone" android:importantForAccessibility="no" />
+</FrameLayout>

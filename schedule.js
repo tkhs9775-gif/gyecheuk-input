@@ -768,6 +768,8 @@ function schedOnOpen() {
   }
   schedTodayWas = today;
   schedRender();
+  // 1.21: 알림을 눌러 켰으면 일정 목록(서버 1~2초)을 기다리지 않고 바로 그곳으로(스플래시가 덮고 있는 동안). 일정 창은 목록이 오면 채워진다
+  if (!sched.openedFromPush) { sched.openedFromPush = true; takePushOpen(); }
   schedLoad();
 }
 window.schedOnOpen = schedOnOpen;
